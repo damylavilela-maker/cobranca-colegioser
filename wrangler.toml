@@ -13,7 +13,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "cobranca-ser"
-database_id = "COLE_AQUI_O_ID_DO_BANCO"
+database_id = "ccdf2c54-20f5-4daf-92a2-8c40f6e429b8"
 
 [observability]
 enabled = true
