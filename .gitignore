@@ -1,4 +1,7 @@
 # Dados reais de alunos — nunca versionar nem publicar
 migracao/
+# Gerados localmente
+dist/
+.claude/
 .wrangler/
 node_modules/

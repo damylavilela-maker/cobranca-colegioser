@@ -22,6 +22,8 @@ $sb = New-Object System.Text.StringBuilder
 foreach ($a in $arquivos) {
   [void]$sb.AppendLine("  " + (JsString $a.caminho) + ": { tipo: " + (JsString $a.tipo) + ", conteudo: " + (JsString (Ler $a.nome)) + " },")
 }
+$logo = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Join-Path $pub "img\logo-colegio-ser.png")))
+[void]$sb.AppendLine("  `"/img/logo-colegio-ser.png`": { tipo: `"image/png`", base64: `"" + $logo + "`" },")
 [void]$sb.AppendLine("};")
 [void]$sb.AppendLine("")
 [void]$sb.Append([System.IO.File]::ReadAllText((Join-Path $raiz "src\worker.js"), [System.Text.Encoding]::UTF8))

@@ -43,7 +43,12 @@ button,input,select,textarea{font-family:inherit;font-size:14.5px;color:var(--in
 code{font-family:ui-monospace,Consolas,monospace;font-size:13px;background:var(--surface-2);border:1px solid var(--line);padding:1px 6px;border-radius:6px}
 .boot{height:100%;display:grid;place-items:center;color:var(--muted);font-family:var(--display);font-weight:700}
 
-/* marca */
+/* marca — o logo é verde com fundo transparente, então vai sobre uma placa branca */
+.logo-plate{display:inline-flex;align-items:center;background:#fff;border-radius:12px;padding:8px 12px;align-self:flex-start;position:relative;z-index:1}
+.logo-plate img{display:block;height:40px;width:auto;max-width:100%}
+.auth-art .logo-plate{padding:10px 16px}
+.auth-art .logo-plate img{height:52px}
+@media (max-width:860px){.side .logo-plate{padding:6px 10px}.side .logo-plate img{height:30px}.auth-art .logo-plate img{height:40px}}
 .wm{display:inline-flex;align-items:center;gap:10px;color:inherit}
 .wm-text{display:flex;align-items:baseline;gap:3px;line-height:1}
 .wm-c{font-family:var(--display);font-weight:700;font-size:15px}
@@ -142,14 +147,14 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand-br
 }
 
 /* indicadores */
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}
 /* linhas divisórias que funcionam em qualquer número de colunas (a borda externa é cortada pelo overflow) */
 .kpi{padding:16px 16px 14px;min-width:0;box-shadow:1px 0 0 var(--line),0 1px 0 var(--line)}
-.kpi .num{font-family:var(--display);font-weight:800;font-size:21px;line-height:1.15;overflow-wrap:anywhere}
+.kpi .num{font-family:var(--display);font-weight:800;font-size:19px;line-height:1.15;white-space:nowrap}
 .kpi .lbl{font-size:13px;color:var(--muted);font-weight:700;margin-top:4px}
 .kpi.lead{background:var(--brand);color:var(--brand-ink)}
 .kpi.lead .lbl{color:inherit;opacity:.85}
-@media (max-width:420px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi .num{font-size:18px}}
+@media (max-width:460px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi{padding:12px}.kpi .num{font-size:15px}}
 
 /* filtros e tabela */
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}

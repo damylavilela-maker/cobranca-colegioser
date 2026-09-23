@@ -120,7 +120,8 @@ function servirArquivo(request, env, url) {
   const caminho = url.pathname === "/" ? "/index.html" : url.pathname;
   const arq = ARQUIVOS_EMBUTIDOS[caminho];
   if (!arq) return new Response("Página não encontrada", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  return new Response(request.method === "HEAD" ? null : arq.conteudo, {
+  const corpoArq = arq.base64 ? Uint8Array.from(atob(arq.base64), (c) => c.charCodeAt(0)) : arq.conteudo;
+  return new Response(request.method === "HEAD" ? null : corpoArq, {
     headers: {
       "Content-Type": arq.tipo,
       "Cache-Control": "no-cache",
