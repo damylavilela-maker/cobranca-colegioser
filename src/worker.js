@@ -112,17 +112,18 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS meta (chave TEXT PRIMARY KEY, valor TEXT NOT NULL)`
 ];
 
-// Períodos que já existiam na planilha "SERASA - SER", criados uma única vez.
+// Períodos que já existiam na planilha "SERASA - SER", criados uma única vez. O nome é o
+// da aba da planilha; as datas cobrem os vencimentos que estão de fato em cada aba.
 const PERIODOS_INICIAIS = [
-  ["RF 2024 - Janeiro a Abril", "2023-12-01", "2024-04-30"],
-  ["01/05 - 30/09/2024", "2024-05-01", "2024-09-30"],
-  ["01/10/2024 - 31/01/2025", "2024-10-01", "2025-01-31"],
-  ["01/02 - 30/04/2025", "2025-02-01", "2025-04-30"],
-  ["01/05 - 31/07/2025", "2025-05-01", "2025-07-31"],
+  ["RF 2024 - JANEIRO A ABRIL", "2023-12-01", "2024-04-30"],
+  ["01/09 - 30/10_2024", "2024-05-01", "2024-09-30"],
+  ["01/10 - 30/01", "2024-10-01", "2025-01-31"],
+  ["01/02 - 30/04", "2025-02-01", "2025-04-30"],
+  ["01/05 - 31/07_2025", "2025-05-01", "2025-07-31"],
   ["01/08 - 31/10/2025", "2025-08-01", "2025-10-31"],
   ["01/11 - 31/01/26", "2025-11-01", "2026-01-31"],
-  ["01/02 - 31/03/2026", "2026-02-01", "2026-03-31"],
-  ["01/04 - 30/06/2026", "2026-04-01", "2026-06-30"]
+  ["01/02 - 31/03_2026", "2026-02-01", "2026-03-31"],
+  ["01/04 - 30/06_2026", "2026-04-01", "2026-06-30"]
 ];
 
 // Carteiras de alunos: "regular" (aba Painel) e "contraturno" (aba Contraturno).
@@ -162,6 +163,13 @@ export default {
         if (!marca.meta || marca.meta.changes > 0) {
           await env.DB.batch(PERIODOS_INICIAIS.map(([nome, ini, fim]) => env.DB.prepare(
             "INSERT INTO serasa_periodos (id, nome, inicio, fim, criado_em, criado_por) VALUES (?,?,?,?,?, 'planilha')").bind(novoId(), nome, ini, fim, agora)));
+        }
+        // Uma vez: renomeia os períodos já criados para os nomes exatos das abas da planilha
+        // (só os que ainda estão com as datas originais).
+        const renome = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('periodos_nomes_planilha', ?)").bind(agora).run();
+        if (!renome.meta || renome.meta.changes > 0) {
+          await env.DB.batch(PERIODOS_INICIAIS.map(([nome, ini, fim]) => env.DB.prepare(
+            "UPDATE serasa_periodos SET nome = ? WHERE criado_por = 'planilha' AND inicio = ? AND fim = ?").bind(nome, ini, fim)));
         }
         schemaPronto = true;
       }
