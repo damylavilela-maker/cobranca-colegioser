@@ -295,14 +295,9 @@ table.ctrl .empty-ctrl{padding:20px;color:var(--muted)}
 .link-banner{background:var(--info-soft);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:8px 12px;font-size:13.5px;margin-top:6px}
 .tag.origem{background:var(--info-soft);color:var(--info);border-color:transparent;margin-left:6px}
 
-/* Serasa: abas de período, no estilo das abas da planilha */
-.periodos{display:flex;align-items:flex-end;gap:8px;border-bottom:1px solid var(--line);margin-bottom:16px}
-.periodos-lista{display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0;scrollbar-width:thin}
-.per-tab{appearance:none;border:none;background:none;color:var(--muted);font-weight:700;font-size:14px;padding:10px 14px;border-radius:10px 10px 0 0;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:8px;border-bottom:3px solid transparent;margin-bottom:-1px}
-.per-tab:hover{background:var(--surface-2);color:var(--ink)}
-.per-tab.active{background:var(--brand-soft);color:var(--brand);border-bottom-color:var(--brand)}
-.per-tab .n{font-size:12px;font-weight:700;background:var(--surface);border:1px solid var(--line);border-radius:100px;padding:0 7px;color:var(--muted)}
-.per-tab.active .n{color:var(--brand)}
-.per-tab .edit{font-size:13px;line-height:1;opacity:.75;padding:2px 2px}
-.per-tab .edit:hover{opacity:1}
-.periodos .btn{margin-bottom:6px;flex:none}
+
+/* Serasa: filtro de período (seleção + criar/editar) */
+.periodo-filtro{display:flex;gap:6px;align-items:center;flex:1.4 1 320px}
+.periodo-filtro select{flex:1;width:auto;min-width:0}
+.periodo-filtro .btn{flex:none}
+.btn.icone{padding:6px 10px;font-size:15px}

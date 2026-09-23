@@ -904,26 +904,24 @@
   try { periodoSel = localStorage.getItem("ser_periodo") || ""; } catch (e) { periodoSel = ""; }
   function periodoAtual() { for (var i = 0; i < periodos.length; i++) if (periodos[i].id === periodoSel) return periodos[i]; return null; }
   function noPeriodo(x, p) { return !p || (x.vencimento && x.vencimento >= p.inicio && x.vencimento <= p.fim); }
+  // Lista de períodos no campo "Período": mais recentes primeiro, com a quantidade de parcelas.
   function renderPeriodos() {
     var cont = function (p) { var n = 0; parcelas.forEach(function (x) { if (noPeriodo(x, p)) n++; }); return n; };
-    var abas = [{ id: "", nome: "Todos os períodos" }].concat(periodos);
-    $("serPeriodos").innerHTML = abas.map(function (p) {
-      var ativo = p.id === periodoSel;
-      return '<button type="button" class="per-tab' + (ativo ? " active" : "") + '" role="tab" aria-selected="' + ativo + '" data-per="' + esc(p.id) + '"' +
-        (p.id ? ' title="' + br(p.inicio) + " a " + br(p.fim) + '"' : "") + ">" + esc(p.nome) + ' <span class="n">' + cont(p.id ? p : null) + "</span>" +
-        (ativo && p.id ? '<span class="edit" data-editar-per="' + esc(p.id) + '" title="Editar período" aria-label="Editar período">✎</span>' : "") + "</button>";
-    }).join("");
-    var at = $("serPeriodos").querySelector(".per-tab.active");
-    if (at && at.scrollIntoView) at.scrollIntoView({ block: "nearest", inline: "nearest" });
+    var opcoes = [{ v: "", l: "Período: todos (" + parcelas.length + ")" }].concat(periodos.slice().reverse().map(function (p) {
+      return { v: p.id, l: "Período: " + p.nome + " (" + cont(p) + ")" };
+    }));
+    prepararSelect($("sPeriodo"), opcoes.map(function (o) { return { v: esc(o.v), l: esc(o.l) }; }), periodoSel);
+    $("sPeriodo").value = periodoSel;
+    var p = periodoAtual();
+    $("sPeriodo").title = p ? "Vencimentos de " + br(p.inicio) + " a " + br(p.fim) : "Todos os vencimentos";
+    $("btnEditarPeriodo").hidden = !p;
   }
-  $("serPeriodos").addEventListener("click", function (e) {
-    var ed = e.target.closest("[data-editar-per]");
-    if (ed) { abrirPeriodo(ed.getAttribute("data-editar-per")); return; }
-    var b = e.target.closest(".per-tab"); if (!b) return;
-    periodoSel = b.getAttribute("data-per");
+  $("sPeriodo").addEventListener("change", function () {
+    periodoSel = this.value;
     try { localStorage.setItem("ser_periodo", periodoSel); } catch (x) { /* navegador sem armazenamento */ }
     serSel = {}; serLimite = 300; renderSerasa();
   });
+  $("btnEditarPeriodo").addEventListener("click", function () { if (periodoSel) abrirPeriodo(periodoSel); });
 
   var periodoEdit = null;
   function ultimoDiaMes(ano, mes) { return isoLocal(new Date(ano, mes, 0)); } // mes 1-12
@@ -1032,8 +1030,10 @@
 
     var tb = $("serTbody");
     if (!serFiltrada.length) {
-      tb.innerHTML = '<tr><td colspan="8" class="empty"><b>' + (p.length ? "Nenhuma parcela com estes filtros" : "Nenhuma parcela cadastrada ainda") + '</b><div class="muted">' +
-        (p.length ? "Ajuste a busca ou os filtros acima." : "Importe a planilha da Serasa ou cadastre a primeira parcela.") + "</div></td></tr>";
+      var msg = !parcelas.length ? ["Nenhuma parcela cadastrada ainda", "Importe a planilha da Serasa ou cadastre a primeira parcela."]
+        : !p.length ? ["Nenhuma parcela com vencimento neste período", "Importe o relatório do período ou escolha outro período acima."]
+        : ["Nenhuma parcela com estes filtros", "Ajuste a busca ou os filtros acima."];
+      tb.innerHTML = '<tr><td colspan="8" class="empty"><b>' + msg[0] + '</b><div class="muted">' + msg[1] + "</div></td></tr>";
     } else {
       tb.innerHTML = serFiltrada.slice(0, serLimite).map(function (x) {
         var quem = x.nome || x.responsavel || "—";

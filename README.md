@@ -64,8 +64,8 @@ senha provisória. No primeiro login a pessoa troca a senha.
 - **Serasa** — controle de negativação por parcela (RA, aluno, responsável, CPF, vencimento, valor, tipo,
   situação no Mentor e no Serasa, data e responsável pela inclusão). Importação de planilha, seleção de
   várias parcelas para marcar "Mentor OK", "Serasa: incluído hoje", "Pago" ou "Não negativar", e exportação.
-  Os períodos (abas no topo, como na planilha) filtram pelo vencimento; os 9 da planilha já vêm criados
-  e os próximos são criados em "+ Novo período" (o ✎ na aba ativa edita ou exclui).
+  O campo "Período" filtra pelo vencimento; os 9 períodos da planilha já vêm criados
+  e os próximos são criados em "+ Novo período" e entram na lista (o ✎ edita ou exclui o período escolhido).
   O histórico da planilha "SERASA - SER" está pronto em `migracao/serasa-historico.csv`
   (Serasa → Importar planilha → cole ou arraste o arquivo). Reimportar não duplica.
 

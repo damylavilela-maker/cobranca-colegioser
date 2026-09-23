@@ -169,12 +169,13 @@
           <button type="button" class="btn primary small" id="btnSerNovo">+ Nova parcela</button>
         </div>
       </div>
-      <div class="periodos" role="tablist" aria-label="Períodos de vencimento">
-        <div class="periodos-lista" id="serPeriodos"></div>
-        <button type="button" class="btn ghost small" id="btnNovoPeriodo">+ Novo período</button>
-      </div>
       <div class="kpis k6" id="serKpis"></div>
       <div class="filters">
+        <span class="periodo-filtro">
+          <select id="sPeriodo" aria-label="Período de vencimento"></select>
+          <button type="button" class="btn ghost small icone" id="btnEditarPeriodo" title="Editar ou excluir este período" aria-label="Editar período" hidden>✎</button>
+          <button type="button" class="btn ghost small" id="btnNovoPeriodo">+ Novo período</button>
+        </span>
         <input type="search" id="sBusca" placeholder="Buscar aluno, responsável, RA ou CPF…" aria-label="Buscar">
         <select id="sMentor" aria-label="Situação no Mentor"></select>
         <select id="sSerasa" aria-label="Situação no Serasa"></select>
