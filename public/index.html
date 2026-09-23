@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Cobrança · Colégio Ser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%231B693D'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='700' font-size='16' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Carlito:ital,wght@0,400;0,700;1,400&family=Nunito:wght@600;700;800;900&display=swap">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- ================= CARREGANDO ================= -->
+<div id="boot" class="boot">Carregando…</div>
+
+<!-- ================= CONFIGURAÇÃO INICIAL / LOGIN / TROCA DE SENHA ================= -->
+<section id="auth" class="auth" hidden>
+  <div class="auth-art">
+    <span class="wm"><span class="wm-text"><span class="wm-c">colégio</span><span class="wm-s">Ser</span></span><span class="wm-sep"></span><span class="seal">SER</span></span>
+    <div class="auth-copy">
+      <div class="eyebrow">Secretaria &amp; Financeiro</div>
+      <h1>Painel de <em>cobrança</em></h1>
+      <p>Acompanhamento de inadimplência, atendimentos e acordos da equipe, com acesso restrito.</p>
+    </div>
+    <div class="auth-foot">Acesso exclusivo da equipe · Colégio Ser</div>
+  </div>
+  <div class="auth-panel">
+
+    <form class="auth-card" id="formLogin" novalidate hidden>
+      <h2>Entrar</h2>
+      <div class="sub">Use o usuário e a senha criados pela administração.</div>
+      <div class="form-err" id="loginErr" hidden></div>
+      <div class="field"><label for="lUser">Usuário</label><input id="lUser" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+      <div class="field"><label for="lPass">Senha</label>
+        <div class="pw-wrap"><input id="lPass" type="password" autocomplete="current-password"><button type="button" class="pw-toggle" data-pw="lPass">Mostrar</button></div>
+      </div>
+      <button class="btn primary big" type="submit" id="btnEntrar">Entrar no painel</button>
+      <div class="hint">Esqueceu a senha? Peça para uma administradora redefinir.</div>
+    </form>
+
+    <form class="auth-card" id="formSetup" novalidate hidden>
+      <h2>Configuração inicial</h2>
+      <div class="sub">Nenhum acesso foi criado ainda. Crie o primeiro administrador — os demais acessos são criados depois, pela tela de Usuários.</div>
+      <div class="form-err" id="setupErr" hidden></div>
+      <div class="field" id="setupChaveWrap"><label for="sChave">Chave de configuração <span class="muted">(se foi definida na Cloudflare)</span></label><input id="sChave" type="password" autocomplete="off"></div>
+      <div class="field"><label for="sNome">Seu nome (como aparece nos atendimentos)</label><input id="sNome" placeholder="Ex.: Damyla"></div>
+      <div class="field"><label for="sUser">Usuário</label><input id="sUser" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="ex.: damyla"></div>
+      <div class="grid2">
+        <div class="field"><label for="sPass">Senha</label><input id="sPass" type="password" autocomplete="new-password"></div>
+        <div class="field"><label for="sPass2">Confirmar senha</label><input id="sPass2" type="password" autocomplete="new-password"></div>
+      </div>
+      <button class="btn primary big" type="submit">Criar administrador e entrar</button>
+    </form>
+
+    <form class="auth-card" id="formTroca" novalidate hidden>
+      <h2>Crie sua senha</h2>
+      <div class="sub" id="trocaSub">Sua senha atual é provisória. Escolha uma senha pessoal para continuar.</div>
+      <div class="form-err" id="trocaErr" hidden></div>
+      <div class="field"><label for="tAtual">Senha provisória</label><input id="tAtual" type="password" autocomplete="current-password"></div>
+      <div class="grid2">
+        <div class="field"><label for="tNova">Nova senha</label><input id="tNova" type="password" autocomplete="new-password"></div>
+        <div class="field"><label for="tNova2">Confirmar</label><input id="tNova2" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="hint">Mínimo de 8 caracteres.</div>
+      <button class="btn primary big" type="submit">Salvar e entrar</button>
+      <button class="linkbtn" type="button" data-sair>Sair</button>
+    </form>
+
+  </div>
+</section>
+
+<!-- ================= APLICAÇÃO ================= -->
+<section id="app" class="app" hidden>
+  <aside class="side">
+    <span class="wm"><span class="wm-text"><span class="wm-c">colégio</span><span class="wm-s">Ser</span></span><span class="seal">SER</span></span>
+    <nav class="nav" id="nav">
+      <div class="nav-lbl">Cobrança</div>
+      <button type="button" data-view="painel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Painel<span class="badge" id="navBadge" hidden></span></button>
+      <button type="button" data-view="evolucao"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 20h18"/><path d="M6 16v-5M11 16V7M16 16v-8M21 16V4"/></svg>Evolução</button>
+      <div class="nav-lbl" data-admin>Administração</div>
+      <button type="button" data-view="usuarios" data-admin><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.7 3 2.4 3.5 5.2"/></svg>Usuários e acessos</button>
+    </nav>
+    <div class="side-user">
+      <div class="who"><div class="avatar" id="uAvatar">?</div><div><div class="n" id="uNome">—</div><div class="r" id="uPerfil">—</div></div></div>
+      <div class="side-actions"><button type="button" id="btnMinhaSenha">Minha senha</button><button type="button" data-sair>Sair</button></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- PAINEL -->
+    <div id="v-painel" class="view">
+      <div class="page-head">
+        <div><h1>Painel de cobrança</h1><div class="sub" id="saudacao">—</div></div>
+        <div class="actions">
+          <span class="sync" id="sync" title="Os dados são atualizados automaticamente a cada minuto"><i></i><span id="syncLbl">—</span></span>
+          <button type="button" class="btn ghost small" id="btnArquivados">Arquivados</button>
+          <button type="button" class="btn ghost small" id="btnModelo">Baixar modelo</button>
+          <button type="button" class="btn ghost small" id="btnImportar">Importar planilha</button>
+          <button type="button" class="btn ghost small" id="btnExportar">Exportar relatório</button>
+          <button type="button" class="btn primary small" id="btnNovo">+ Novo aluno</button>
+        </div>
+      </div>
+      <div class="kpis" id="kpis"></div>
+      <div class="filters">
+        <input type="search" id="fBusca" placeholder="Buscar aluno, responsável ou RA…" aria-label="Buscar">
+        <select id="fStatus" aria-label="Status"></select>
+        <select id="fSetor" aria-label="Setor"></select>
+        <select id="fAtend" aria-label="Atendente"></select>
+        <select id="fOrdem" aria-label="Ordenar">
+          <option value="valor">Maior valor em aberto</option>
+          <option value="retorno">Próximo retorno</option>
+          <option value="recente">Atendido recentemente</option>
+          <option value="nome">Nome (A–Z)</option>
+        </select>
+        <button type="button" class="btn ghost small" id="btnHoje" title="Mostrar só quem tem retorno para hoje ou atrasado">Retornos de hoje</button>
+      </div>
+      <div class="count" id="count"></div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>Aluno</th><th>Valor em aberto</th><th>Status</th><th>Setor</th><th>Último atendimento</th><th>Próx. retorno</th><th>Atendente</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- EVOLUÇÃO -->
+    <div id="v-evolucao" class="view" hidden>
+      <div class="page-head"><div><h1>Evolução</h1><div class="sub">Produção da equipe e recuperação ao longo do tempo</div></div></div>
+      <div class="cards">
+        <div class="card"><h3>Atendimentos nos últimos 14 dias</h3><div class="days" id="days"></div><div class="day-lbls" id="dayLbls"></div></div>
+        <div class="card"><h3>Últimos atendimentos registrados</h3><div class="feed" id="feed"></div></div>
+      </div>
+      <div class="cards even">
+        <div class="card"><h3>Atendimentos por canal</h3><div id="barCanal"></div></div>
+        <div class="card"><h3>Carteira por status</h3><div id="barStatus"></div></div>
+      </div>
+      <div class="cards even">
+        <div class="card">
+          <div class="card-head"><h3>Valor recuperado por mês</h3><select id="anoEvolSel" aria-label="Ano"></select></div>
+          <div class="scroll-x"><table class="mini" id="anoEvolTable"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Valor negociado por mensalidade</h3><select id="mensEvolAnoSel" aria-label="Ano"></select></div>
+          <div class="scroll-x"><table class="mini" id="mensEvolTable"></table></div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-head"><h3>Controle diário de atendimentos</h3><select id="ctrlMesSel" aria-label="Mês"></select></div>
+        <div class="scroll-x"><table class="ctrl" id="ctrlTable"></table></div>
+      </div>
+      <div class="card">
+        <h3>Recuperação por faixa de vencimento <span class="muted small-note">(mês selecionado acima)</span></h3>
+        <div id="faixaVencList"></div>
+      </div>
+    </div>
+
+    <!-- USUÁRIOS -->
+    <div id="v-usuarios" class="view" hidden>
+      <div class="page-head">
+        <div><h1>Usuários e acessos</h1><div class="sub">Quem pode entrar no painel e o que cada pessoa pode fazer</div></div>
+        <div class="actions"><button type="button" class="btn primary small" id="btnNovoUser">+ Criar acesso</button></div>
+      </div>
+      <div class="note"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg><div><b>Administradores</b> gerenciam acessos, importam backups e excluem qualquer atendimento. <b>Atendentes</b> usam o painel, registram atendimentos e trocam a própria senha. O <b>nome</b> de cada pessoa é o que aparece como atendente nos registros — use o mesmo nome que já aparece no histórico (ex.: “Damyla”, “Dani Andrade”, “Cecília”) para os números continuarem somando juntos.</div></div>
+      <div class="table-wrap" style="margin-bottom:22px">
+        <table class="data">
+          <thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Situação</th><th>Último acesso</th><th class="right">Ações</th></tr></thead>
+          <tbody id="tbodyUsers"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3>Trazer dados do painel antigo</h3>
+        <p class="muted" style="margin:0 0 12px">Envie o arquivo <code>backup-painel-antigo.json</code> gerado a partir do painel anterior. Alunos e atendimentos entram com os mesmos identificadores, então enviar o mesmo arquivo duas vezes não duplica nada.</p>
+        <div class="dropzone" id="backupDrop">Arraste o arquivo .json aqui ou clique para selecionar<input type="file" id="backupFile" accept=".json,application/json" hidden></div>
+        <div id="backupResult" class="import-summary"></div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= MODAIS ================= -->
+<div class="overlay" id="mDetalhe" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="dNome">
+    <div class="m-head">
+      <div style="flex:1;min-width:0">
+        <h2 id="dNome">—</h2><div class="sub" id="dSub">—</div>
+        <div class="info" id="dInfoView"></div>
+        <button type="button" class="btn ghost small" id="btnEditarDados" style="margin-top:10px">Editar dados do aluno</button>
+        <div class="grid2" id="dInfoEdit" hidden style="margin-top:12px">
+          <div class="field"><label for="eNome">Nome do aluno</label><input id="eNome"></div>
+          <div class="field"><label for="eRa">RA</label><input id="eRa"></div>
+          <div class="field"><label for="eTurma">Turma</label><input id="eTurma"></div>
+          <div class="field"><label for="eResp">Responsável financeiro</label><input id="eResp"></div>
+          <div class="field"><label for="eTel">Telefone</label><input id="eTel"></div>
+          <div class="field"><label for="eEmail">E-mail</label><input id="eEmail" type="email"></div>
+          <div class="field"><label for="eValor">Valor em aberto (R$)</label><input id="eValor" type="number" step="0.01" min="0"></div>
+          <div class="field"><label for="eVenc">Vencimento (parcela mais antiga)</label><input id="eVenc" type="date"></div>
+          <div class="field"><label for="eSetor">Setor responsável</label><select id="eSetor"></select></div>
+          <div class="row-end" style="grid-column:1/-1">
+            <button type="button" class="btn ghost small" id="btnCancelarEdit">Cancelar</button>
+            <button type="button" class="btn primary small" id="btnSalvarEdit">Salvar dados</button>
+          </div>
+        </div>
+      </div>
+      <button type="button" class="x" data-close aria-label="Fechar">×</button>
+    </div>
+    <div class="m-body">
+      <div id="dArchBanner"></div>
+      <div class="sec">Registrar novo atendimento</div>
+      <form id="formAt" class="stack">
+        <div class="grid3">
+          <div class="field"><label for="aData">Data</label><input type="date" id="aData" required></div>
+          <div class="field"><label for="aAtend">Atendente</label><input id="aAtend" disabled></div>
+          <div class="field"><label for="aCanal">Canal</label><select id="aCanal"></select></div>
+        </div>
+        <div class="grid3">
+          <div class="field"><label for="aSetor">Setor envolvido</label><select id="aSetor"></select></div>
+          <div class="field"><label for="aMotivo">Motivo do atendimento</label><select id="aMotivo"></select></div>
+          <div class="field"><label for="aProx">Próximo retorno</label><input type="date" id="aProx"></div>
+        </div>
+        <div class="field" id="aMotivoOutroWrap" hidden><input id="aMotivoOutro" placeholder="Descreva o motivo" aria-label="Outro motivo"></div>
+        <div class="field"><label for="aObs">Observação</label><textarea id="aObs" rows="3" placeholder="O que foi tratado, combinado ou pendente…"></textarea></div>
+        <div class="grid2">
+          <div class="field"><label for="aStatus">Status após este atendimento</label><select id="aStatus"></select></div>
+          <div class="field"><label for="aValorNovo">Valor em aberto atualizado (opcional)</label><input type="number" step="0.01" min="0" id="aValorNovo" placeholder="Mantém o valor atual"></div>
+        </div>
+        <div class="field">
+          <label>Mensalidades negociadas neste atendimento (opcional)</label>
+          <div class="mens-head"><select id="aMensAno" aria-label="Ano das mensalidades"></select><span class="mens-total">Total negociado: <b id="aMensTotal">R$ 0,00</b></span></div>
+          <div class="mens-grid" id="aMensGrid"></div>
+        </div>
+        <div class="m-foot spread">
+          <button type="button" class="btn ghost small" id="btnArquivarAluno">Arquivar aluno</button>
+          <button type="submit" class="btn primary" id="btnSalvarAt">Salvar atendimento</button>
+        </div>
+      </form>
+      <div class="sec">Histórico de atendimentos</div>
+      <div class="tl" id="dTl"></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="mNovo" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mNovoT">
+    <div class="m-head"><div><h2 id="mNovoT">Cadastrar aluno em acompanhamento</h2><div class="sub">Adiciona o aluno à carteira de cobrança</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <form class="m-body" id="formNovo">
+      <div class="grid2">
+        <div class="field"><label for="nNome">Nome do aluno</label><input id="nNome" required placeholder="Nome completo"></div>
+        <div class="field"><label for="nRa">RA</label><input id="nRa" placeholder="Registro do aluno"></div>
+        <div class="field"><label for="nTurma">Turma</label><input id="nTurma" placeholder="Ex.: 3º ANO A EM"></div>
+        <div class="field"><label for="nResp">Responsável financeiro</label><input id="nResp"></div>
+        <div class="field"><label for="nTel">Telefone</label><input id="nTel" placeholder="(11) 90000-0000"></div>
+        <div class="field"><label for="nEmail">E-mail</label><input id="nEmail" type="email"></div>
+        <div class="field"><label for="nValor">Valor em aberto (R$)</label><input id="nValor" type="number" min="0" step="0.01"></div>
+        <div class="field"><label for="nVenc">Vencimento (parcela mais antiga)</label><input id="nVenc" type="date"></div>
+        <div class="field"><label for="nSetor">Setor responsável</label><select id="nSetor"></select></div>
+      </div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary">Cadastrar aluno</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="mImportar" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="mImpT">
+    <div class="m-head"><div><h2 id="mImpT">Importar planilha</h2><div class="sub">Envie um CSV exportado da planilha de cobrança (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento)</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div class="dropzone" id="dropzone">Arraste um arquivo .csv aqui ou clique para selecionar<input type="file" id="fileInput" accept=".csv,.txt,text/csv,text/plain,application/vnd.ms-excel" hidden></div>
+      <div class="field">
+        <label for="pasteArea">Não conseguiu anexar o arquivo? Cole o conteúdo do CSV aqui</label>
+        <textarea id="pasteArea" rows="4"></textarea>
+        <div><button type="button" class="btn ghost small" id="btnProcessPaste">Processar texto colado</button></div>
+      </div>
+      <div id="importResult"></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="btnConfirmImport" disabled>Importar alunos</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="mUser" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="uTitle">
+    <div class="m-head"><div><h2 id="uTitle">Criar acesso</h2><div class="sub" id="uSub">—</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <form class="m-body" id="formUser" novalidate>
+      <div class="grid2" id="uIdent">
+        <div class="field"><label for="uFNome">Nome (aparece nos atendimentos)</label><input id="uFNome" placeholder="Ex.: Dani Andrade"></div>
+        <div class="field"><label for="uFUser">Usuário (login)</label><input id="uFUser" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="ex.: dani.andrade"><span class="hint">Minúsculas, números, ponto</span></div>
+      </div>
+      <div class="field" id="uPerfilWrap"><label for="uFPerfil">Perfil</label>
+        <select id="uFPerfil"><option value="atendente">Atendente — registra atendimentos</option><option value="admin">Administrador — também gerencia usuários</option></select>
+      </div>
+      <div class="grid2">
+        <div class="field"><label for="uFPass">Senha provisória</label>
+          <div class="pw-wrap"><input id="uFPass" type="password" autocomplete="new-password"><button type="button" class="pw-toggle" data-pw="uFPass">Mostrar</button></div>
+          <div class="pw-strength"><div id="uStr"></div></div>
+        </div>
+        <div class="field"><label for="uFPass2">Confirmar senha</label><input id="uFPass2" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="row-between">
+        <label class="check-line"><input type="checkbox" id="uFTroca" checked> Pedir troca de senha no primeiro acesso</label>
+        <button type="button" class="linkbtn" id="btnGerar">Gerar senha segura</button>
+      </div>
+      <div class="form-err" id="uErr" hidden></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary" id="uSubmit">Criar acesso</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="mEditUser" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="euTitle">
+    <div class="m-head"><div><h2 id="euTitle">Editar acesso</h2><div class="sub" id="euSub">—</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <form class="m-body" id="formEditUser" novalidate>
+      <div class="field"><label for="euNome">Nome (aparece nos atendimentos)</label><input id="euNome"></div>
+      <div class="field"><label for="euPerfil">Perfil</label><select id="euPerfil"><option value="atendente">Atendente</option><option value="admin">Administrador</option></select></div>
+      <div class="form-err" id="euErr" hidden></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary">Salvar</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="mSenha" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mSenhaT">
+    <div class="m-head"><div><h2 id="mSenhaT">Alterar minha senha</h2><div class="sub">Mínimo de 8 caracteres. Outros computadores conectados com seu usuário serão desconectados.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <form class="m-body" id="formSenha" novalidate>
+      <div class="field"><label for="msAtual">Senha atual</label><input id="msAtual" type="password" autocomplete="current-password"></div>
+      <div class="grid2">
+        <div class="field"><label for="msNova">Nova senha</label><input id="msNova" type="password" autocomplete="new-password"></div>
+        <div class="field"><label for="msNova2">Confirmar nova senha</label><input id="msNova2" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="form-err" id="msErr" hidden></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary">Salvar nova senha</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Dados reais de alunos — nunca versionar nem publicar
+migracao/
+.wrangler/
+node_modules/

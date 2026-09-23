@@ -1,0 +1,19 @@
+# Configuração usada pela Cloudflare ao publicar a partir do GitHub.
+name = "cobranca-colegioser"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+# Telas do painel (HTML, CSS, JS). O /api/ é sempre atendido pelo src/worker.js.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Banco de dados. Troque o database_id pelo ID do banco "cobranca-ser"
+# (Cloudflare > Storage & Databases > D1 > cobranca-ser > copie o "Database ID").
+[[d1_databases]]
+binding = "DB"
+database_name = "cobranca-ser"
+database_id = "COLE_AQUI_O_ID_DO_BANCO"
+
+[observability]
+enabled = true
