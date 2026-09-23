@@ -53,6 +53,20 @@ senha provisória. No primeiro login a pessoa troca a senha.
 
 ---
 
+## Abas
+
+- **Painel** — carteira principal de cobrança.
+- **Evolução** — produção da equipe (todos os atendimentos).
+- **Contraturno** — mesma tela e indicadores do Painel, com carteira própria (importada do
+  relatório do contraturno). Quando o aluno está nas duas carteiras (mesmo RA, ou mesmo nome sem RA),
+  um atendimento registrado em qualquer aba aparece no histórico das duas e atualiza "último atendimento",
+  "próximo retorno" e atendente nas duas. Status e valor em aberto são próprios de cada aba.
+- **Serasa** — controle de negativação por parcela (RA, aluno, responsável, CPF, vencimento, valor, tipo,
+  situação no Mentor e no Serasa, data e responsável pela inclusão). Importação de planilha, seleção de
+  várias parcelas para marcar "Mentor OK", "Serasa: incluído hoje", "Pago" ou "Não negativar", e exportação.
+  O histórico da planilha "SERASA - SER" está pronto em `migracao/serasa-historico.csv`
+  (Serasa → Importar planilha → cole ou arraste o arquivo). Reimportar não duplica.
+
 ## Atualizar o site
 Altere os arquivos no GitHub (ou envie novos com **Add file → Upload files**). A cada *commit*
 na branch principal a Cloudflare publica sozinha em cerca de 1 minuto. Os dados do banco não são afetados.

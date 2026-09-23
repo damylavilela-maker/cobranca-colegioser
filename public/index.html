@@ -79,6 +79,8 @@
       <div class="nav-lbl">Cobrança</div>
       <button type="button" data-view="painel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Painel<span class="badge" id="navBadge" hidden></span></button>
       <button type="button" data-view="evolucao"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 20h18"/><path d="M6 16v-5M11 16V7M16 16v-8M21 16V4"/></svg>Evolução</button>
+      <button type="button" data-view="contraturno"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Contraturno<span class="badge" id="navBadgeCt" hidden></span></button>
+      <button type="button" data-view="serasa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>Serasa</button>
       <div class="nav-lbl" data-admin>Administração</div>
       <button type="button" data-view="usuarios" data-admin><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.7 3 2.4 3.5 5.2"/></svg>Usuários e acessos</button>
     </nav>
@@ -92,7 +94,7 @@
     <!-- PAINEL -->
     <div id="v-painel" class="view">
       <div class="page-head">
-        <div><h1>Painel de cobrança</h1><div class="sub" id="saudacao">—</div></div>
+        <div><h1 id="painelTitulo">Painel de cobrança</h1><div class="sub" id="saudacao">—</div></div>
         <div class="actions">
           <span class="sync" id="sync" title="Os dados são atualizados automaticamente a cada minuto"><i></i><span id="syncLbl">—</span></span>
           <button type="button" class="btn ghost small" id="btnArquivados">Arquivados</button>
@@ -134,7 +136,7 @@
       </div>
       <div class="cards even">
         <div class="card"><h3>Atendimentos por canal</h3><div id="barCanal"></div></div>
-        <div class="card"><h3>Carteira por status</h3><div id="barStatus"></div></div>
+        <div class="card"><h3>Carteira do Painel por status</h3><div id="barStatus"></div></div>
       </div>
       <div class="cards even">
         <div class="card">
@@ -154,6 +156,48 @@
         <h3>Recuperação por faixa de vencimento <span class="muted small-note">(mês selecionado acima)</span></h3>
         <div id="faixaVencList"></div>
       </div>
+    </div>
+
+    <!-- SERASA -->
+    <div id="v-serasa" class="view" hidden>
+      <div class="page-head">
+        <div><h1>Serasa</h1><div class="sub">Controle de negativação por parcela — Mentor e Serasa</div></div>
+        <div class="actions">
+          <button type="button" class="btn ghost small" id="btnSerModelo">Baixar modelo</button>
+          <button type="button" class="btn ghost small" id="btnSerImportar">Importar planilha</button>
+          <button type="button" class="btn ghost small" id="btnSerExportar">Exportar relatório</button>
+          <button type="button" class="btn primary small" id="btnSerNovo">+ Nova parcela</button>
+        </div>
+      </div>
+      <div class="kpis k6" id="serKpis"></div>
+      <div class="filters">
+        <input type="search" id="sBusca" placeholder="Buscar aluno, responsável, RA ou CPF…" aria-label="Buscar">
+        <select id="sMentor" aria-label="Situação no Mentor"></select>
+        <select id="sSerasa" aria-label="Situação no Serasa"></select>
+        <select id="sAno" aria-label="Ano de vencimento"></select>
+        <select id="sOrdem" aria-label="Ordenar">
+          <option value="venc_desc">Vencimento mais recente</option>
+          <option value="venc_asc">Vencimento mais antigo</option>
+          <option value="valor">Maior valor</option>
+          <option value="nome">Nome (A–Z)</option>
+        </select>
+      </div>
+      <div class="bulk" id="serBulk" hidden>
+        <b id="serSelCount">0 selecionadas</b>
+        <button type="button" class="btn small" data-lote='{"mentor":"ok"}'>Mentor: OK</button>
+        <button type="button" class="btn small" data-lote='{"serasa":"ok"}'>Serasa: incluído hoje</button>
+        <button type="button" class="btn small" data-lote='{"mentor":"pago","serasa":"pago"}'>Marcar como pago</button>
+        <button type="button" class="btn small" data-lote='{"mentor":"nao_negativar"}'>Não negativar</button>
+        <button type="button" class="linkbtn" id="serLimparSel">Limpar seleção</button>
+      </div>
+      <div class="count" id="serCount"></div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th style="width:36px"><input type="checkbox" id="serSelTodos" aria-label="Selecionar todas as parcelas visíveis"></th><th>Aluno / responsável</th><th>Vencimento</th><th>Valor</th><th>Tipo</th><th>Mentor</th><th>Serasa</th><th>Inclusão</th></tr></thead>
+          <tbody id="serTbody"></tbody>
+        </table>
+      </div>
+      <div class="row-end" style="justify-content:center;margin-top:12px"><button type="button" class="btn ghost small" id="serMais" hidden>Mostrar mais</button></div>
     </div>
 
     <!-- USUÁRIOS -->
@@ -263,7 +307,7 @@
 
 <div class="overlay" id="mImportar" hidden>
   <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="mImpT">
-    <div class="m-head"><div><h2 id="mImpT">Importar planilha</h2><div class="sub">Envie um CSV exportado da planilha de cobrança (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento)</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-head"><div><h2 id="mImpT">Importar planilha</h2><div class="sub" id="mImpSub">Envie um CSV exportado da planilha de cobrança (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento)</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
     <div class="m-body">
       <div class="dropzone" id="dropzone">Arraste um arquivo .csv aqui ou clique para selecionar<input type="file" id="fileInput" accept=".csv,.txt,text/csv,text/plain,application/vnd.ms-excel" hidden></div>
       <div class="field">
@@ -274,6 +318,34 @@
       <div id="importResult"></div>
       <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="btnConfirmImport" disabled>Importar alunos</button></div>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="mSerasa" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="serTitulo">
+    <div class="m-head"><div><h2 id="serTitulo">Nova parcela</h2><div class="sub" id="serSub">Registro de negativação</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <form class="m-body" id="formSerasa" novalidate>
+      <div class="grid2">
+        <div class="field"><label for="srRa">RA</label><input id="srRa"></div>
+        <div class="field"><label for="srNome">Nome do aluno</label><input id="srNome"></div>
+        <div class="field"><label for="srResp">Responsável financeiro</label><input id="srResp"></div>
+        <div class="field"><label for="srCpf">CPF do responsável</label><input id="srCpf" inputmode="numeric" placeholder="000.000.000-00"></div>
+        <div class="field"><label for="srVenc">Vencimento</label><input id="srVenc" type="date"></div>
+        <div class="field"><label for="srValor">Valor (R$)</label><input id="srValor" type="number" step="0.01" min="0"></div>
+        <div class="field"><label for="srTipo">Tipo</label><input id="srTipo" list="srTipos" placeholder="Mensalidade"><datalist id="srTipos"><option value="MENSALIDADE"></option><option value="ACORDO"></option><option value="CHEQUE DEV."></option><option value="MATERIAL"></option></datalist></div>
+        <div class="field"><label for="srInclusao">Data de inclusão</label><input id="srInclusao" type="date"></div>
+        <div class="field"><label for="srMentor">Mentor</label><select id="srMentor"></select></div>
+        <div class="field"><label for="srSerasa">Serasa</label><select id="srSerasa"></select></div>
+        <div class="field" style="grid-column:1/-1"><label for="srRespInc">Responsável pela inclusão</label><input id="srRespInc"></div>
+      </div>
+      <div class="field"><label for="srObs">Observação</label><textarea id="srObs" rows="2"></textarea></div>
+      <div class="meta" id="srAtualizado"></div>
+      <div class="form-err" id="srErr" hidden></div>
+      <div class="m-foot spread">
+        <button type="button" class="btn danger small" id="srExcluir" hidden>Excluir parcela</button>
+        <span class="row-end"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary" id="srSalvar">Salvar</button></span>
+      </div>
+    </form>
   </div>
 </div>
 

@@ -79,10 +79,39 @@ const SCHEMA = [
     criado_em TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_atend_aluno ON atendimentos(aluno_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_atend_data ON atendimentos(data)`
+  `CREATE INDEX IF NOT EXISTS idx_atend_data ON atendimentos(data)`,
+  // Controle de negativação: uma linha por parcela, como na planilha "SERASA - SER".
+  `CREATE TABLE IF NOT EXISTS serasa (
+    id TEXT PRIMARY KEY,
+    ra TEXT NOT NULL DEFAULT '',
+    nome TEXT NOT NULL DEFAULT '',
+    responsavel TEXT NOT NULL DEFAULT '',
+    cpf TEXT NOT NULL DEFAULT '',
+    vencimento TEXT NOT NULL DEFAULT '',
+    valor REAL NOT NULL DEFAULT 0,
+    tipo TEXT NOT NULL DEFAULT '',
+    mentor TEXT NOT NULL DEFAULT '',
+    serasa TEXT NOT NULL DEFAULT '',
+    data_inclusao TEXT NOT NULL DEFAULT '',
+    resp_inclusao TEXT NOT NULL DEFAULT '',
+    observacao TEXT NOT NULL DEFAULT '',
+    criado_em TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL,
+    atualizado_por TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_serasa_ra ON serasa(ra)`
 ];
 
-const ALUNO_COLS = ["id", "nome", "ra", "turma", "responsavel", "telefone", "email", "valor_aberto", "parcelas_aberto", "vencimento", "status", "setor", "atendente_responsavel", "ultimo_contato_data", "ultimo_contato_canal", "proximo_retorno", "arquivado", "ultima_atualizacao_financeira", "criado_em", "atualizado_em"];
+// Carteiras de alunos: "regular" (aba Painel) e "contraturno" (aba Contraturno).
+const CARTEIRAS = ["regular", "contraturno"];
+function carteiraValida(v) { return CARTEIRAS.includes(v) ? v : "regular"; }
+
+// Situação da parcela no Mentor e no Serasa ("" = pendente).
+const SERASA_STATUS = ["", "ok", "pago", "negociado", "juridico", "bloqueio", "nao_negativar"];
+function statusSerasaValido(v) { return SERASA_STATUS.includes(v) ? v : ""; }
+
+const ALUNO_COLS = ["id", "nome", "ra", "turma", "responsavel", "telefone", "email", "valor_aberto", "parcelas_aberto", "vencimento", "status", "setor", "atendente_responsavel", "ultimo_contato_data", "ultimo_contato_canal", "proximo_retorno", "arquivado", "ultima_atualizacao_financeira", "criado_em", "atualizado_em", "carteira"];
+const SERASA_COLS = ["id", "ra", "nome", "responsavel", "cpf", "vencimento", "valor", "tipo", "mentor", "serasa", "data_inclusao", "resp_inclusao", "observacao", "criado_em", "atualizado_em", "atualizado_por"];
 const ATEND_COLS = ["id", "aluno_id", "aluno_nome", "data", "usuario_id", "atendente_nome", "canal", "setor", "motivo", "observacao", "status_resultante", "proximo_retorno", "valor_recuperado", "valor_recuperado_aberto", "faixa_atraso", "mensalidades", "valor_negociado_total", "criado_em"];
 
 class HttpError extends Error {
@@ -99,6 +128,9 @@ export default {
       if (!env.DB) throw new HttpError(500, "Banco de dados não vinculado. No painel da Cloudflare, adicione um vínculo D1 com o nome DB.");
       if (!schemaPronto) {
         await env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s)));
+        // Bancos criados antes da aba Contraturno não têm a coluna "carteira".
+        const cols = (await env.DB.prepare("PRAGMA table_info(alunos)").all()).results.map((c) => c.name);
+        if (!cols.includes("carteira")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN carteira TEXT NOT NULL DEFAULT 'regular'").run();
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -173,6 +205,15 @@ async function rotear(req, env, url) {
     if (partes[1] === "importar" && m === "POST") return importarPlanilha(req, env);
     if (partes[1] === "regularizar" && m === "POST") return regularizar(req, env, eu);
     if (partes.length === 2 && m === "PATCH") return alterarAluno(req, env, partes[1]);
+  }
+
+  if (partes[0] === "serasa") {
+    if (partes.length === 1 && m === "GET") return listarSerasa(env);
+    if (partes.length === 1 && m === "POST") return criarSerasa(req, env, eu);
+    if (partes[1] === "importar" && m === "POST") return importarSerasa(req, env, eu);
+    if (partes[1] === "lote" && m === "POST") return loteSerasa(req, env, eu);
+    if (partes.length === 2 && m === "PATCH") return alterarSerasa(req, env, eu, partes[1]);
+    if (partes.length === 2 && m === "DELETE") { exigirAdmin(eu); return excluirSerasa(env, partes[1]); }
   }
 
   if (partes[0] === "atendimentos") {
@@ -488,7 +529,7 @@ function alunoSaida(r) {
     ultimoContato: r.ultimo_contato_data ? { data: r.ultimo_contato_data, canal: r.ultimo_contato_canal || "" } : null,
     proximoRetorno: r.proximo_retorno || null, arquivado: !!r.arquivado,
     ultimaAtualizacaoFinanceira: r.ultima_atualizacao_financeira || null,
-    createdAt: r.criado_em, updatedAt: r.atualizado_em
+    createdAt: r.criado_em, updatedAt: r.atualizado_em, carteira: r.carteira || "regular"
   };
 }
 
@@ -503,8 +544,19 @@ function alunoValores(o, id) {
     dataISO(o.vencimento), statusValido(o.status), texto(o.setor, 40), texto(o.atendenteResponsavel, 80),
     uc ? dataOuNull(uc.data) : null, uc ? texto(uc.canal, 30) : null, dataOuNull(o.proximoRetorno),
     o.arquivado ? 1 : 0, typeof o.ultimaAtualizacaoFinanceira === "string" ? o.ultimaAtualizacaoFinanceira : null,
-    typeof o.createdAt === "string" ? o.createdAt : agora, typeof o.updatedAt === "string" ? o.updatedAt : agora
+    typeof o.createdAt === "string" ? o.createdAt : agora, typeof o.updatedAt === "string" ? o.updatedAt : agora,
+    carteiraValida(o.carteira)
   ];
+}
+
+// O mesmo aluno pode estar no Painel e no Contraturno (registros separados, um por
+// carteira). Eles são ligados pelo RA ou, quando não há RA, pelo nome.
+async function alunosVinculados(env, a) {
+  const ra = (a.ra || "").trim().toLowerCase(), nome = (a.nome || "").trim().toLowerCase();
+  const r = ra
+    ? await env.DB.prepare("SELECT * FROM alunos WHERE id <> ? AND (lower(trim(ra)) = ? OR (trim(ra) = '' AND lower(trim(nome)) = ?))").bind(a.id, ra, nome).all()
+    : await env.DB.prepare("SELECT * FROM alunos WHERE id <> ? AND lower(trim(nome)) = ?").bind(a.id, nome).all();
+  return r.results;
 }
 
 async function listarAlunos(env) {
@@ -522,7 +574,7 @@ async function criarAluno(req, env) {
   const b = await corpo(req);
   if (!texto(b.nome)) throw new HttpError(400, "Informe o nome do aluno.");
   const id = novoId();
-  const dados = { ...b, status: "sem_contato", atendenteResponsavel: "", ultimoContato: null, proximoRetorno: null, arquivado: false, createdAt: null, updatedAt: null };
+  const dados = { ...b, carteira: carteiraValida(b.carteira), status: "sem_contato", atendenteResponsavel: "", ultimoContato: null, proximoRetorno: null, arquivado: false, createdAt: null, updatedAt: null };
   await env.DB.prepare(insertSQL("alunos", ALUNO_COLS)).bind(...alunoValores(dados, id)).run();
   return json({ aluno: alunoSaida(await buscarAluno(env, id)) });
 }
@@ -555,7 +607,9 @@ async function importarPlanilha(req, env) {
   const b = await corpo(req);
   const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 5000) : [];
   if (!linhas.length) throw new HttpError(400, "Nenhuma linha para importar.");
-  const todos = (await env.DB.prepare("SELECT * FROM alunos").all()).results;
+  // A conciliação acontece só dentro da carteira da aba de onde veio a planilha.
+  const carteira = carteiraValida(b.carteira);
+  const todos = (await env.DB.prepare("SELECT * FROM alunos WHERE carteira = ?").bind(carteira).all()).results;
   const porRa = {}, porNome = {};
   todos.forEach((a) => {
     if (a.ra && a.ra.trim()) porRa[a.ra.trim().toLowerCase()] = a;
@@ -590,7 +644,7 @@ async function importarPlanilha(req, env) {
         ra, nome, turma: r.turma, responsavel: r.responsavel, telefone: r.telefone, email: r.email,
         valorAberto: r.valorAberto, parcelasAberto: parseInt(r.parcelas, 10) || 1, vencimento: r.vencimento,
         status: "sem_contato", setor: "", atendenteResponsavel: "", arquivado: false,
-        ultimaAtualizacaoFinanceira: agora, createdAt: agora, updatedAt: agora
+        ultimaAtualizacaoFinanceira: agora, createdAt: agora, updatedAt: agora, carteira
       };
       stmts.push(env.DB.prepare(insertSQL("alunos", ALUNO_COLS)).bind(...alunoValores(novo, id)));
       porNome[nome.toLowerCase()] = { id, nome, ra };
@@ -688,10 +742,22 @@ async function criarAtendimento(req, env, eu) {
   const vals = [status, eu.nome, setor, data, canal, proximo, agora];
   if (temValorNovo) { sets.push("valor_aberto = ?"); vals.push(valorNovo); }
   stmts.push(env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, aluno.id));
+
+  // Se o mesmo aluno está na outra carteira (Painel ↔ Contraturno), o contato também vale
+  // lá: atualiza último atendimento, próximo retorno e atendente. Status e valor em aberto
+  // continuam próprios de cada carteira.
+  const vinculados = await alunosVinculados(env, aluno);
+  for (const v of vinculados) {
+    stmts.push(env.DB.prepare(
+      "UPDATE alunos SET atendente_responsavel = ?, ultimo_contato_data = ?, ultimo_contato_canal = ?, proximo_retorno = ?, atualizado_em = ? WHERE id = ?"
+    ).bind(eu.nome, data, canal, proximo, agora, v.id));
+  }
   await env.DB.batch(stmts);
 
   const at = await env.DB.prepare("SELECT * FROM atendimentos WHERE id = ?").bind(id).first();
-  return json({ atendimento: atendSaida(at), aluno: alunoSaida(await buscarAluno(env, aluno.id)) });
+  const atualizados = [];
+  for (const v of vinculados) atualizados.push(alunoSaida(await buscarAluno(env, v.id)));
+  return json({ atendimento: atendSaida(at), aluno: alunoSaida(await buscarAluno(env, aluno.id)), vinculados: atualizados });
 }
 
 async function excluirAtendimento(env, eu, id) {
@@ -735,4 +801,125 @@ async function importarBackup(req, env) {
   if (!stmts.length) throw new HttpError(400, "O arquivo não tem alunos nem atendimentos no formato esperado.");
   await executarEmLotes(env, stmts);
   return json({ alunos: na, atendimentos: nt });
+}
+
+// ---------------------------------------------------------------- Serasa (negativação)
+
+function serasaSaida(r) {
+  return {
+    id: r.id, ra: r.ra, nome: r.nome, responsavel: r.responsavel, cpf: r.cpf, vencimento: r.vencimento,
+    valor: r.valor, tipo: r.tipo, mentor: r.mentor, serasa: r.serasa, dataInclusao: r.data_inclusao,
+    respInclusao: r.resp_inclusao, observacao: r.observacao, criadoEm: r.criado_em,
+    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por
+  };
+}
+
+function serasaValores(o, id, eu, criadoEm) {
+  const agora = agoraISO();
+  return [
+    id, texto(o.ra, 30), texto(o.nome, 150), texto(o.responsavel, 150), texto(o.cpf, 20), dataISO(o.vencimento),
+    numero(o.valor), texto(o.tipo, 40), statusSerasaValido(o.mentor), statusSerasaValido(o.serasa),
+    dataISO(o.dataInclusao), texto(o.respInclusao, 80), texto(o.observacao, 2000),
+    criadoEm || agora, agora, eu ? eu.nome : ""
+  ];
+}
+
+// Identifica a mesma parcela entre importações: aluno (RA ou nome) + vencimento + valor + tipo.
+function chaveSerasa(o) {
+  const ra = texto(o.ra, 30).toLowerCase();
+  const quem = ra || ("nm:" + (texto(o.nome, 150) || texto(o.responsavel, 150)).toLowerCase());
+  return [quem, dataISO(o.vencimento), numero(o.valor).toFixed(2), texto(o.tipo, 40).toLowerCase()].join("|");
+}
+
+async function buscarSerasa(env, id) {
+  const r = await env.DB.prepare("SELECT * FROM serasa WHERE id = ?").bind(id).first();
+  if (!r) throw new HttpError(404, "Parcela não encontrada.");
+  return r;
+}
+
+async function listarSerasa(env) {
+  const r = await env.DB.prepare("SELECT * FROM serasa ORDER BY vencimento DESC, nome").all();
+  return json({ parcelas: r.results.map(serasaSaida) });
+}
+
+async function criarSerasa(req, env, eu) {
+  const b = await corpo(req);
+  if (!texto(b.nome) && !texto(b.responsavel)) throw new HttpError(400, "Informe o nome do aluno ou do responsável.");
+  if (!dataISO(b.vencimento)) throw new HttpError(400, "Informe o vencimento da parcela.");
+  const id = novoId();
+  await env.DB.prepare(insertSQL("serasa", SERASA_COLS)).bind(...serasaValores(b, id, eu)).run();
+  return json({ parcela: serasaSaida(await buscarSerasa(env, id)) });
+}
+
+async function alterarSerasa(req, env, eu, id) {
+  const atual = await buscarSerasa(env, id);
+  const b = await corpo(req);
+  const junto = { ...serasaSaida(atual), ...b };
+  if (!texto(junto.nome) && !texto(junto.responsavel)) throw new HttpError(400, "Informe o nome do aluno ou do responsável.");
+  await env.DB.prepare(insertSQL("serasa", SERASA_COLS)).bind(...serasaValores(junto, id, eu, atual.criado_em)).run();
+  return json({ parcela: serasaSaida(await buscarSerasa(env, id)) });
+}
+
+async function excluirSerasa(env, id) {
+  await buscarSerasa(env, id);
+  await env.DB.prepare("DELETE FROM serasa WHERE id = ?").bind(id).run();
+  return json({ ok: true });
+}
+
+// Importa o relatório: parcela nova é cadastrada; parcela que já existe (mesma chave) só
+// recebe os campos que vieram preenchidos na planilha — nada que a equipe já marcou é apagado.
+async function importarSerasa(req, env, eu) {
+  const b = await corpo(req);
+  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 10000) : [];
+  if (!linhas.length) throw new HttpError(400, "Nenhuma linha para importar.");
+  const existentes = {};
+  (await env.DB.prepare("SELECT * FROM serasa").all()).results.forEach((r) => { existentes[chaveSerasa(serasaSaida(r))] = r; });
+  const stmts = [];
+  let criados = 0, atualizados = 0, ignorados = 0;
+  const vistos = new Set();
+  for (const l of linhas) {
+    if ((!texto(l.nome) && !texto(l.responsavel)) || !dataISO(l.vencimento)) { ignorados++; continue; }
+    const k = chaveSerasa(l);
+    if (vistos.has(k)) { ignorados++; continue; }
+    vistos.add(k);
+    const achado = existentes[k];
+    if (achado) {
+      const base = serasaSaida(achado);
+      const junto = { ...base };
+      ["nome", "responsavel", "cpf", "tipo", "respInclusao", "observacao"].forEach((c) => { if (texto(l[c])) junto[c] = l[c]; });
+      ["mentor", "serasa"].forEach((c) => { if (statusSerasaValido(l[c])) junto[c] = l[c]; });
+      if (dataISO(l.dataInclusao)) junto.dataInclusao = l.dataInclusao;
+      const mudou = JSON.stringify(serasaValores(junto, achado.id, null).slice(0, 13)) !== JSON.stringify(serasaValores(base, achado.id, null).slice(0, 13));
+      if (!mudou) { ignorados++; continue; }
+      stmts.push(env.DB.prepare(insertSQL("serasa", SERASA_COLS)).bind(...serasaValores(junto, achado.id, eu, achado.criado_em)));
+      atualizados++;
+    } else {
+      stmts.push(env.DB.prepare(insertSQL("serasa", SERASA_COLS)).bind(...serasaValores(l, novoId(), eu)));
+      criados++;
+    }
+  }
+  await executarEmLotes(env, stmts);
+  return json({ criados, atualizados, ignorados });
+}
+
+// Atualiza várias parcelas de uma vez (ex.: "incluídas no Serasa hoje").
+async function loteSerasa(req, env, eu) {
+  const b = await corpo(req);
+  const ids = Array.isArray(b.ids) ? b.ids.slice(0, 5000).map(String) : [];
+  if (!ids.length) throw new HttpError(400, "Selecione ao menos uma parcela.");
+  const sets = [], vals = [];
+  if (b.mentor !== undefined) { sets.push("mentor = ?"); vals.push(statusSerasaValido(b.mentor)); }
+  if (b.serasa !== undefined) { sets.push("serasa = ?"); vals.push(statusSerasaValido(b.serasa)); }
+  if (!sets.length) throw new HttpError(400, "Nada para alterar.");
+  if (b.serasa === "ok" || b.mentor === "ok") {
+    // registra quando e quem incluiu, sem sobrescrever uma data já informada
+    sets.push("data_inclusao = CASE WHEN data_inclusao = '' THEN ? ELSE data_inclusao END", "resp_inclusao = CASE WHEN resp_inclusao = '' THEN ? ELSE resp_inclusao END");
+    vals.push(hojeISO(), eu.nome);
+  }
+  sets.push("atualizado_em = ?", "atualizado_por = ?");
+  vals.push(agoraISO(), eu.nome);
+  const stmts = emLotes(ids, 50).map((lote) =>
+    env.DB.prepare(`UPDATE serasa SET ${sets.join(", ")} WHERE id IN (${lote.map(() => "?").join(",")})`).bind(...vals, ...lote));
+  await executarEmLotes(env, stmts);
+  return json({ atualizados: ids.length });
 }

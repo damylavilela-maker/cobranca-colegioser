@@ -82,6 +82,8 @@
   var atendentesAtivos = [];
   var usuarios = [];
   var view = "painel";
+  var carteira = "regular";   // carteira mostrada na tela do painel (Painel ou Contraturno)
+  var parcelas = [];          // aba Serasa
   var showArch = false, soHoje = false;
   var curId = null;
   var pollTimer = null;
@@ -180,11 +182,12 @@
   }
 
   function carregar() {
-    return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes")])
+    return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa")])
       .then(function (r) {
         alunos = {}; r[0].alunos.forEach(function (a) { alunos[a.id] = a; });
         atends = r[1].atendimentos;
         atendentesAtivos = r[2].atendentes;
+        parcelas = r[3].parcelas;
         marcarSync(true);
         renderTudo();
       })
@@ -198,7 +201,7 @@
     pararPolling();
     pollTimer = setInterval(function () {
       if (document.hidden || !eu) return;
-      if (!$("mDetalhe").hidden || !$("mImportar").hidden) return; // não atrapalha quem está preenchendo
+      if (!$("mDetalhe").hidden || !$("mImportar").hidden || !$("mSerasa").hidden) return; // não atrapalha quem está preenchendo
       carregar();
     }, 60000);
   }
@@ -206,15 +209,39 @@
   document.addEventListener("visibilitychange", function () { if (!document.hidden && eu && $("mDetalhe").hidden) carregar(); });
 
   function renderTudo() {
-    if (view === "painel") renderPainel();
+    if (view === "painel" || view === "contraturno") renderPainel();
     if (view === "evolucao") renderEvolucao();
+    if (view === "serasa") renderSerasa();
     if (view === "usuarios") renderUsuarios();
     atualizarBadge();
   }
 
+  // As abas Painel e Contraturno usam a mesma tela, cada uma com a sua carteira de alunos
+  // e os seus próprios filtros.
+  var CARTEIRA_INFO = {
+    regular: { titulo: "Painel de cobrança", arquivo: "relatorio_cobranca_" },
+    contraturno: { titulo: "Contraturno", arquivo: "relatorio_contraturno_" }
+  };
+  var FILTROS = ["fBusca", "fStatus", "fSetor", "fAtend", "fOrdem"];
+  var filtrosPorCarteira = {};
+  function trocarCarteira(nova) {
+    if (nova === carteira) return;
+    var salvo = { showArch: showArch, soHoje: soHoje };
+    FILTROS.forEach(function (id) { salvo[id] = $(id).value; });
+    filtrosPorCarteira[carteira] = salvo;
+    carteira = nova;
+    var f = filtrosPorCarteira[nova] || { showArch: false, soHoje: false, fOrdem: "valor" };
+    FILTROS.forEach(function (id) { $(id).value = f[id] || (id === "fOrdem" ? "valor" : ""); });
+    showArch = f.showArch; soHoje = f.soHoje;
+    $("painelTitulo").textContent = CARTEIRA_INFO[nova].titulo;
+  }
+
   function ir(v) {
     view = v;
-    document.querySelectorAll(".view").forEach(function (el) { el.hidden = el.id !== "v-" + v; });
+    if (v === "painel") trocarCarteira("regular");
+    if (v === "contraturno") trocarCarteira("contraturno");
+    var el = v === "contraturno" ? "painel" : v;
+    document.querySelectorAll(".view").forEach(function (x) { x.hidden = x.id !== "v-" + el; });
     document.querySelectorAll("#nav button").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-view") === v); });
     if (v === "usuarios") carregarUsuarios();
     renderTudo();
@@ -222,9 +249,24 @@
   }
   document.querySelectorAll("#nav button").forEach(function (b) { b.addEventListener("click", function () { ir(b.getAttribute("data-view")); }); });
 
-  // ---------------------------------------------------------------- painel
+  // ---------------------------------------------------------------- painel / contraturno
   function lista() { return Object.keys(alunos).map(function (id) { return alunos[id]; }); }
-  function recuperadoNoMes(mes) { var t = 0; atends.forEach(function (a) { if (a.data && a.data.slice(0, 7) === mes) t += Number(a.valorRecuperado) || 0; }); return t; }
+  function carteiraDe(a) { return a && a.carteira === "contraturno" ? "contraturno" : "regular"; }
+  function listaCarteira(c) { return lista().filter(function (a) { return carteiraDe(a) === c; }); }
+  // O mesmo aluno pode estar nas duas carteiras: são ligados pelo RA (ou pelo nome, sem RA).
+  function vinculadosDe(a) {
+    var ra = (a.ra || "").trim().toLowerCase(), nome = (a.nome || "").trim().toLowerCase();
+    return lista().filter(function (b) {
+      if (b.id === a.id) return false;
+      var rb = (b.ra || "").trim().toLowerCase(), nb = (b.nome || "").trim().toLowerCase();
+      return ra ? (rb === ra || (!rb && nb === nome)) : nb === nome;
+    });
+  }
+  function recuperadoNoMes(mes, c) {
+    var t = 0;
+    atends.forEach(function (a) { if (a.data && a.data.slice(0, 7) === mes && carteiraDe(alunos[a.alunoId]) === c) t += Number(a.valorRecuperado) || 0; });
+    return t;
+  }
   function nomesAtendentes() {
     var set = {};
     atendentesAtivos.forEach(function (n) { set[n] = 1; });
@@ -232,10 +274,11 @@
     return Object.keys(set).sort(function (a, b) { return a.localeCompare(b); });
   }
   function atualizarBadge() {
-    var h = hoje(), n = 0;
-    lista().forEach(function (a) { if (!a.arquivado && a.proximoRetorno && a.proximoRetorno <= h) n++; });
-    $("navBadge").hidden = !n; $("navBadge").textContent = n;
-    return n;
+    var h = hoje(), n = { regular: 0, contraturno: 0 };
+    lista().forEach(function (a) { if (!a.arquivado && a.proximoRetorno && a.proximoRetorno <= h) n[carteiraDe(a)]++; });
+    $("navBadge").hidden = !n.regular; $("navBadge").textContent = n.regular;
+    $("navBadgeCt").hidden = !n.contraturno; $("navBadgeCt").textContent = n.contraturno;
+    return n[carteira];
   }
 
   fill($("fStatus"), STATUS.map(function (s) { return { v: s.k, l: s.l }; }), "Todos os status");
@@ -251,7 +294,7 @@
     var tiles = [
       { n: vis.length, l: "Alunos em acompanhamento" },
       { n: money(tot), l: "Valor em aberto", cls: "lead" },
-      { n: money(recuperadoNoMes(mesAtual())), l: "Recuperado em " + mesLbl, c: "success" },
+      { n: money(recuperadoNoMes(mesAtual(), carteira)), l: "Recuperado em " + mesLbl, c: "success" },
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
       { n: c.em_negociacao || 0, l: "Em negociação", c: "info" },
       { n: c.aguardando_retorno || 0, l: "Aguardando retorno", c: "warn" },
@@ -263,7 +306,7 @@
   }
 
   function renderPainel() {
-    var todos = lista();
+    var todos = listaCarteira(carteira);
     renderKpis(todos.filter(function (a) { return !a.arquivado; }));
     var sel = $("fAtend"), cur = sel.value;
     fill(sel, nomesAtendentes(), "Todas as atendentes"); sel.value = cur;
@@ -342,7 +385,11 @@
       '<div class="k">Vencimento</div><div class="v">' + venc + "</div>" +
       '<div class="k">Setor</div><div class="v">' + esc(a.setor || "—") + "</div>" +
       '<div class="k">Status atual</div><div class="v">' + pill(a.status || "sem_contato") + "</div>";
-    $("dArchBanner").innerHTML = a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "";
+    var outra = vinculadosDe(a).filter(function (b) { return carteiraDe(b) !== carteiraDe(a); })[0];
+    $("dArchBanner").innerHTML =
+      (a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "") +
+      (outra ? '<div class="link-banner"><b>Também está no ' + (carteiraDe(outra) === "contraturno" ? "Contraturno" : "Painel") + "</b> (" + money(outra.valorAberto) + " em aberto, " + st(outra.status).l.toLowerCase() +
+        "). Os atendimentos aparecem nas duas abas; o status e o valor em aberto são de cada aba.</div>" : "");
     $("btnArquivarAluno").textContent = a.arquivado ? "Reativar aluno" : "Arquivar aluno";
     $("dInfoView").hidden = false; $("dInfoEdit").hidden = true; $("btnEditarDados").hidden = false;
     $("eNome").value = a.nome || ""; $("eRa").value = a.ra || ""; $("eTurma").value = a.turma || "";
@@ -370,13 +417,17 @@
   }
 
   function renderTimeline() {
-    var itens = atends.filter(function (t) { return t.alunoId === curId; });
+    var atual = alunos[curId], ids = {};
+    ids[curId] = 1;
+    if (atual) vinculadosDe(atual).forEach(function (b) { ids[b.id] = 1; });
+    var itens = atends.filter(function (t) { return ids[t.alunoId]; });
     var el = $("dTl");
     if (!itens.length) { el.innerHTML = '<div class="muted">Nenhum atendimento registrado ainda.</div>'; return; }
     el.innerHTML = itens.map(function (t) {
       var podeExcluir = eu && (eu.perfil === "admin" || t.usuarioId === eu.id);
       var mens = t.mensalidadesNegociadas || [];
-      return '<div class="tl-it"><div class="tl-top"><span><b>' + br(t.data) + '</b> <span class="who2">' + esc(t.responsavel || "—") + "</span></span>" +
+      var origem = t.alunoId !== curId && alunos[t.alunoId] ? ' <span class="tag origem">registrado no ' + (carteiraDe(alunos[t.alunoId]) === "contraturno" ? "Contraturno" : "Painel") + "</span>" : "";
+      return '<div class="tl-it"><div class="tl-top"><span><b>' + br(t.data) + '</b> <span class="who2">' + esc(t.responsavel || "—") + "</span>" + origem + "</span>" +
         (podeExcluir ? '<button type="button" class="tl-del" data-del="' + esc(t.id) + '">Excluir</button>' : "") + "</div>" +
         '<div class="tags"><span class="tag">' + esc(t.canal || "—") + "</span>" + (t.setor ? '<span class="tag">' + esc(t.setor) + "</span>" : "") + pill(t.statusResultante || "sem_contato", true) + "</div>" +
         "<div><b>" + esc(t.motivo || "") + "</b>" + (t.observacao ? " — " + esc(t.observacao) : "") + "</div>" +
@@ -443,7 +494,9 @@
       mensalidadesNegociadas: coletarMensalidades()
     }).then(function (d) {
       atends.unshift(d.atendimento); alunos[d.aluno.id] = d.aluno;
-      toast("Atendimento registrado em nome de " + primeiroNome(eu.nome) + ".");
+      (d.vinculados || []).forEach(function (v) { alunos[v.id] = v; });
+      var nasDuas = (d.vinculados || []).some(function (v) { return carteiraDe(v) !== carteiraDe(d.aluno); });
+      toast("Atendimento registrado em nome de " + primeiroNome(eu.nome) + (nasDuas ? " — aparece no Painel e no Contraturno." : "."));
       abrirAluno(d.aluno.id); renderTudo();
     }).catch(function (x) { toast("Não foi possível salvar: " + x.message); })
       .then(function () { btn.disabled = false; });
@@ -475,8 +528,8 @@
     api("POST", "/api/alunos", {
       nome: $("nNome").value.trim(), ra: $("nRa").value.trim(), turma: $("nTurma").value.trim(), responsavel: $("nResp").value.trim(),
       telefone: $("nTel").value.trim(), email: $("nEmail").value.trim(), valorAberto: parseFloat($("nValor").value) || 0,
-      vencimento: $("nVenc").value || "", setor: $("nSetor").value
-    }).then(function (d) { alunos[d.aluno.id] = d.aluno; fecharModais(); renderTudo(); toast("Aluno cadastrado."); })
+      vencimento: $("nVenc").value || "", setor: $("nSetor").value, carteira: carteira
+    }).then(function (d) { alunos[d.aluno.id] = d.aluno; fecharModais(); renderTudo(); toast(carteira === "contraturno" ? "Aluno cadastrado no Contraturno." : "Aluno cadastrado."); })
       .catch(function (x) { toast(x.message); });
   });
 
@@ -489,20 +542,20 @@
   });
   $("btnExportar").addEventListener("click", function () {
     var cab = "Nome;RA;Turma;Responsavel;Telefone;Email;ValorAberto;Parcelas;Vencimento;Status;Setor;UltimoContatoData;UltimoContatoCanal;ProximoRetorno;Atendente;Arquivado\n";
-    var linhas = lista().map(function (a) {
+    var linhas = listaCarteira(carteira).map(function (a) {
       var uc = a.ultimoContato || {};
       return [a.nome, a.ra, a.turma, a.responsavel, a.telefone, a.email, (Number(a.valorAberto) || 0).toFixed(2).replace(".", ","), a.parcelasAberto || "",
         a.vencimento ? br(a.vencimento) : "", st(a.status).l, a.setor || "", uc.data ? br(uc.data) : "", uc.canal || "", a.proximoRetorno ? br(a.proximoRetorno) : "",
         a.atendenteResponsavel || "", a.arquivado ? "sim" : "nao"]
         .map(function (v) { v = String(v == null ? "" : v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(";");
     }).join("\n");
-    baixar("relatorio_cobranca_" + hoje() + ".csv", cab + linhas);
+    baixar(CARTEIRA_INFO[carteira].arquivo + hoje() + ".csv", cab + linhas);
     toast("Relatório exportado.");
   });
 
   var pendentes = [];
   function normHeader(h) { return String(h || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim(); }
-  var HEADER_TOKENS = ["ra", "codigo", "matricula", "nome", "nome do aluno", "nome completo", "aluno", "turma", "responsavel", "responsavel financeiro", "responsavel(a)", "telefone", "tel", "celular", "e-mail", "email", "valor", "valor em aberto", "valor devido", "total devido", "vencimento", "data de vencimento", "dt vencimento", "venc"];
+  var HEADER_TOKENS = ["ra", "codigo", "matricula", "nome", "nome do aluno", "nome completo", "aluno", "turma", "responsavel", "responsavel financeiro", "responsavel(a)", "telefone", "tel", "celular", "e-mail", "email", "valor", "valor em aberto", "valor devido", "total devido", "vencimento", "data de vencimento", "dt vencimento", "venc", "valor (r$)", "mentor", "serasa", "cpf", "tipo", "data inclusao", "resp. inclusao", "realizado"];
   // Lê o CSV caractere a caractere: uma quebra de linha só termina a linha fora de aspas
   // (o Excel exporta células com várias linhas entre aspas).
   function tokenizeCSV(text, delim) {
@@ -578,8 +631,11 @@
     });
     return ordem.map(function (k) { map[k].valorAberto = Math.round(map[k].valorAberto * 100) / 100; return map[k]; });
   }
+  // A mesma janela de importação atende Painel/Contraturno (alunos) e Serasa (parcelas).
+  var modoImport = "alunos";
   function processarCSV(text) {
     var p = parseCSV(text), h = p.headers;
+    if (modoImport === "serasa") return processarCSVSerasa(p);
     var ix = {
       ra: colIndex(h, ["ra", "codigo", "matricula"]), nome: colIndex(h, ["nome", "nome do aluno", "nome completo", "aluno"]),
       turma: colIndex(h, ["turma"]), resp: colIndex(h, ["responsavel financeiro", "responsavel", "responsavel(a)"]),
@@ -614,15 +670,22 @@
       }).join("") + "</tbody></table></div>" +
       '<div class="import-summary">' + pendentes.length + " aluno(s) únicos encontrados" + (pendentes.length > 8 ? " (mostrando os 8 primeiros)" : "") +
       (brutos.length !== pendentes.length ? " — " + brutos.length + " linhas foram agrupadas por aluno (parcelas somadas)." : ".") +
-      " Quem já existir no painel (mesmo RA ou nome) será atualizado, não duplicado." +
+      " Quem já existir " + (carteira === "contraturno" ? "no Contraturno" : "no Painel") + " (mesmo RA ou nome) será atualizado, não duplicado." +
       (temVenc ? "" : " Não encontrei coluna de vencimento — a análise por faixa de atraso só vale para alunos com essa data.") + "</div>";
     $("btnConfirmImport").disabled = !pendentes.length;
   }
-  $("btnImportar").addEventListener("click", function () {
+  function abrirImportacao(modo) {
+    modoImport = modo;
     pendentes = []; $("importResult").innerHTML = ""; $("pasteArea").value = ""; $("fileInput").value = "";
-    $("btnConfirmImport").disabled = true; $("btnConfirmImport").hidden = false; $("btnConfirmImport").textContent = "Importar alunos";
+    var b = $("btnConfirmImport");
+    b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : "Importar alunos";
+    $("mImpT").textContent = modo === "serasa" ? "Importar planilha — Serasa" : carteira === "contraturno" ? "Importar planilha — Contraturno" : "Importar planilha";
+    $("mImpSub").textContent = modo === "serasa"
+      ? "Envie o CSV do relatório de negativação (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo e Resp. inclusão."
+      : "Envie um CSV exportado do relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento)";
     abrir("mImportar");
-  });
+  }
+  $("btnImportar").addEventListener("click", function () { abrirImportacao("alunos"); });
   function lerArquivo(f, cb) { var r = new FileReader(); r.onload = function () { cb(String(r.result)); }; r.readAsText(f, "utf-8"); }
   function ligarDropzone(dz, input, cb) {
     dz.addEventListener("click", function (e) { if (e.target !== input) input.click(); });
@@ -637,7 +700,16 @@
   $("btnConfirmImport").addEventListener("click", function () {
     if (!pendentes.length) return;
     var btn = this; btn.disabled = true; btn.textContent = "Importando…";
-    api("POST", "/api/alunos/importar", { linhas: pendentes }).then(function (d) {
+    if (modoImport === "serasa") {
+      return api("POST", "/api/serasa/importar", { linhas: pendentes }).then(function (d) {
+        btn.hidden = true;
+        $("importResult").innerHTML = '<div class="import-summary" style="color:var(--ink)"><b>' + d.criados + "</b> parcela(s) nova(s) · <b>" + d.atualizados +
+          "</b> atualizada(s) · " + d.ignorados + " sem mudança ou incompletas (sem nome ou vencimento).</div>";
+        toast("Planilha da Serasa importada.");
+        return carregar();
+      }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); });
+    }
+    api("POST", "/api/alunos/importar", { linhas: pendentes, carteira: carteira }).then(function (d) {
       btn.hidden = true;
       mostrarConciliacao(d);
       return carregar();
@@ -709,7 +781,7 @@
 
     var cc = {}; atends.forEach(function (a) { cc[a.canal || "—"] = (cc[a.canal || "—"] || 0) + 1; });
     barras("barCanal", CANAIS.map(function (c) { return { l: c, v: cc[c] || 0 }; }), Math.max.apply(null, CANAIS.map(function (c) { return cc[c] || 0; })));
-    var vis = lista().filter(function (a) { return !a.arquivado; }), sc = {};
+    var vis = listaCarteira("regular").filter(function (a) { return !a.arquivado; }), sc = {};
     vis.forEach(function (a) { var k = a.status || "sem_contato"; sc[k] = (sc[k] || 0) + 1; });
     barras("barStatus", STATUS.map(function (s) { return { l: s.l, v: sc[s.k] || 0, c: s.c }; }), vis.length);
 
@@ -797,6 +869,250 @@
     barras("faixaVencList", rows, total, money);
   }
   ["anoEvolSel", "mensEvolAnoSel", "ctrlMesSel"].forEach(function (id) { $(id).addEventListener("change", renderEvolucao); });
+
+  // ---------------------------------------------------------------- Serasa
+  // Situação da parcela no Mentor e no Serasa. "" = ainda não incluída (pendente).
+  var SER_ST = [
+    { v: "", l: "Pendente", c: "gray" },
+    { v: "ok", l: "OK", c: "success" },
+    { v: "pago", l: "Pago", c: "info" },
+    { v: "negociado", l: "Negociado", c: "brand" },
+    { v: "juridico", l: "Jurídico", c: "danger" },
+    { v: "bloqueio", l: "Bloqueio", c: "warn" },
+    { v: "nao_negativar", l: "Não negativar", c: "gold" }
+  ];
+  function serSt(v) { for (var i = 0; i < SER_ST.length; i++) if (SER_ST[i].v === (v || "")) return SER_ST[i]; return SER_ST[0]; }
+  function serPill(v) { var s = serSt(v); return '<span class="pill" style="color:var(--' + s.c + ');background:var(--' + s.c + '-soft)"><i></i>' + s.l + "</span>"; }
+  // Converte o texto da planilha (OK, PAGO, J, BLOQ, uma data…) para a situação.
+  function serNormalizar(txt) {
+    var t = String(txt || "").trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    if (!t) return "";
+    if (t === "OK" || t === "INCLUIDO") return "ok";
+    if (t.indexOf("PAG") === 0) return "pago";
+    if (t.indexOf("NEGOC") === 0) return "negociado";
+    if (t === "J" || t.indexOf("JURID") === 0) return "juridico";
+    if (t.indexOf("BLOQ") === 0) return "bloqueio";
+    if (t.indexOf("NAO NEGATIVAR") === 0 || t.indexOf("NAO INCLUIR") === 0) return "nao_negativar";
+    if (/^\d{4}-\d{2}-\d{2}/.test(t) || /^\d{1,2}\/\d{1,2}\/?\d{2,4}/.test(t)) return "ok"; // planilhas antigas guardavam a data de inclusão
+    return "";
+  }
+  var serSel = {}, serLimite = 300, serFiltrada = [];
+  var SER_OPC = [{ v: "", l: "" }, { v: "__pendente", l: "Pendente" }].concat(SER_ST.slice(1));
+  fill($("sMentor"), SER_OPC.slice(1), "Mentor: todas"); fill($("sSerasa"), SER_OPC.slice(1), "Serasa: todas");
+  fill($("srMentor"), SER_ST); fill($("srSerasa"), SER_ST);
+
+  function renderSerasa() {
+    var p = parcelas;
+    // indicadores
+    var negVal = 0, neg = 0, pend = 0, pagas = 0, jur = 0, alunosSet = {};
+    p.forEach(function (x) {
+      alunosSet[(x.ra || "").trim() || (x.nome || x.responsavel || "").toLowerCase()] = 1;
+      if (x.serasa === "ok") { neg++; negVal += Number(x.valor) || 0; }
+      if (!x.serasa && ["", "ok", "negociado"].indexOf(x.mentor || "") !== -1) pend++;
+      if (x.mentor === "pago" || x.serasa === "pago") pagas++;
+      if (x.mentor === "juridico" || x.serasa === "juridico") jur++;
+    });
+    var tiles = [
+      { n: p.length, l: "Parcelas · " + Object.keys(alunosSet).length + " alunos" },
+      { n: money(negVal), l: "Valor negativado no Serasa", cls: "lead" },
+      { n: neg, l: "Parcelas negativadas", c: "success" },
+      { n: pend, l: "Aguardando inclusão", c: "warn" },
+      { n: pagas, l: "Pagas", c: "info" },
+      { n: jur, l: "No jurídico", c: "danger" }
+    ];
+    $("serKpis").innerHTML = tiles.map(function (t) {
+      return '<div class="kpi ' + (t.cls || "") + '"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ">" + t.n + '</div><div class="lbl">' + t.l + "</div></div>";
+    }).join("");
+
+    // anos de vencimento
+    var anos = {}; p.forEach(function (x) { if (x.vencimento) anos[x.vencimento.slice(0, 4)] = 1; });
+    prepararSelect($("sAno"), [{ v: "", l: "Todos os anos" }].concat(Object.keys(anos).sort().reverse().map(function (y) { return { v: y, l: "Vencimento em " + y }; })), $("sAno").value || "");
+
+    var q = $("sBusca").value.trim().toLowerCase(), fm = $("sMentor").value, fs = $("sSerasa").value, fa = $("sAno").value, ord = $("sOrdem").value;
+    var qDig = q.replace(/\D/g, "");
+    function bate(filtro, v) { return !filtro || (filtro === "__pendente" ? !v : v === filtro); }
+    serFiltrada = p.filter(function (x) {
+      if (q) {
+        var hay = ((x.nome || "") + " " + (x.responsavel || "") + " " + (x.ra || "")).toLowerCase();
+        if (hay.indexOf(q) === -1 && !(qDig.length >= 3 && (x.cpf || "").replace(/\D/g, "").indexOf(qDig) !== -1)) return false;
+      }
+      if (!bate(fm, x.mentor) || !bate(fs, x.serasa)) return false;
+      if (fa && (x.vencimento || "").slice(0, 4) !== fa) return false;
+      return true;
+    });
+    serFiltrada.sort(function (a, b) {
+      if (ord === "valor") return (Number(b.valor) || 0) - (Number(a.valor) || 0);
+      if (ord === "nome") return (a.nome || a.responsavel || "").localeCompare(b.nome || b.responsavel || "");
+      if (ord === "venc_asc") return (a.vencimento || "").localeCompare(b.vencimento || "");
+      return (b.vencimento || "").localeCompare(a.vencimento || "");
+    });
+    var total = serFiltrada.reduce(function (s, x) { return s + (Number(x.valor) || 0); }, 0);
+    $("serCount").textContent = serFiltrada.length + (serFiltrada.length === 1 ? " parcela" : " parcelas") + " · " + money(total);
+
+    var tb = $("serTbody");
+    if (!serFiltrada.length) {
+      tb.innerHTML = '<tr><td colspan="8" class="empty"><b>' + (p.length ? "Nenhuma parcela com estes filtros" : "Nenhuma parcela cadastrada ainda") + '</b><div class="muted">' +
+        (p.length ? "Ajuste a busca ou os filtros acima." : "Importe a planilha da Serasa ou cadastre a primeira parcela.") + "</div></td></tr>";
+    } else {
+      tb.innerHTML = serFiltrada.slice(0, serLimite).map(function (x) {
+        var quem = x.nome || x.responsavel || "—";
+        var meta = [x.ra ? "RA " + x.ra : "", x.nome && x.responsavel ? x.responsavel : ""].filter(Boolean).join(" · ");
+        return '<tr class="click" data-id="' + esc(x.id) + '"><td><input type="checkbox" class="ser-chk" data-id="' + esc(x.id) + '"' + (serSel[x.id] ? " checked" : "") + ' aria-label="Selecionar"></td>' +
+          '<td><div class="nome">' + esc(quem) + "</div>" + (meta ? '<div class="meta">' + esc(meta) + "</div>" : "") + "</td>" +
+          '<td class="tabular">' + br(x.vencimento) + "</td>" +
+          '<td class="tabular money">' + money(x.valor) + "</td>" +
+          "<td>" + (x.tipo ? esc(x.tipo) : '<span class="muted">—</span>') + "</td>" +
+          "<td>" + serPill(x.mentor) + "</td><td>" + serPill(x.serasa) + "</td>" +
+          "<td>" + (x.dataInclusao ? br(x.dataInclusao) : '<span class="muted">—</span>') + (x.respInclusao ? '<div class="meta">' + esc(x.respInclusao) + "</div>" : "") + "</td></tr>";
+      }).join("");
+    }
+    $("serMais").hidden = serFiltrada.length <= serLimite;
+    $("serMais").textContent = "Mostrar mais (" + (serFiltrada.length - serLimite) + " restantes)";
+    atualizarSelecao();
+  }
+  function atualizarSelecao() {
+    var n = Object.keys(serSel).length;
+    $("serBulk").hidden = !n;
+    $("serSelCount").textContent = n + (n === 1 ? " selecionada" : " selecionadas");
+    var vis = serFiltrada.slice(0, serLimite);
+    $("serSelTodos").checked = vis.length > 0 && vis.every(function (x) { return serSel[x.id]; });
+  }
+  ["sBusca", "sMentor", "sSerasa", "sAno", "sOrdem"].forEach(function (id) { $(id).addEventListener("input", function () { serLimite = 300; renderSerasa(); }); });
+  $("serMais").addEventListener("click", function () { serLimite += 300; renderSerasa(); });
+  $("serTbody").addEventListener("click", function (e) {
+    var chk = e.target.closest(".ser-chk");
+    if (chk) { if (chk.checked) serSel[chk.getAttribute("data-id")] = 1; else delete serSel[chk.getAttribute("data-id")]; atualizarSelecao(); return; }
+    var tr = e.target.closest("tr[data-id]"); if (tr) abrirParcela(tr.getAttribute("data-id"));
+  });
+  $("serSelTodos").addEventListener("change", function () {
+    var on = this.checked;
+    serFiltrada.slice(0, serLimite).forEach(function (x) { if (on) serSel[x.id] = 1; else delete serSel[x.id]; });
+    renderSerasa();
+  });
+  $("serLimparSel").addEventListener("click", function () { serSel = {}; renderSerasa(); });
+  document.querySelectorAll("[data-lote]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var ids = Object.keys(serSel); if (!ids.length) return;
+      var campos = JSON.parse(b.getAttribute("data-lote")); campos.ids = ids;
+      b.disabled = true;
+      api("POST", "/api/serasa/lote", campos).then(function (d) {
+        toast(d.atualizados + " parcela(s) atualizada(s)."); serSel = {}; return carregar();
+      }).catch(function (x) { toast(x.message); }).then(function () { b.disabled = false; });
+    });
+  });
+
+  // cadastro / edição de parcela
+  var parcelaAtual = null;
+  function porIdParcela(id) { for (var i = 0; i < parcelas.length; i++) if (parcelas[i].id === id) return parcelas[i]; return null; }
+  function abrirParcela(id) {
+    var x = id ? porIdParcela(id) : null; parcelaAtual = x;
+    $("formSerasa").reset(); mostrarErro($("srErr"), "");
+    $("serTitulo").textContent = x ? (x.nome || x.responsavel || "Parcela") : "Nova parcela";
+    $("serSub").textContent = x ? "Parcela de " + br(x.vencimento) + " · " + money(x.valor) : "Registro de negativação";
+    var v = x || {};
+    $("srRa").value = v.ra || ""; $("srNome").value = v.nome || ""; $("srResp").value = v.responsavel || ""; $("srCpf").value = v.cpf || "";
+    $("srVenc").value = v.vencimento || ""; $("srValor").value = v.valor != null && x ? v.valor : ""; $("srTipo").value = v.tipo || "";
+    $("srInclusao").value = v.dataInclusao || ""; $("srMentor").value = v.mentor || ""; $("srSerasa").value = v.serasa || "";
+    $("srRespInc").value = v.respInclusao || ""; $("srObs").value = v.observacao || "";
+    $("srAtualizado").textContent = x && x.atualizadoPor ? "Última alteração por " + x.atualizadoPor + " em " + br(x.atualizadoEm) : "";
+    var bx = $("srExcluir"); bx.hidden = !x || !eu || eu.perfil !== "admin"; bx.classList.remove("armed"); bx.textContent = "Excluir parcela";
+    abrir("mSerasa"); setTimeout(function () { (x ? $("srMentor") : $("srRa")).focus(); }, 30);
+  }
+  // Ao marcar como incluída, preenche data e responsável pela inclusão (se ainda vazios).
+  ["srMentor", "srSerasa"].forEach(function (id) {
+    $(id).addEventListener("change", function () {
+      if (this.value !== "ok") return;
+      if (!$("srInclusao").value) $("srInclusao").value = hoje();
+      if (!$("srRespInc").value && eu) $("srRespInc").value = eu.nome;
+    });
+  });
+  $("btnSerNovo").addEventListener("click", function () { abrirParcela(null); });
+  $("formSerasa").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var err = $("srErr");
+    if (!$("srNome").value.trim() && !$("srResp").value.trim()) return mostrarErro(err, "Informe o nome do aluno ou do responsável.");
+    if (!$("srVenc").value) return mostrarErro(err, "Informe o vencimento da parcela.");
+    var dados = {
+      ra: $("srRa").value.trim(), nome: $("srNome").value.trim(), responsavel: $("srResp").value.trim(), cpf: $("srCpf").value.trim(),
+      vencimento: $("srVenc").value, valor: parseFloat($("srValor").value) || 0, tipo: $("srTipo").value.trim().toUpperCase(),
+      mentor: $("srMentor").value, serasa: $("srSerasa").value, dataInclusao: $("srInclusao").value, respInclusao: $("srRespInc").value.trim(),
+      observacao: $("srObs").value.trim()
+    };
+    var req = parcelaAtual ? api("PATCH", "/api/serasa/" + encodeURIComponent(parcelaAtual.id), dados) : api("POST", "/api/serasa", dados);
+    req.then(function (d) {
+      var i = parcelas.findIndex(function (p) { return p.id === d.parcela.id; });
+      if (i === -1) parcelas.unshift(d.parcela); else parcelas[i] = d.parcela;
+      fecharModais(); renderSerasa(); toast(parcelaAtual ? "Parcela atualizada." : "Parcela cadastrada.");
+    }).catch(function (x) { mostrarErro(err, x.message); });
+  });
+  $("srExcluir").addEventListener("click", function () {
+    var b = this;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
+    api("DELETE", "/api/serasa/" + encodeURIComponent(parcelaAtual.id)).then(function () {
+      parcelas = parcelas.filter(function (p) { return p.id !== parcelaAtual.id; }); delete serSel[parcelaAtual.id];
+      fecharModais(); renderSerasa(); toast("Parcela excluída.");
+    }).catch(function (x) { toast(x.message); });
+  });
+
+  // modelo, exportação e importação
+  var SER_CAB = ["RA", "NOME", "RESPONSÁVEL FINANCEIRO", "CPF", "VENCIMENTO", "VALOR (R$)", "TIPO", "MENTOR", "SERASA", "DATA INCLUSÃO", "RESP. INCLUSÃO", "OBSERVAÇÃO"];
+  function csvCampo(v) { v = String(v == null ? "" : v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+  function serStTexto(v) { return v ? serSt(v).l.toUpperCase() : ""; }
+  $("btnSerModelo").addEventListener("click", function () {
+    baixar("modelo_importacao_serasa.csv", SER_CAB.join(";") + "\n" +
+      "12345;MARIA EXEMPLO DA SILVA;JOÃO DA SILVA;000.000.000-00;10/08/2026;1234,56;MENSALIDADE;OK;;;;\n");
+    toast("Modelo baixado.");
+  });
+  $("btnSerExportar").addEventListener("click", function () {
+    var linhas = serFiltrada.map(function (x) {
+      return [x.ra, x.nome, x.responsavel, x.cpf, br(x.vencimento), (Number(x.valor) || 0).toFixed(2).replace(".", ","), x.tipo,
+        serStTexto(x.mentor), serStTexto(x.serasa), x.dataInclusao ? br(x.dataInclusao) : "", x.respInclusao, x.observacao].map(csvCampo).join(";");
+    });
+    baixar("relatorio_serasa_" + hoje() + ".csv", SER_CAB.join(";") + "\n" + linhas.join("\n"));
+    toast("Relatório exportado (" + linhas.length + " parcelas, conforme os filtros).");
+  });
+  $("btnSerImportar").addEventListener("click", function () { abrirImportacao("serasa"); });
+  // Na Serasa as colunas são reconhecidas pelo nome exato (a coluna "SERASA" contém "ra" e
+  // confundiria a busca aproximada usada no Painel).
+  function colExata(h, nomes) { for (var i = 0; i < nomes.length; i++) { var j = h.indexOf(nomes[i]); if (j !== -1) return j; } return -1; }
+  function processarCSVSerasa(p) {
+    var h = p.headers, out = $("importResult");
+    var ix = {
+      ra: colExata(h, ["ra", "codigo", "matricula"]), nome: colExata(h, ["nome", "nome do aluno", "aluno"]),
+      resp: colExata(h, ["responsavel financeiro", "responsavel"]), cpf: colExata(h, ["cpf"]),
+      venc: colExata(h, ["vencimento", "data de vencimento", "venc"]), valor: colExata(h, ["valor (r$)", "valor", "valor r$"]),
+      tipo: colExata(h, ["tipo"]), mentor: colExata(h, ["mentor"]), serasa: colExata(h, ["serasa"]),
+      dataInc: colExata(h, ["data inclusao", "data de inclusao", "inclusao"]), respInc: colExata(h, ["resp. inclusao", "resp inclusao", "responsavel inclusao"]),
+      obs: colExata(h, ["observacao", "obs"])
+    };
+    if ((ix.nome === -1 && ix.resp === -1) || ix.venc === -1) {
+      out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não encontrei as colunas de nome (ou responsável) e vencimento. Colunas identificadas: ' +
+        esc((p.raw || []).filter(Boolean).join(", ") || "nenhuma") + '. Confira o modelo em "Baixar modelo".</div>';
+      $("btnConfirmImport").disabled = true; return;
+    }
+    function c(r, i) { return i !== -1 ? (r[i] || "").trim() : ""; }
+    pendentes = p.rows.map(function (r) {
+      var mentorTxt = c(r, ix.mentor), serasaTxt = c(r, ix.serasa), dataInc = parseDateBR(c(r, ix.dataInc));
+      if (!dataInc && /^\d/.test(serasaTxt)) dataInc = parseDateBR(serasaTxt);
+      if (!dataInc && /^\d/.test(mentorTxt)) dataInc = parseDateBR(mentorTxt);
+      return {
+        ra: c(r, ix.ra), nome: c(r, ix.nome), responsavel: c(r, ix.resp), cpf: c(r, ix.cpf), vencimento: parseDateBR(c(r, ix.venc)),
+        valor: parseMoneyBR(c(r, ix.valor)), tipo: c(r, ix.tipo).toUpperCase(), mentor: serNormalizar(mentorTxt), serasa: serNormalizar(serasaTxt),
+        dataInclusao: dataInc, respInclusao: c(r, ix.respInc), observacao: c(r, ix.obs)
+      };
+    }).filter(function (r) {
+      var quem = (r.nome || r.responsavel).toUpperCase();
+      return quem && quem !== "NOME" && quem !== "RESPONSÁVEL FINANCEIRO" && r.vencimento;
+    });
+    out.innerHTML = '<div class="import-preview"><table><thead><tr><th>Aluno / responsável</th><th>Vencimento</th><th>Valor</th><th>Mentor</th><th>Serasa</th><th>Inclusão</th></tr></thead><tbody>' +
+      pendentes.slice(0, 8).map(function (r) {
+        return "<tr><td>" + esc(r.nome || r.responsavel) + (r.ra ? ' <span class="muted">RA ' + esc(r.ra) + "</span>" : "") + "</td><td>" + br(r.vencimento) + '</td><td class="tabular">' + money(r.valor) +
+          "</td><td>" + serSt(r.mentor).l + "</td><td>" + serSt(r.serasa).l + "</td><td>" + br(r.dataInclusao) + "</td></tr>";
+      }).join("") + "</tbody></table></div>" +
+      '<div class="import-summary">' + pendentes.length + " parcela(s) encontradas" + (pendentes.length > 8 ? " (mostrando as 8 primeiras)" : "") +
+      ". Parcelas que já existirem (mesmo aluno, vencimento, valor e tipo) só recebem os campos que vierem preenchidos — nada que a equipe já marcou é apagado.</div>";
+    $("btnConfirmImport").disabled = !pendentes.length;
+  }
 
   // ---------------------------------------------------------------- usuários
   var armado = null;
