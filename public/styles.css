@@ -44,11 +44,11 @@ code{font-family:ui-monospace,Consolas,monospace;font-size:13px;background:var(-
 .boot{height:100%;display:grid;place-items:center;color:var(--muted);font-family:var(--display);font-weight:700}
 
 /* marca — o logo é verde com fundo transparente, então vai sobre uma placa branca */
-.logo-plate{display:inline-flex;align-items:center;background:#fff;border-radius:12px;padding:8px 12px;align-self:flex-start;position:relative;z-index:1}
-.logo-plate img{display:block;height:40px;width:auto;max-width:100%}
-.auth-art .logo-plate{padding:10px 16px}
-.auth-art .logo-plate img{height:52px}
-@media (max-width:860px){.side .logo-plate{padding:6px 10px}.side .logo-plate img{height:30px}.auth-art .logo-plate img{height:40px}}
+.logo-plate{display:inline-flex;align-items:center;justify-content:center;background:#fff;border-radius:12px;padding:10px 10px;align-self:stretch;position:relative;z-index:1}
+.logo-plate img{display:block;height:54px;width:auto;max-width:100%}
+.auth-art .logo-plate{padding:14px 20px;align-self:flex-start}
+.auth-art .logo-plate img{height:72px}
+@media (max-width:860px){.side .logo-plate{padding:6px 10px;align-self:center}.side .logo-plate img{height:36px}.auth-art .logo-plate img{height:48px}}
 .wm{display:inline-flex;align-items:center;gap:10px;color:inherit}
 .wm-text{display:flex;align-items:baseline;gap:3px;line-height:1}
 .wm-c{font-family:var(--display);font-weight:700;font-size:15px}
@@ -109,7 +109,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand-br
 @media (max-width:860px){.auth{grid-template-columns:1fr}.auth-art{padding:28px 20px}.auth-copy h1{font-size:34px}}
 
 /* estrutura */
-.app{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100%}
+.app{display:grid;grid-template-columns:252px minmax(0,1fr);min-height:100%}
 .side{background:var(--side-bg);color:var(--side-ink);padding:22px 14px;display:flex;flex-direction:column;gap:22px;position:sticky;top:0;height:100vh}
 .side .wm{color:#fff;padding:0 8px}
 .nav{display:flex;flex-direction:column;gap:2px}
@@ -147,14 +147,16 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand-br
 }
 
 /* indicadores */
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}
+/* 7 indicadores: 7 colunas em telas largas, 4+3 em médias, 2 por linha no celular (nunca um sozinho) */
+.kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}
 /* linhas divisórias que funcionam em qualquer número de colunas (a borda externa é cortada pelo overflow) */
 .kpi{padding:16px 16px 14px;min-width:0;box-shadow:1px 0 0 var(--line),0 1px 0 var(--line)}
 .kpi .num{font-family:var(--display);font-weight:800;font-size:19px;line-height:1.15;white-space:nowrap}
 .kpi .lbl{font-size:13px;color:var(--muted);font-weight:700;margin-top:4px}
 .kpi.lead{background:var(--brand);color:var(--brand-ink)}
 .kpi.lead .lbl{color:inherit;opacity:.85}
-@media (max-width:460px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi{padding:12px}.kpi .num{font-size:15px}}
+@media (max-width:1700px){.kpis{grid-template-columns:repeat(12,minmax(0,1fr))}.kpi{grid-column:span 3}.kpi:nth-child(n+5){grid-column:span 4}}
+@media (max-width:460px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi,.kpi:nth-child(n+5){grid-column:auto}.kpi:last-child{grid-column:1 / -1}.kpi{padding:12px}.kpi .num{font-size:15px}}
 
 /* filtros e tabela */
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
