@@ -99,7 +99,30 @@ const SCHEMA = [
     atualizado_em TEXT NOT NULL,
     atualizado_por TEXT NOT NULL DEFAULT ''
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_serasa_ra ON serasa(ra)`
+  `CREATE INDEX IF NOT EXISTS idx_serasa_ra ON serasa(ra)`,
+  // Períodos de vencimento da aba Serasa (as "abas" da planilha).
+  `CREATE TABLE IF NOT EXISTS serasa_periodos (
+    id TEXT PRIMARY KEY,
+    nome TEXT NOT NULL,
+    inicio TEXT NOT NULL,
+    fim TEXT NOT NULL,
+    criado_em TEXT NOT NULL,
+    criado_por TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE TABLE IF NOT EXISTS meta (chave TEXT PRIMARY KEY, valor TEXT NOT NULL)`
+];
+
+// Períodos que já existiam na planilha "SERASA - SER", criados uma única vez.
+const PERIODOS_INICIAIS = [
+  ["RF 2024 - Janeiro a Abril", "2023-12-01", "2024-04-30"],
+  ["01/05 - 30/09/2024", "2024-05-01", "2024-09-30"],
+  ["01/10/2024 - 31/01/2025", "2024-10-01", "2025-01-31"],
+  ["01/02 - 30/04/2025", "2025-02-01", "2025-04-30"],
+  ["01/05 - 31/07/2025", "2025-05-01", "2025-07-31"],
+  ["01/08 - 31/10/2025", "2025-08-01", "2025-10-31"],
+  ["01/11 - 31/01/26", "2025-11-01", "2026-01-31"],
+  ["01/02 - 31/03/2026", "2026-02-01", "2026-03-31"],
+  ["01/04 - 30/06/2026", "2026-04-01", "2026-06-30"]
 ];
 
 // Carteiras de alunos: "regular" (aba Painel) e "contraturno" (aba Contraturno).
@@ -131,6 +154,15 @@ export default {
         // Bancos criados antes da aba Contraturno não têm a coluna "carteira".
         const cols = (await env.DB.prepare("PRAGMA table_info(alunos)").all()).results.map((c) => c.name);
         if (!cols.includes("carteira")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN carteira TEXT NOT NULL DEFAULT 'regular'").run();
+        // Cria os períodos da planilha uma única vez (se forem apagados, não voltam).
+        // Só quem conseguir gravar a marca "periodos_iniciais" cria os períodos (evita duplicar
+        // se duas pessoas abrirem o site ao mesmo tempo logo após a atualização).
+        const agora = agoraISO();
+        const marca = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('periodos_iniciais', ?)").bind(agora).run();
+        if (!marca.meta || marca.meta.changes > 0) {
+          await env.DB.batch(PERIODOS_INICIAIS.map(([nome, ini, fim]) => env.DB.prepare(
+            "INSERT INTO serasa_periodos (id, nome, inicio, fim, criado_em, criado_por) VALUES (?,?,?,?,?, 'planilha')").bind(novoId(), nome, ini, fim, agora)));
+        }
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -205,6 +237,16 @@ async function rotear(req, env, url) {
     if (partes[1] === "importar" && m === "POST") return importarPlanilha(req, env);
     if (partes[1] === "regularizar" && m === "POST") return regularizar(req, env, eu);
     if (partes.length === 2 && m === "PATCH") return alterarAluno(req, env, partes[1]);
+  }
+
+  if (partes[0] === "serasa" && partes[1] === "periodos") {
+    if (partes.length === 2 && m === "GET") return listarPeriodos(env);
+    if (partes.length === 2 && m === "POST") return salvarPeriodo(req, env, eu, null);
+    if (partes.length === 3 && m === "PATCH") return salvarPeriodo(req, env, eu, partes[2]);
+    if (partes.length === 3 && m === "DELETE") {
+      await env.DB.prepare("DELETE FROM serasa_periodos WHERE id = ?").bind(partes[2]).run();
+      return json({ ok: true });
+    }
   }
 
   if (partes[0] === "serasa") {
@@ -922,4 +964,30 @@ async function loteSerasa(req, env, eu) {
     env.DB.prepare(`UPDATE serasa SET ${sets.join(", ")} WHERE id IN (${lote.map(() => "?").join(",")})`).bind(...vals, ...lote));
   await executarEmLotes(env, stmts);
   return json({ atualizados: ids.length });
+}
+
+// ---------------------------------------------------------------- Serasa: períodos
+
+function periodoSaida(r) { return { id: r.id, nome: r.nome, inicio: r.inicio, fim: r.fim, criadoPor: r.criado_por }; }
+
+async function listarPeriodos(env) {
+  const r = await env.DB.prepare("SELECT * FROM serasa_periodos ORDER BY inicio, fim").all();
+  return json({ periodos: r.results.map(periodoSaida) });
+}
+
+async function salvarPeriodo(req, env, eu, id) {
+  const b = await corpo(req);
+  const nome = texto(b.nome, 60), inicio = dataISO(b.inicio), fim = dataISO(b.fim);
+  if (!inicio || !fim) throw new HttpError(400, "Informe a data de início e a data de fim do período.");
+  if (fim < inicio) throw new HttpError(400, "A data de fim precisa ser igual ou posterior à de início.");
+  if (!nome) throw new HttpError(400, "Dê um nome ao período.");
+  if (id) {
+    const r = await env.DB.prepare("UPDATE serasa_periodos SET nome = ?, inicio = ?, fim = ? WHERE id = ?").bind(nome, inicio, fim, id).run();
+    if (r.meta && r.meta.changes === 0) throw new HttpError(404, "Período não encontrado.");
+  } else {
+    id = novoId();
+    await env.DB.prepare("INSERT INTO serasa_periodos (id, nome, inicio, fim, criado_em, criado_por) VALUES (?,?,?,?,?,?)")
+      .bind(id, nome, inicio, fim, agoraISO(), eu.nome).run();
+  }
+  return json({ periodo: periodoSaida(await env.DB.prepare("SELECT * FROM serasa_periodos WHERE id = ?").bind(id).first()) });
 }

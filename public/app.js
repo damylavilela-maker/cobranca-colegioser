@@ -182,12 +182,13 @@
   }
 
   function carregar() {
-    return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa")])
+    return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa"), api("GET", "/api/serasa/periodos")])
       .then(function (r) {
         alunos = {}; r[0].alunos.forEach(function (a) { alunos[a.id] = a; });
         atends = r[1].atendimentos;
         atendentesAtivos = r[2].atendentes;
         parcelas = r[3].parcelas;
+        periodos = r[4].periodos;
         marcarSync(true);
         renderTudo();
       })
@@ -201,7 +202,7 @@
     pararPolling();
     pollTimer = setInterval(function () {
       if (document.hidden || !eu) return;
-      if (!$("mDetalhe").hidden || !$("mImportar").hidden || !$("mSerasa").hidden) return; // não atrapalha quem está preenchendo
+      if (!$("mDetalhe").hidden || !$("mImportar").hidden || !$("mSerasa").hidden || !$("mPeriodo").hidden) return; // não atrapalha quem está preenchendo
       carregar();
     }, 60000);
   }
@@ -897,12 +898,92 @@
     return "";
   }
   var serSel = {}, serLimite = 300, serFiltrada = [];
+
+  // Períodos de vencimento (abas). A aba escolhida fica lembrada neste navegador.
+  var periodos = [], periodoSel = "";
+  try { periodoSel = localStorage.getItem("ser_periodo") || ""; } catch (e) { periodoSel = ""; }
+  function periodoAtual() { for (var i = 0; i < periodos.length; i++) if (periodos[i].id === periodoSel) return periodos[i]; return null; }
+  function noPeriodo(x, p) { return !p || (x.vencimento && x.vencimento >= p.inicio && x.vencimento <= p.fim); }
+  function renderPeriodos() {
+    var cont = function (p) { var n = 0; parcelas.forEach(function (x) { if (noPeriodo(x, p)) n++; }); return n; };
+    var abas = [{ id: "", nome: "Todos os períodos" }].concat(periodos);
+    $("serPeriodos").innerHTML = abas.map(function (p) {
+      var ativo = p.id === periodoSel;
+      return '<button type="button" class="per-tab' + (ativo ? " active" : "") + '" role="tab" aria-selected="' + ativo + '" data-per="' + esc(p.id) + '"' +
+        (p.id ? ' title="' + br(p.inicio) + " a " + br(p.fim) + '"' : "") + ">" + esc(p.nome) + ' <span class="n">' + cont(p.id ? p : null) + "</span>" +
+        (ativo && p.id ? '<span class="edit" data-editar-per="' + esc(p.id) + '" title="Editar período" aria-label="Editar período">✎</span>' : "") + "</button>";
+    }).join("");
+    var at = $("serPeriodos").querySelector(".per-tab.active");
+    if (at && at.scrollIntoView) at.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  $("serPeriodos").addEventListener("click", function (e) {
+    var ed = e.target.closest("[data-editar-per]");
+    if (ed) { abrirPeriodo(ed.getAttribute("data-editar-per")); return; }
+    var b = e.target.closest(".per-tab"); if (!b) return;
+    periodoSel = b.getAttribute("data-per");
+    try { localStorage.setItem("ser_periodo", periodoSel); } catch (x) { /* navegador sem armazenamento */ }
+    serSel = {}; serLimite = 300; renderSerasa();
+  });
+
+  var periodoEdit = null;
+  function ultimoDiaMes(ano, mes) { return isoLocal(new Date(ano, mes, 0)); } // mes 1-12
+  function nomePeriodo(ini, fim) {
+    if (!ini || !fim) return "";
+    var a = br(ini), b = br(fim);
+    return (ini.slice(0, 4) === fim.slice(0, 4) ? a.slice(0, 5) : a) + " - " + b;
+  }
+  function abrirPeriodo(id) {
+    var p = null; periodos.forEach(function (x) { if (x.id === id) p = x; });
+    periodoEdit = p;
+    mostrarErro($("perErr"), "");
+    delete $("perNome").dataset.mexeu;
+    $("perTitulo").textContent = p ? "Editar período" : "Novo período";
+    if (p) { $("perInicio").value = p.inicio; $("perFim").value = p.fim; $("perNome").value = p.nome; }
+    else {
+      // sugere os 3 meses seguintes ao último período criado
+      var ult = periodos.length ? periodos[periodos.length - 1].fim : isoLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 0));
+      var d = new Date(ult + "T00:00:00"); d.setDate(d.getDate() + 1);
+      var ini = isoLocal(d), fim = ultimoDiaMes(d.getFullYear(), d.getMonth() + 3);
+      $("perInicio").value = ini; $("perFim").value = fim; $("perNome").value = nomePeriodo(ini, fim);
+    }
+    var bx = $("perExcluir"); bx.hidden = !p; bx.classList.remove("armed"); bx.textContent = "Excluir período";
+    abrir("mPeriodo"); setTimeout(function () { $("perInicio").focus(); }, 30);
+  }
+  ["perInicio", "perFim"].forEach(function (id) {
+    $(id).addEventListener("change", function () { if (!$("perNome").dataset.mexeu) $("perNome").value = nomePeriodo($("perInicio").value, $("perFim").value); });
+  });
+  $("perNome").addEventListener("input", function () { this.dataset.mexeu = "1"; });
+  $("btnNovoPeriodo").addEventListener("click", function () { abrirPeriodo(null); });
+  $("formPeriodo").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var dados = { nome: $("perNome").value.trim() || nomePeriodo($("perInicio").value, $("perFim").value), inicio: $("perInicio").value, fim: $("perFim").value };
+    var req = periodoEdit ? api("PATCH", "/api/serasa/periodos/" + encodeURIComponent(periodoEdit.id), dados) : api("POST", "/api/serasa/periodos", dados);
+    req.then(function (d) {
+      var i = periodos.findIndex(function (p) { return p.id === d.periodo.id; });
+      if (i === -1) periodos.push(d.periodo); else periodos[i] = d.periodo;
+      periodos.sort(function (a, b) { return (a.inicio + a.fim).localeCompare(b.inicio + b.fim); });
+      periodoSel = d.periodo.id;
+      try { localStorage.setItem("ser_periodo", periodoSel); } catch (x) { /* sem armazenamento */ }
+      fecharModais(); renderSerasa(); toast(periodoEdit ? "Período atualizado." : "Período criado.");
+    }).catch(function (x) { mostrarErro($("perErr"), x.message); });
+  });
+  $("perExcluir").addEventListener("click", function () {
+    var b = this;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
+    api("DELETE", "/api/serasa/periodos/" + encodeURIComponent(periodoEdit.id)).then(function () {
+      periodos = periodos.filter(function (p) { return p.id !== periodoEdit.id; });
+      periodoSel = ""; fecharModais(); renderSerasa(); toast("Período excluído. As parcelas continuam salvas.");
+    }).catch(function (x) { toast(x.message); });
+  });
   var SER_OPC = [{ v: "", l: "" }, { v: "__pendente", l: "Pendente" }].concat(SER_ST.slice(1));
   fill($("sMentor"), SER_OPC.slice(1), "Mentor: todas"); fill($("sSerasa"), SER_OPC.slice(1), "Serasa: todas");
   fill($("srMentor"), SER_ST); fill($("srSerasa"), SER_ST);
 
   function renderSerasa() {
-    var p = parcelas;
+    if (periodoSel && !periodoAtual()) periodoSel = "";
+    renderPeriodos();
+    var per = periodoAtual();
+    var p = per ? parcelas.filter(function (x) { return noPeriodo(x, per); }) : parcelas;
     // indicadores
     var negVal = 0, neg = 0, pend = 0, pagas = 0, jur = 0, alunosSet = {};
     p.forEach(function (x) {

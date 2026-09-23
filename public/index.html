@@ -169,6 +169,10 @@
           <button type="button" class="btn primary small" id="btnSerNovo">+ Nova parcela</button>
         </div>
       </div>
+      <div class="periodos" role="tablist" aria-label="Períodos de vencimento">
+        <div class="periodos-lista" id="serPeriodos"></div>
+        <button type="button" class="btn ghost small" id="btnNovoPeriodo">+ Novo período</button>
+      </div>
       <div class="kpis k6" id="serKpis"></div>
       <div class="filters">
         <input type="search" id="sBusca" placeholder="Buscar aluno, responsável, RA ou CPF…" aria-label="Buscar">
@@ -344,6 +348,24 @@
       <div class="m-foot spread">
         <button type="button" class="btn danger small" id="srExcluir" hidden>Excluir parcela</button>
         <span class="row-end"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary" id="srSalvar">Salvar</button></span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="mPeriodo" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="perTitulo">
+    <div class="m-head"><div><h2 id="perTitulo">Novo período</h2><div class="sub">Mostra as parcelas com vencimento entre as duas datas</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <form class="m-body" id="formPeriodo" novalidate>
+      <div class="grid2">
+        <div class="field"><label for="perInicio">Início</label><input id="perInicio" type="date"></div>
+        <div class="field"><label for="perFim">Fim</label><input id="perFim" type="date"></div>
+      </div>
+      <div class="field"><label for="perNome">Nome da aba</label><input id="perNome" maxlength="60" placeholder="01/07 - 30/09/2026"><span class="hint">Preenchido a partir das datas; pode mudar.</span></div>
+      <div class="form-err" id="perErr" hidden></div>
+      <div class="m-foot spread">
+        <button type="button" class="btn danger small" id="perExcluir" hidden>Excluir período</button>
+        <span class="row-end"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary">Salvar período</button></span>
       </div>
     </form>
   </div>
