@@ -135,7 +135,7 @@ const SERASA_STATUS = ["", "ok", "pago", "negociado", "juridico", "bloqueio", "n
 function statusSerasaValido(v) { return SERASA_STATUS.includes(v) ? v : ""; }
 
 const ALUNO_COLS = ["id", "nome", "ra", "turma", "responsavel", "telefone", "email", "valor_aberto", "parcelas_aberto", "vencimento", "status", "setor", "atendente_responsavel", "ultimo_contato_data", "ultimo_contato_canal", "proximo_retorno", "arquivado", "ultima_atualizacao_financeira", "criado_em", "atualizado_em", "carteira"];
-const SERASA_COLS = ["id", "ra", "nome", "responsavel", "cpf", "vencimento", "valor", "tipo", "mentor", "serasa", "data_inclusao", "resp_inclusao", "observacao", "criado_em", "atualizado_em", "atualizado_por"];
+const SERASA_COLS = ["id", "ra", "nome", "responsavel", "cpf", "vencimento", "valor", "tipo", "mentor", "serasa", "data_inclusao", "resp_inclusao", "observacao", "criado_em", "atualizado_em", "atualizado_por", "periodo_id"];
 const ATEND_COLS = ["id", "aluno_id", "aluno_nome", "data", "usuario_id", "atendente_nome", "canal", "setor", "motivo", "observacao", "status_resultante", "proximo_retorno", "valor_recuperado", "valor_recuperado_aberto", "faixa_atraso", "mensalidades", "valor_negociado_total", "criado_em"];
 
 class HttpError extends Error {
@@ -155,6 +155,9 @@ export default {
         // Bancos criados antes da aba Contraturno não têm a coluna "carteira".
         const cols = (await env.DB.prepare("PRAGMA table_info(alunos)").all()).results.map((c) => c.name);
         if (!cols.includes("carteira")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN carteira TEXT NOT NULL DEFAULT 'regular'").run();
+        // Cada parcela da Serasa pertence a um período (como uma linha pertence a uma aba da planilha).
+        const colsSer = (await env.DB.prepare("PRAGMA table_info(serasa)").all()).results.map((c) => c.name);
+        if (!colsSer.includes("periodo_id")) await env.DB.prepare("ALTER TABLE serasa ADD COLUMN periodo_id TEXT NOT NULL DEFAULT ''").run();
         // Cria os períodos da planilha uma única vez (se forem apagados, não voltam).
         // Só quem conseguir gravar a marca "periodos_iniciais" cria os períodos (evita duplicar
         // se duas pessoas abrirem o site ao mesmo tempo logo após a atualização).
@@ -252,7 +255,11 @@ async function rotear(req, env, url) {
     if (partes.length === 2 && m === "POST") return salvarPeriodo(req, env, eu, null);
     if (partes.length === 3 && m === "PATCH") return salvarPeriodo(req, env, eu, partes[2]);
     if (partes.length === 3 && m === "DELETE") {
-      await env.DB.prepare("DELETE FROM serasa_periodos WHERE id = ?").bind(partes[2]).run();
+      // as parcelas do período continuam salvas, apenas ficam "sem período"
+      await env.DB.batch([
+        env.DB.prepare("UPDATE serasa SET periodo_id = '' WHERE periodo_id = ?").bind(partes[2]),
+        env.DB.prepare("DELETE FROM serasa_periodos WHERE id = ?").bind(partes[2])
+      ]);
       return json({ ok: true });
     }
   }
@@ -860,7 +867,7 @@ function serasaSaida(r) {
     id: r.id, ra: r.ra, nome: r.nome, responsavel: r.responsavel, cpf: r.cpf, vencimento: r.vencimento,
     valor: r.valor, tipo: r.tipo, mentor: r.mentor, serasa: r.serasa, dataInclusao: r.data_inclusao,
     respInclusao: r.resp_inclusao, observacao: r.observacao, criadoEm: r.criado_em,
-    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por
+    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por, periodoId: r.periodo_id || ""
   };
 }
 
@@ -870,7 +877,7 @@ function serasaValores(o, id, eu, criadoEm) {
     id, texto(o.ra, 30), texto(o.nome, 150), texto(o.responsavel, 150), texto(o.cpf, 20), dataISO(o.vencimento),
     numero(o.valor), texto(o.tipo, 40), statusSerasaValido(o.mentor), statusSerasaValido(o.serasa),
     dataISO(o.dataInclusao), texto(o.respInclusao, 80), texto(o.observacao, 2000),
-    criadoEm || agora, agora, eu ? eu.nome : ""
+    criadoEm || agora, agora, eu ? eu.nome : "", texto(o.periodoId, 40)
   ];
 }
 
@@ -916,40 +923,78 @@ async function excluirSerasa(env, id) {
   return json({ ok: true });
 }
 
-// Importa o relatório: parcela nova é cadastrada; parcela que já existe (mesma chave) só
-// recebe os campos que vieram preenchidos na planilha — nada que a equipe já marcou é apagado.
+// Importa o relatório de um período (uma aba da planilha). Cada linha vai para o período
+// escolhido na tela ou, se o arquivo tiver a coluna PERÍODO, para o período daquela linha
+// (períodos que ainda não existem são criados). A mesma parcela pode estar em dois
+// períodos, como na planilha. Parcela que já existe no período só recebe os campos que
+// vieram preenchidos — nada que a equipe já marcou é apagado. Parcelas antigas ainda sem
+// período são aproveitadas (recebem o período) em vez de duplicadas.
 async function importarSerasa(req, env, eu) {
   const b = await corpo(req);
   const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 10000) : [];
   if (!linhas.length) throw new HttpError(400, "Nenhuma linha para importar.");
-  const existentes = {};
-  (await env.DB.prepare("SELECT * FROM serasa").all()).results.forEach((r) => { existentes[chaveSerasa(serasaSaida(r))] = r; });
+
+  const periodos = (await env.DB.prepare("SELECT * FROM serasa_periodos").all()).results;
+  const porNome = {}, ids = new Set();
+  periodos.forEach((p) => { porNome[p.nome.trim().toLowerCase()] = p.id; ids.add(p.id); });
+  const padrao = ids.has(texto(b.periodoId, 40)) ? texto(b.periodoId, 40) : "";
+  // períodos citados no arquivo que ainda não existem: cria, com as datas dos vencimentos
+  const novos = {};
+  linhas.forEach((l) => {
+    const n = texto(l.periodo, 60); if (!n || porNome[n.toLowerCase()]) return;
+    const v = dataISO(l.vencimento), k = n.toLowerCase();
+    if (!novos[k]) novos[k] = { nome: n, ini: v, fim: v };
+    if (v && (!novos[k].ini || v < novos[k].ini)) novos[k].ini = v;
+    if (v && (!novos[k].fim || v > novos[k].fim)) novos[k].fim = v;
+  });
+  const criadosPeriodos = [];
+  for (const k of Object.keys(novos)) {
+    const p = novos[k], id = novoId();
+    await env.DB.prepare("INSERT INTO serasa_periodos (id, nome, inicio, fim, criado_em, criado_por) VALUES (?,?,?,?,?,?)")
+      .bind(id, p.nome, p.ini || hojeISO(), p.fim || hojeISO(), agoraISO(), eu.nome).run();
+    porNome[k] = id; criadosPeriodos.push(p.nome);
+  }
+  if (!padrao && linhas.some((l) => !texto(l.periodo))) throw new HttpError(400, "Escolha o período para onde vão as parcelas deste arquivo.");
+
+  // Linhas idênticas na mesma aba são parcelas diferentes (ex.: duas cobranças iguais):
+  // a 1ª linha do arquivo corresponde à 1ª parcela igual já salva no período, a 2ª à 2ª…
+  const noPeriodo = {}, semPeriodo = {};
+  (await env.DB.prepare("SELECT * FROM serasa ORDER BY criado_em, id").all()).results.forEach((r) => {
+    const k = chaveSerasa(serasaSaida(r));
+    if (r.periodo_id) (noPeriodo[r.periodo_id + "#" + k] = noPeriodo[r.periodo_id + "#" + k] || []).push(r);
+    else (semPeriodo[k] = semPeriodo[k] || []).push(r);
+  });
   const stmts = [];
   let criados = 0, atualizados = 0, iguais = 0, incompletas = 0, repetidas = 0;
-  const vistos = new Set();
+  const ocorrencia = {}, porPeriodo = {};
+  // compara tudo menos as datas de criação/alteração e quem alterou
+  const comparavel = (o, id) => { const v = serasaValores(o, id, null); return JSON.stringify(v.slice(0, 13).concat(v.slice(16))); };
   for (const l of linhas) {
     if ((!texto(l.nome) && !texto(l.responsavel)) || !dataISO(l.vencimento)) { incompletas++; continue; }
-    const k = chaveSerasa(l);
-    if (vistos.has(k)) { repetidas++; continue; }
-    vistos.add(k);
-    const achado = existentes[k];
+    const pid = texto(l.periodo) ? porNome[texto(l.periodo, 60).toLowerCase()] : padrao;
+    const k = chaveSerasa(l), kp = pid + "#" + k;
+    const n = ocorrencia[kp] = (ocorrencia[kp] || 0) + 1;
+    if (n > 1) repetidas++; // informativo: linha igual a outra da mesma aba (também é importada)
+    porPeriodo[pid] = (porPeriodo[pid] || 0) + 1;
+    let achado = (noPeriodo[kp] || [])[n - 1];
+    if (!achado && semPeriodo[k] && semPeriodo[k].length) achado = semPeriodo[k].shift();
     if (achado) {
       const base = serasaSaida(achado);
-      const junto = { ...base };
+      const junto = { ...base, periodoId: pid };
       ["nome", "responsavel", "cpf", "tipo", "respInclusao", "observacao"].forEach((c) => { if (texto(l[c])) junto[c] = l[c]; });
       ["mentor", "serasa"].forEach((c) => { if (statusSerasaValido(l[c])) junto[c] = l[c]; });
       if (dataISO(l.dataInclusao)) junto.dataInclusao = l.dataInclusao;
-      const mudou = JSON.stringify(serasaValores(junto, achado.id, null).slice(0, 13)) !== JSON.stringify(serasaValores(base, achado.id, null).slice(0, 13));
+      const mudou = comparavel(junto, achado.id) !== comparavel(base, achado.id);
       if (!mudou) { iguais++; continue; }
       stmts.push(env.DB.prepare(insertSQL("serasa", SERASA_COLS)).bind(...serasaValores(junto, achado.id, eu, achado.criado_em)));
       atualizados++;
     } else {
-      stmts.push(env.DB.prepare(insertSQL("serasa", SERASA_COLS)).bind(...serasaValores(l, novoId(), eu)));
+      stmts.push(env.DB.prepare(insertSQL("serasa", SERASA_COLS)).bind(...serasaValores({ ...l, periodoId: pid }, novoId(), eu)));
       criados++;
     }
   }
   await executarEmLotes(env, stmts);
-  return json({ criados, atualizados, iguais, incompletas, repetidas, ignorados: iguais + incompletas + repetidas });
+  return json({ criados, atualizados, iguais, incompletas, repetidas, ignorados: iguais + incompletas + repetidas, periodosCriados: criadosPeriodos, porPeriodo });
 }
 
 // Atualiza várias parcelas de uma vez (ex.: "incluídas no Serasa hoje").

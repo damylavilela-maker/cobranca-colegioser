@@ -314,6 +314,11 @@
   <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="mImpT">
     <div class="m-head"><div><h2 id="mImpT">Importar planilha</h2><div class="sub" id="mImpSub">Envie um CSV exportado da planilha de cobrança (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento)</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
     <div class="m-body">
+      <div class="field" id="impPeriodoWrap" hidden>
+        <label for="impPeriodo">Importar para o período (a aba da planilha)</label>
+        <select id="impPeriodo"></select>
+        <span class="hint" id="impPeriodoHint">Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.</span>
+      </div>
       <div class="dropzone" id="dropzone">Arraste um arquivo .csv aqui ou clique para selecionar<input type="file" id="fileInput" accept=".csv,.txt,text/csv,text/plain,application/vnd.ms-excel" hidden></div>
       <div class="field">
         <label for="pasteArea">Não conseguiu anexar o arquivo? Cole o conteúdo do CSV aqui</label>
@@ -341,7 +346,8 @@
         <div class="field"><label for="srInclusao">Data de inclusão</label><input id="srInclusao" type="date"></div>
         <div class="field"><label for="srMentor">Mentor</label><select id="srMentor"></select></div>
         <div class="field"><label for="srSerasa">Serasa</label><select id="srSerasa"></select></div>
-        <div class="field" style="grid-column:1/-1"><label for="srRespInc">Responsável pela inclusão</label><input id="srRespInc"></div>
+        <div class="field"><label for="srRespInc">Responsável pela inclusão</label><input id="srRespInc"></div>
+        <div class="field"><label for="srPeriodo">Período (aba)</label><select id="srPeriodo"></select></div>
       </div>
       <div class="field"><label for="srObs">Observação</label><textarea id="srObs" rows="2"></textarea></div>
       <div class="meta" id="srAtualizado"></div>
@@ -356,7 +362,7 @@
 
 <div class="overlay" id="mPeriodo" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="perTitulo">
-    <div class="m-head"><div><h2 id="perTitulo">Novo período</h2><div class="sub">Mostra as parcelas com vencimento entre as duas datas</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-head"><div><h2 id="perTitulo">Novo período</h2><div class="sub">Equivale a uma aba da planilha. As datas servem para sugerir o nome.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
     <form class="m-body" id="formPeriodo" novalidate>
       <div class="grid2">
         <div class="field"><label for="perInicio">Início</label><input id="perInicio" type="date"></div>

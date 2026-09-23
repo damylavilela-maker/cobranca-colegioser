@@ -556,7 +556,7 @@
 
   var pendentes = [];
   function normHeader(h) { return String(h || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim(); }
-  var HEADER_TOKENS = ["ra", "codigo", "matricula", "nome", "nome do aluno", "nome completo", "aluno", "turma", "responsavel", "responsavel financeiro", "responsavel(a)", "telefone", "tel", "celular", "e-mail", "email", "valor", "valor em aberto", "valor devido", "total devido", "vencimento", "data de vencimento", "dt vencimento", "venc", "valor (r$)", "mentor", "serasa", "cpf", "tipo", "data inclusao", "resp. inclusao", "realizado"];
+  var HEADER_TOKENS = ["ra", "codigo", "matricula", "nome", "nome do aluno", "nome completo", "aluno", "turma", "responsavel", "responsavel financeiro", "responsavel(a)", "telefone", "tel", "celular", "e-mail", "email", "valor", "valor em aberto", "valor devido", "total devido", "vencimento", "data de vencimento", "dt vencimento", "venc", "valor (r$)", "mentor", "serasa", "cpf", "tipo", "data inclusao", "resp. inclusao", "realizado", "periodo"];
   // Lê o CSV caractere a caractere: uma quebra de linha só termina a linha fora de aspas
   // (o Excel exporta células com várias linhas entre aspas).
   function tokenizeCSV(text, delim) {
@@ -682,8 +682,16 @@
     b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : "Importar alunos";
     $("mImpT").textContent = modo === "serasa" ? "Importar planilha — Serasa" : carteira === "contraturno" ? "Importar planilha — Contraturno" : "Importar planilha";
     $("mImpSub").textContent = modo === "serasa"
-      ? "Envie o CSV do relatório de negativação (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo e Resp. inclusão."
+      ? "Envie o CSV de uma aba da planilha (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
       : "Envie um CSV exportado do relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento)";
+    $("impPeriodoWrap").hidden = modo !== "serasa";
+    $("impPeriodo").disabled = false;
+    $("impPeriodoHint").textContent = "Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.";
+    if (modo === "serasa") {
+      fill($("impPeriodo"), opcoesPeriodos(), periodos.length ? "Escolha o período…" : "Nenhum período criado ainda");
+      // já vem escolhido o período que está aberto no filtro
+      if (periodoAtual()) $("impPeriodo").value = periodoSel;
+    }
     abrir("mImportar");
   }
   $("btnImportar").addEventListener("click", function () { abrirImportacao("alunos"); });
@@ -702,14 +710,21 @@
     if (!pendentes.length) return;
     var btn = this; btn.disabled = true; btn.textContent = "Importando…";
     if (modoImport === "serasa") {
-      var importadas = pendentes.slice();
-      return api("POST", "/api/serasa/importar", { linhas: pendentes }).then(function (d) {
+      var destino = $("impPeriodo").value;
+      var temColunaPeriodo = pendentes.some(function (l) { return l.periodo; });
+      if (!temColunaPeriodo && !destino) {
+        btn.disabled = false; btn.textContent = "Importar parcelas";
+        $("impPeriodo").focus();
+        return toast("Escolha para qual período (aba) vão estas parcelas.");
+      }
+      return api("POST", "/api/serasa/importar", { linhas: pendentes, periodoId: destino }).then(function (d) {
         btn.hidden = true;
         var partes = [];
+        if (d.periodosCriados && d.periodosCriados.length) partes.push("<b>" + d.periodosCriados.length + "</b> período(s) criado(s): " + d.periodosCriados.map(esc).join(", "));
         partes.push("<b>" + d.criados + "</b> parcela(s) nova(s)");
         partes.push("<b>" + d.atualizados + "</b> atualizada(s) com o que veio na planilha");
         if (d.iguais) partes.push("<b>" + d.iguais + "</b> já estavam no painel exatamente iguais (nada a mudar)");
-        if (d.repetidas) partes.push(d.repetidas + " repetida(s) dentro do próprio arquivo");
+        if (d.repetidas) partes.push(d.repetidas + " linha(s) iguais a outra da mesma aba (importadas também, como na planilha)");
         if (d.incompletas) partes.push(d.incompletas + " sem nome ou vencimento (não importadas)");
         var nada = !d.criados && !d.atualizados;
         $("importResult").innerHTML = '<div class="import-summary" style="color:var(--ink)">' + partes.join(" · ") + ".</div>" +
@@ -717,7 +732,7 @@
           '<div class="m-foot" style="justify-content:flex-start"><button type="button" class="btn primary small" id="btnVerImportadas">Ver estas parcelas</button></div>';
         $("btnVerImportadas").addEventListener("click", function () { fecharModais(); });
         toast(nada ? "Nada a atualizar: as parcelas já estavam no painel." : "Planilha da Serasa importada.");
-        return carregar().then(function () { mostrarImportadas(importadas); });
+        return carregar().then(function () { mostrarImportadas(d.porPeriodo || {}); });
       }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); });
     }
     api("POST", "/api/alunos/importar", { linhas: pendentes, carteira: carteira }).then(function (d) {
@@ -909,21 +924,29 @@
   }
   var serSel = {}, serLimite = 300, serFiltrada = [];
 
-  // Períodos de vencimento (abas). A aba escolhida fica lembrada neste navegador.
+  // Períodos = abas da planilha. Cada parcela pertence a um período (periodoId), como uma
+  // linha pertence a uma aba; a mesma parcela pode estar em mais de um período.
+  // O período escolhido fica lembrado neste navegador. "__sem" = parcelas ainda sem período.
+  var SEM_PERIODO = "__sem";
   var periodos = [], periodoSel = "";
   try { periodoSel = localStorage.getItem("ser_periodo") || ""; } catch (e) { periodoSel = ""; }
   function periodoAtual() { for (var i = 0; i < periodos.length; i++) if (periodos[i].id === periodoSel) return periodos[i]; return null; }
-  function noPeriodo(x, p) { return !p || (x.vencimento && x.vencimento >= p.inicio && x.vencimento <= p.fim); }
-  // Lista de períodos no campo "Período": mais recentes primeiro, com a quantidade de parcelas.
+  function doPeriodo(x, sel) { return !sel || (sel === SEM_PERIODO ? !x.periodoId : x.periodoId === sel); }
+  function nomeDoPeriodo(id) { for (var i = 0; i < periodos.length; i++) if (periodos[i].id === id) return periodos[i].nome; return ""; }
+  function opcoesPeriodos() { return periodos.slice().reverse().map(function (p) { return { v: p.id, l: p.nome }; }); }
+  // Lista do campo "Período": mais recentes primeiro, com a quantidade de parcelas.
   function renderPeriodos() {
-    var cont = function (p) { var n = 0; parcelas.forEach(function (x) { if (noPeriodo(x, p)) n++; }); return n; };
+    var n = {}, sem = 0;
+    parcelas.forEach(function (x) { if (x.periodoId) n[x.periodoId] = (n[x.periodoId] || 0) + 1; else sem++; });
     var opcoes = [{ v: "", l: "Período: todos (" + parcelas.length + ")" }].concat(periodos.slice().reverse().map(function (p) {
-      return { v: p.id, l: "Período: " + p.nome + " (" + cont(p) + ")" };
+      return { v: p.id, l: "Período: " + p.nome + " (" + (n[p.id] || 0) + ")" };
     }));
+    if (sem) opcoes.push({ v: SEM_PERIODO, l: "Sem período (" + sem + ")" });
+    if (periodoSel === SEM_PERIODO && !sem) periodoSel = "";
     prepararSelect($("sPeriodo"), opcoes.map(function (o) { return { v: esc(o.v), l: esc(o.l) }; }), periodoSel);
     $("sPeriodo").value = periodoSel;
     var p = periodoAtual();
-    $("sPeriodo").title = p ? "Vencimentos de " + br(p.inicio) + " a " + br(p.fim) : "Todos os vencimentos";
+    $("sPeriodo").title = p ? "Aba " + p.nome + " (" + br(p.inicio) + " a " + br(p.fim) + ")" : "";
     $("btnEditarPeriodo").hidden = !p;
   }
   $("sPeriodo").addEventListener("change", function () {
@@ -980,7 +1003,8 @@
     if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
     api("DELETE", "/api/serasa/periodos/" + encodeURIComponent(periodoEdit.id)).then(function () {
       periodos = periodos.filter(function (p) { return p.id !== periodoEdit.id; });
-      periodoSel = ""; fecharModais(); renderSerasa(); toast("Período excluído. As parcelas continuam salvas.");
+      periodoSel = ""; fecharModais(); toast("Período excluído. As parcelas dele continuam salvas, em “Sem período”.");
+      return carregar();
     }).catch(function (x) { toast(x.message); });
   });
   var SER_OPC = [{ v: "", l: "" }, { v: "__pendente", l: "Pendente" }].concat(SER_ST.slice(1));
@@ -988,10 +1012,9 @@
   fill($("srMentor"), SER_ST); fill($("srSerasa"), SER_ST);
 
   function renderSerasa() {
-    if (periodoSel && !periodoAtual()) periodoSel = "";
+    if (periodoSel && periodoSel !== SEM_PERIODO && !periodoAtual()) periodoSel = "";
     renderPeriodos();
-    var per = periodoAtual();
-    var p = per ? parcelas.filter(function (x) { return noPeriodo(x, per); }) : parcelas;
+    var p = periodoSel ? parcelas.filter(function (x) { return doPeriodo(x, periodoSel); }) : parcelas;
     // indicadores
     var negVal = 0, neg = 0, pend = 0, pagas = 0, jur = 0, alunosSet = {};
     p.forEach(function (x) {
@@ -1041,7 +1064,7 @@
     var tb = $("serTbody");
     if (!serFiltrada.length) {
       var msg = !parcelas.length ? ["Nenhuma parcela cadastrada ainda", "Importe a planilha da Serasa ou cadastre a primeira parcela."]
-        : !p.length ? ["Nenhuma parcela com vencimento neste período", "Importe o relatório do período ou escolha outro período acima."]
+        : !p.length ? ["Nenhuma parcela neste período", "Importe o relatório desta aba em “Importar planilha”, escolhendo este período."]
         : ["Nenhuma parcela com estes filtros", "Ajuste a busca ou os filtros acima."];
       tb.innerHTML = '<tr><td colspan="8" class="empty"><b>' + msg[0] + '</b><div class="muted">' + msg[1] + "</div></td></tr>";
     } else {
@@ -1062,15 +1085,10 @@
     atualizarSelecao();
   }
   // Depois de importar, a lista atrás da janela passa a mostrar as parcelas do arquivo:
-  // limpa os filtros e escolhe o período que contém a maior parte dos vencimentos importados.
-  function mostrarImportadas(linhas) {
-    var melhor = "", maior = 0;
-    periodos.forEach(function (p) {
-      var n = 0; linhas.forEach(function (l) { if (noPeriodo(l, p)) n++; });
-      if (n > maior) { maior = n; melhor = p.id; }
-    });
-    if (maior < linhas.length * 0.8) melhor = ""; // arquivo de vários períodos: mostra todos
-    periodoSel = melhor;
+  // limpa os filtros e escolhe o período para onde elas foram (ou todos, se foram para vários).
+  function mostrarImportadas(porPeriodo) {
+    var ids = Object.keys(porPeriodo);
+    periodoSel = ids.length === 1 ? (ids[0] || SEM_PERIODO) : "";
     try { localStorage.setItem("ser_periodo", periodoSel); } catch (x) { /* sem armazenamento */ }
     ["sBusca", "sMentor", "sSerasa", "sAno"].forEach(function (id) { $(id).value = ""; });
     serSel = {}; serLimite = 300;
@@ -1120,6 +1138,9 @@
     $("srVenc").value = v.vencimento || ""; $("srValor").value = v.valor != null && x ? v.valor : ""; $("srTipo").value = v.tipo || "";
     $("srInclusao").value = v.dataInclusao || ""; $("srMentor").value = v.mentor || ""; $("srSerasa").value = v.serasa || "";
     $("srRespInc").value = v.respInclusao || ""; $("srObs").value = v.observacao || "";
+    fill($("srPeriodo"), opcoesPeriodos(), "Sem período");
+    // parcela nova entra no período aberto no filtro
+    $("srPeriodo").value = x ? (v.periodoId || "") : (periodoAtual() ? periodoSel : "");
     $("srAtualizado").textContent = x && x.atualizadoPor ? "Última alteração por " + x.atualizadoPor + " em " + br(x.atualizadoEm) : "";
     var bx = $("srExcluir"); bx.hidden = !x || !eu || eu.perfil !== "admin"; bx.classList.remove("armed"); bx.textContent = "Excluir parcela";
     abrir("mSerasa"); setTimeout(function () { (x ? $("srMentor") : $("srRa")).focus(); }, 30);
@@ -1142,7 +1163,7 @@
       ra: $("srRa").value.trim(), nome: $("srNome").value.trim(), responsavel: $("srResp").value.trim(), cpf: $("srCpf").value.trim(),
       vencimento: $("srVenc").value, valor: parseFloat($("srValor").value) || 0, tipo: $("srTipo").value.trim().toUpperCase(),
       mentor: $("srMentor").value, serasa: $("srSerasa").value, dataInclusao: $("srInclusao").value, respInclusao: $("srRespInc").value.trim(),
-      observacao: $("srObs").value.trim()
+      observacao: $("srObs").value.trim(), periodoId: $("srPeriodo").value
     };
     var req = parcelaAtual ? api("PATCH", "/api/serasa/" + encodeURIComponent(parcelaAtual.id), dados) : api("POST", "/api/serasa", dados);
     req.then(function (d) {
@@ -1161,7 +1182,7 @@
   });
 
   // modelo, exportação e importação
-  var SER_CAB = ["RA", "NOME", "RESPONSÁVEL FINANCEIRO", "CPF", "VENCIMENTO", "VALOR (R$)", "TIPO", "MENTOR", "SERASA", "DATA INCLUSÃO", "RESP. INCLUSÃO", "OBSERVAÇÃO"];
+  var SER_CAB = ["RA", "NOME", "RESPONSÁVEL FINANCEIRO", "CPF", "VENCIMENTO", "VALOR (R$)", "TIPO", "MENTOR", "SERASA", "DATA INCLUSÃO", "RESP. INCLUSÃO", "OBSERVAÇÃO", "PERÍODO"];
   function csvCampo(v) { v = String(v == null ? "" : v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
   function serStTexto(v) { return v ? serSt(v).l.toUpperCase() : ""; }
   $("btnSerModelo").addEventListener("click", function () {
@@ -1172,7 +1193,7 @@
   $("btnSerExportar").addEventListener("click", function () {
     var linhas = serFiltrada.map(function (x) {
       return [x.ra, x.nome, x.responsavel, x.cpf, br(x.vencimento), (Number(x.valor) || 0).toFixed(2).replace(".", ","), x.tipo,
-        serStTexto(x.mentor), serStTexto(x.serasa), x.dataInclusao ? br(x.dataInclusao) : "", x.respInclusao, x.observacao].map(csvCampo).join(";");
+        serStTexto(x.mentor), serStTexto(x.serasa), x.dataInclusao ? br(x.dataInclusao) : "", x.respInclusao, x.observacao, nomeDoPeriodo(x.periodoId)].map(csvCampo).join(";");
     });
     baixar("relatorio_serasa_" + hoje() + ".csv", SER_CAB.join(";") + "\n" + linhas.join("\n"));
     toast("Relatório exportado (" + linhas.length + " parcelas, conforme os filtros).");
@@ -1189,7 +1210,7 @@
       venc: colExata(h, ["vencimento", "data de vencimento", "venc"]), valor: colExata(h, ["valor (r$)", "valor", "valor r$"]),
       tipo: colExata(h, ["tipo"]), mentor: colExata(h, ["mentor"]), serasa: colExata(h, ["serasa"]),
       dataInc: colExata(h, ["data inclusao", "data de inclusao", "inclusao"]), respInc: colExata(h, ["resp. inclusao", "resp inclusao", "responsavel inclusao"]),
-      obs: colExata(h, ["observacao", "obs"])
+      obs: colExata(h, ["observacao", "obs"]), periodo: colExata(h, ["periodo", "aba"])
     };
     if ((ix.nome === -1 && ix.resp === -1) || ix.venc === -1) {
       out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não encontrei as colunas de nome (ou responsável) e vencimento. Colunas identificadas: ' +
@@ -1204,7 +1225,7 @@
       return {
         ra: c(r, ix.ra), nome: c(r, ix.nome), responsavel: c(r, ix.resp), cpf: c(r, ix.cpf), vencimento: parseDateBR(c(r, ix.venc)),
         valor: parseMoneyBR(c(r, ix.valor)), tipo: c(r, ix.tipo).toUpperCase(), mentor: serNormalizar(mentorTxt), serasa: serNormalizar(serasaTxt),
-        dataInclusao: dataInc, respInclusao: c(r, ix.respInc), observacao: c(r, ix.obs)
+        dataInclusao: dataInc, respInclusao: c(r, ix.respInc), observacao: c(r, ix.obs), periodo: c(r, ix.periodo)
       };
     }).filter(function (r) {
       var quem = (r.nome || r.responsavel).toUpperCase();
@@ -1216,7 +1237,15 @@
           "</td><td>" + serSt(r.mentor).l + "</td><td>" + serSt(r.serasa).l + "</td><td>" + br(r.dataInclusao) + "</td></tr>";
       }).join("") + "</tbody></table></div>" +
       '<div class="import-summary">' + pendentes.length + " parcela(s) encontradas" + (pendentes.length > 8 ? " (mostrando as 8 primeiras)" : "") +
-      ". Parcelas que já existirem (mesmo aluno, vencimento, valor e tipo) só recebem os campos que vierem preenchidos — nada que a equipe já marcou é apagado.</div>";
+      ". Parcelas que já existirem no período (mesmo aluno, vencimento, valor e tipo) só recebem os campos que vierem preenchidos — nada que a equipe já marcou é apagado.</div>";
+    // Arquivo com a coluna PERÍODO: cada linha vai para o período (aba) indicado nela.
+    var comPeriodo = {};
+    pendentes.forEach(function (r) { if (r.periodo) comPeriodo[r.periodo] = (comPeriodo[r.periodo] || 0) + 1; });
+    var nomes = Object.keys(comPeriodo);
+    $("impPeriodo").disabled = nomes.length > 0;
+    $("impPeriodoHint").textContent = nomes.length
+      ? "Este arquivo tem a coluna PERÍODO: cada linha vai para o seu período (" + nomes.length + " no arquivo). Períodos que ainda não existem serão criados."
+      : "Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.";
     $("btnConfirmImport").disabled = !pendentes.length;
   }
 
