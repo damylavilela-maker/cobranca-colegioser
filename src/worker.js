@@ -925,12 +925,12 @@ async function importarSerasa(req, env, eu) {
   const existentes = {};
   (await env.DB.prepare("SELECT * FROM serasa").all()).results.forEach((r) => { existentes[chaveSerasa(serasaSaida(r))] = r; });
   const stmts = [];
-  let criados = 0, atualizados = 0, ignorados = 0;
+  let criados = 0, atualizados = 0, iguais = 0, incompletas = 0, repetidas = 0;
   const vistos = new Set();
   for (const l of linhas) {
-    if ((!texto(l.nome) && !texto(l.responsavel)) || !dataISO(l.vencimento)) { ignorados++; continue; }
+    if ((!texto(l.nome) && !texto(l.responsavel)) || !dataISO(l.vencimento)) { incompletas++; continue; }
     const k = chaveSerasa(l);
-    if (vistos.has(k)) { ignorados++; continue; }
+    if (vistos.has(k)) { repetidas++; continue; }
     vistos.add(k);
     const achado = existentes[k];
     if (achado) {
@@ -940,7 +940,7 @@ async function importarSerasa(req, env, eu) {
       ["mentor", "serasa"].forEach((c) => { if (statusSerasaValido(l[c])) junto[c] = l[c]; });
       if (dataISO(l.dataInclusao)) junto.dataInclusao = l.dataInclusao;
       const mudou = JSON.stringify(serasaValores(junto, achado.id, null).slice(0, 13)) !== JSON.stringify(serasaValores(base, achado.id, null).slice(0, 13));
-      if (!mudou) { ignorados++; continue; }
+      if (!mudou) { iguais++; continue; }
       stmts.push(env.DB.prepare(insertSQL("serasa", SERASA_COLS)).bind(...serasaValores(junto, achado.id, eu, achado.criado_em)));
       atualizados++;
     } else {
@@ -949,7 +949,7 @@ async function importarSerasa(req, env, eu) {
     }
   }
   await executarEmLotes(env, stmts);
-  return json({ criados, atualizados, ignorados });
+  return json({ criados, atualizados, iguais, incompletas, repetidas, ignorados: iguais + incompletas + repetidas });
 }
 
 // Atualiza várias parcelas de uma vez (ex.: "incluídas no Serasa hoje").

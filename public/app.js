@@ -702,12 +702,22 @@
     if (!pendentes.length) return;
     var btn = this; btn.disabled = true; btn.textContent = "Importando…";
     if (modoImport === "serasa") {
+      var importadas = pendentes.slice();
       return api("POST", "/api/serasa/importar", { linhas: pendentes }).then(function (d) {
         btn.hidden = true;
-        $("importResult").innerHTML = '<div class="import-summary" style="color:var(--ink)"><b>' + d.criados + "</b> parcela(s) nova(s) · <b>" + d.atualizados +
-          "</b> atualizada(s) · " + d.ignorados + " sem mudança ou incompletas (sem nome ou vencimento).</div>";
-        toast("Planilha da Serasa importada.");
-        return carregar();
+        var partes = [];
+        partes.push("<b>" + d.criados + "</b> parcela(s) nova(s)");
+        partes.push("<b>" + d.atualizados + "</b> atualizada(s) com o que veio na planilha");
+        if (d.iguais) partes.push("<b>" + d.iguais + "</b> já estavam no painel exatamente iguais (nada a mudar)");
+        if (d.repetidas) partes.push(d.repetidas + " repetida(s) dentro do próprio arquivo");
+        if (d.incompletas) partes.push(d.incompletas + " sem nome ou vencimento (não importadas)");
+        var nada = !d.criados && !d.atualizados;
+        $("importResult").innerHTML = '<div class="import-summary" style="color:var(--ink)">' + partes.join(" · ") + ".</div>" +
+          (nada ? '<div class="import-summary">Nenhuma parcela precisou mudar: o painel já tem estes dados. Parcelas que a equipe já marcou no painel não são sobrescritas por campos vazios da planilha.</div>' : "") +
+          '<div class="m-foot" style="justify-content:flex-start"><button type="button" class="btn primary small" id="btnVerImportadas">Ver estas parcelas</button></div>';
+        $("btnVerImportadas").addEventListener("click", function () { fecharModais(); });
+        toast(nada ? "Nada a atualizar: as parcelas já estavam no painel." : "Planilha da Serasa importada.");
+        return carregar().then(function () { mostrarImportadas(importadas); });
       }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); });
     }
     api("POST", "/api/alunos/importar", { linhas: pendentes, carteira: carteira }).then(function (d) {
@@ -1050,6 +1060,21 @@
     $("serMais").hidden = serFiltrada.length <= serLimite;
     $("serMais").textContent = "Mostrar mais (" + (serFiltrada.length - serLimite) + " restantes)";
     atualizarSelecao();
+  }
+  // Depois de importar, a lista atrás da janela passa a mostrar as parcelas do arquivo:
+  // limpa os filtros e escolhe o período que contém a maior parte dos vencimentos importados.
+  function mostrarImportadas(linhas) {
+    var melhor = "", maior = 0;
+    periodos.forEach(function (p) {
+      var n = 0; linhas.forEach(function (l) { if (noPeriodo(l, p)) n++; });
+      if (n > maior) { maior = n; melhor = p.id; }
+    });
+    if (maior < linhas.length * 0.8) melhor = ""; // arquivo de vários períodos: mostra todos
+    periodoSel = melhor;
+    try { localStorage.setItem("ser_periodo", periodoSel); } catch (x) { /* sem armazenamento */ }
+    ["sBusca", "sMentor", "sSerasa", "sAno"].forEach(function (id) { $(id).value = ""; });
+    serSel = {}; serLimite = 300;
+    renderSerasa();
   }
   function atualizarSelecao() {
     var n = Object.keys(serSel).length;
