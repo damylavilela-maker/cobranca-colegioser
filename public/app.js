@@ -634,8 +634,10 @@
   }
   // A mesma janela de importação atende Painel/Contraturno (alunos) e Serasa (parcelas).
   var modoImport = "alunos";
+  var confirmouPeriodo = false; // o aviso de período já foi mostrado para este arquivo
   function processarCSV(text) {
     var p = parseCSV(text), h = p.headers;
+    confirmouPeriodo = false;
     if (modoImport === "serasa") return processarCSVSerasa(p);
     var ix = {
       ra: colIndex(h, ["ra", "codigo", "matricula"]), nome: colIndex(h, ["nome", "nome do aluno", "nome completo", "aluno"]),
@@ -676,7 +678,7 @@
     $("btnConfirmImport").disabled = !pendentes.length;
   }
   function abrirImportacao(modo) {
-    modoImport = modo;
+    modoImport = modo; confirmouPeriodo = false;
     pendentes = []; $("importResult").innerHTML = ""; $("pasteArea").value = ""; $("fileInput").value = "";
     var b = $("btnConfirmImport");
     b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : "Importar alunos";
@@ -695,6 +697,11 @@
     abrir("mImportar");
   }
   $("btnImportar").addEventListener("click", function () { abrirImportacao("alunos"); });
+  $("impPeriodo").addEventListener("change", function () {
+    // o aviso aparece uma vez por arquivo; depois dele, vale o período que a pessoa escolher
+    var b = $("btnConfirmImport");
+    if (!b.hidden && pendentes.length) b.textContent = confirmouPeriodo ? "Importar em " + nomeDoPeriodo(this.value) : "Importar parcelas";
+  });
   function lerArquivo(f, cb) { var r = new FileReader(); r.onload = function () { cb(String(r.result)); }; r.readAsText(f, "utf-8"); }
   function ligarDropzone(dz, input, cb) {
     dz.addEventListener("click", function (e) { if (e.target !== input) input.click(); });
@@ -716,6 +723,31 @@
         btn.disabled = false; btn.textContent = "Importar parcelas";
         $("impPeriodo").focus();
         return toast("Escolha para qual período (aba) vão estas parcelas.");
+      }
+      // Proteção: se os vencimentos do arquivo não combinam com as datas do período escolhido,
+      // pede confirmação (evita mandar a aba errada para o período errado).
+      var alvo = null; periodos.forEach(function (p) { if (p.id === destino) alvo = p; });
+      if (!temColunaPeriodo && alvo && !confirmouPeriodo) {
+        var dentro = pendentes.filter(function (l) { return l.vencimento >= alvo.inicio && l.vencimento <= alvo.fim; }).length;
+        if (dentro < pendentes.length / 2) {
+          var vs = pendentes.map(function (l) { return l.vencimento; }).sort();
+          var sugestao = null, melhor = 0;
+          periodos.forEach(function (p) {
+            var n = pendentes.filter(function (l) { return l.vencimento >= p.inicio && l.vencimento <= p.fim; }).length;
+            if (n > melhor) { melhor = n; sugestao = p; }
+          });
+          var aviso = document.getElementById("avisoImport") || document.createElement("div");
+          aviso.id = "avisoImport"; aviso.className = "aviso-import";
+          aviso.innerHTML = "<b>Confira o período.</b> As parcelas deste arquivo vencem entre " + br(vs[0]) + " e " + br(vs[vs.length - 1]) +
+            ", mas o período escolhido é <b>" + esc(alvo.nome) + "</b> (" + br(alvo.inicio) + " a " + br(alvo.fim) + ")." +
+            (sugestao && sugestao.id !== alvo.id ? " Pelas datas, parece ser do período <b>" + esc(sugestao.nome) + "</b> — já troquei acima; confira antes de importar." : " Confira antes de importar.");
+          $("importResult").prepend(aviso);
+          confirmouPeriodo = true;
+          btn.disabled = false;
+          if (sugestao && sugestao.id !== alvo.id) { $("impPeriodo").value = sugestao.id; btn.textContent = "Importar em " + sugestao.nome; }
+          else btn.textContent = "Importar mesmo assim";
+          return;
+        }
       }
       return api("POST", "/api/serasa/importar", { linhas: pendentes, periodoId: destino }).then(function (d) {
         btn.hidden = true;
@@ -1098,8 +1130,12 @@
     var n = Object.keys(serSel).length;
     $("serBulk").hidden = !n;
     $("serSelCount").textContent = n + (n === 1 ? " selecionada" : " selecionadas");
-    var vis = serFiltrada.slice(0, serLimite);
-    $("serSelTodos").checked = vis.length > 0 && vis.every(function (x) { return serSel[x.id]; });
+    $("serSelTodos").checked = serFiltrada.length > 0 && serFiltrada.every(function (x) { return serSel[x.id]; });
+    if (n) {
+      var sel = $("serMoverPara"), atual = sel.value;
+      fill(sel, [{ v: "", l: "Mover para o período…" }].concat(opcoesPeriodos()));
+      sel.value = atual;
+    }
   }
   ["sBusca", "sMentor", "sSerasa", "sAno", "sOrdem"].forEach(function (id) { $(id).addEventListener("input", function () { serLimite = 300; renderSerasa(); }); });
   $("serMais").addEventListener("click", function () { serLimite += 300; renderSerasa(); });
@@ -1109,11 +1145,24 @@
     var tr = e.target.closest("tr[data-id]"); if (tr) abrirParcela(tr.getAttribute("data-id"));
   });
   $("serSelTodos").addEventListener("change", function () {
+    // marca todas as parcelas do filtro atual (inclusive as que ainda não apareceram na tela)
     var on = this.checked;
-    serFiltrada.slice(0, serLimite).forEach(function (x) { if (on) serSel[x.id] = 1; else delete serSel[x.id]; });
+    serFiltrada.forEach(function (x) { if (on) serSel[x.id] = 1; else delete serSel[x.id]; });
     renderSerasa();
   });
   $("serLimparSel").addEventListener("click", function () { serSel = {}; renderSerasa(); });
+  $("serMover").addEventListener("click", function () {
+    var ids = Object.keys(serSel), destino = $("serMoverPara").value, b = this;
+    if (!ids.length) return;
+    if (!destino) { $("serMoverPara").focus(); return toast("Escolha o período de destino."); }
+    b.disabled = true;
+    api("POST", "/api/serasa/lote", { ids: ids, periodoId: destino }).then(function (d) {
+      toast(d.atualizados + " parcela(s) movida(s) para " + nomeDoPeriodo(destino) + ".");
+      serSel = {}; periodoSel = destino;
+      try { localStorage.setItem("ser_periodo", periodoSel); } catch (x) { /* sem armazenamento */ }
+      return carregar();
+    }).catch(function (x) { toast(x.message); }).then(function () { b.disabled = false; });
+  });
   document.querySelectorAll("[data-lote]").forEach(function (b) {
     b.addEventListener("click", function () {
       var ids = Object.keys(serSel); if (!ids.length) return;

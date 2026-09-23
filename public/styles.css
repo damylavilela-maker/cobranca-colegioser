@@ -301,3 +301,6 @@ table.ctrl .empty-ctrl{padding:20px;color:var(--muted)}
 .periodo-filtro select{flex:1;width:auto;min-width:0}
 .periodo-filtro .btn{flex:none}
 .btn.icone{padding:6px 10px;font-size:15px}
+.bulk .mover{display:inline-flex;gap:6px;align-items:center}
+.bulk .mover select{width:auto;padding:6px 10px;font-size:13.5px}
+.aviso-import{background:var(--warn-soft);color:var(--ink);border:1px solid var(--warn);border-radius:10px;padding:10px 12px;font-size:13.5px}

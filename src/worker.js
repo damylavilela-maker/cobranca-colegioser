@@ -1005,6 +1005,12 @@ async function loteSerasa(req, env, eu) {
   const sets = [], vals = [];
   if (b.mentor !== undefined) { sets.push("mentor = ?"); vals.push(statusSerasaValido(b.mentor)); }
   if (b.serasa !== undefined) { sets.push("serasa = ?"); vals.push(statusSerasaValido(b.serasa)); }
+  if (b.periodoId !== undefined) {
+    // mover as parcelas selecionadas para outro período ("" = sem período)
+    const pid = texto(b.periodoId, 40);
+    if (pid && !(await env.DB.prepare("SELECT id FROM serasa_periodos WHERE id = ?").bind(pid).first())) throw new HttpError(400, "Período não encontrado.");
+    sets.push("periodo_id = ?"); vals.push(pid);
+  }
   if (!sets.length) throw new HttpError(400, "Nada para alterar.");
   if (b.serasa === "ok" || b.mentor === "ok") {
     // registra quando e quem incluiu, sem sobrescrever uma data já informada
