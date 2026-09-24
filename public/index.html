@@ -166,6 +166,7 @@
       <div class="page-head">
         <div><h1>Serasa</h1><div class="sub">Controle de negativação por parcela — Mentor e Serasa</div></div>
         <div class="actions">
+          <button type="button" class="btn ghost small" id="btnSerDup" data-admin>Verificar duplicadas</button>
           <button type="button" class="btn ghost small" id="btnSerModelo">Baixar modelo</button>
           <button type="button" class="btn ghost small" id="btnSerImportar">Importar planilha</button>
           <button type="button" class="btn ghost small" id="btnSerExportar">Exportar relatório</button>
@@ -372,6 +373,18 @@
       </div>
       <div id="importResult"></div>
       <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="btnConfirmImport" disabled>Importar alunos</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="mDup" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="dupTitulo">
+    <div class="m-head"><div><h2 id="dupTitulo">Parcelas duplicadas</h2><div class="sub">Mesmo aluno (RA), vencimento, valor e tipo repetidos no mesmo período por importações diferentes</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div id="dupResumo" class="import-summary" style="color:var(--ink)">Verificando…</div>
+      <div class="import-preview" id="dupLista" hidden></div>
+      <div class="meta">Fica a parcela mais antiga de cada grupo. O que a equipe marcou na cópia (Mentor, Serasa, data e responsável pela inclusão, observação) passa para a que fica. Linhas repetidas que vieram juntas na mesma planilha continuam, porque são parcelas diferentes.</div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn danger" id="dupRemover" hidden>Remover duplicadas</button></div>
     </div>
   </div>
 </div>

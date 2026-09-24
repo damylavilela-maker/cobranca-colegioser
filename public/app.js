@@ -1944,6 +1944,40 @@
     toast("Relatório exportado (" + linhas.length + " parcelas, conforme os filtros).");
   });
   $("btnSerImportar").addEventListener("click", function () { abrirImportacao("serasa"); });
+  // Verificar e remover parcelas duplicadas (só administradores). Primeiro mostra, depois remove.
+  function mostrarDuplicadas(d, removidas) {
+    var b = $("dupRemover");
+    b.classList.remove("armed");
+    if (removidas) {
+      $("dupResumo").innerHTML = "<b>" + removidas + "</b> parcela(s) duplicada(s) removida(s). As marcações das cópias foram mantidas nas parcelas que ficaram.";
+      $("dupLista").hidden = true; b.hidden = true; return;
+    }
+    if (!d.duplicadas) {
+      $("dupResumo").innerHTML = "Nenhuma parcela duplicada encontrada. ✓";
+      $("dupLista").hidden = true; b.hidden = true; return;
+    }
+    $("dupResumo").innerHTML = "<b>" + d.duplicadas + "</b> parcela(s) duplicada(s) em <b>" + d.grupos + "</b> grupo(s). Confira a lista e, se estiver certo, clique em “Remover duplicadas”.";
+    $("dupLista").innerHTML = "<table><thead><tr><th>Aluno</th><th>RA</th><th>Período</th><th>Vencimento</th><th>Valor</th><th>Aparece</th><th>Fica</th></tr></thead><tbody>" +
+      d.exemplos.map(function (e) {
+        return "<tr><td>" + esc(e.nome) + "</td><td>" + esc(e.ra) + "</td><td>" + esc(e.periodo) + "</td><td>" + br(e.vencimento) + '</td><td class="tabular">' + money(e.valor) + "</td><td>" + e.vezes + "×</td><td>" + e.ficam + "</td></tr>";
+      }).join("") + "</tbody></table>" + (d.grupos > d.exemplos.length ? '<div class="meta" style="padding:6px 10px">Mostrando ' + d.exemplos.length + " de " + d.grupos + " grupos.</div>" : "");
+    $("dupLista").hidden = false; b.hidden = false; b.disabled = false;
+    b.textContent = "Remover " + d.duplicadas + " duplicada(s)";
+  }
+  $("btnSerDup").addEventListener("click", function () {
+    $("dupResumo").textContent = "Verificando…"; $("dupLista").hidden = true; $("dupRemover").hidden = true;
+    abrir("mDup");
+    api("GET", "/api/serasa/duplicadas").then(function (d) { mostrarDuplicadas(d, 0); }).catch(function (x) { $("dupResumo").textContent = x.message; });
+  });
+  $("dupRemover").addEventListener("click", function () {
+    var b = this;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar remoção"; return; }
+    b.disabled = true; b.textContent = "Removendo…";
+    api("POST", "/api/serasa/duplicadas").then(function (d) {
+      mostrarDuplicadas(d, d.removidas); toast(d.removidas + " duplicada(s) removida(s).");
+      return carregar();
+    }).catch(function (x) { b.disabled = false; toast(x.message); });
+  });
   // Na Serasa as colunas são reconhecidas pelo nome exato (a coluna "SERASA" contém "ra" e
   // confundiria a busca aproximada usada no Painel).
   function colExata(h, nomes) { for (var i = 0; i < nomes.length; i++) { var j = h.indexOf(nomes[i]); if (j !== -1) return j; } return -1; }

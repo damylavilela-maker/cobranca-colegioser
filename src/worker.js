@@ -295,6 +295,8 @@ async function rotear(req, env, url) {
     if (partes.length === 1 && m === "POST") return criarSerasa(req, env, eu);
     if (partes[1] === "importar" && m === "POST") return importarSerasa(req, env, eu);
     if (partes[1] === "lote" && m === "POST") return loteSerasa(req, env, eu);
+    if (partes[1] === "duplicadas" && m === "GET") { exigirAdmin(eu); return duplicadasSerasa(env, eu, false); }
+    if (partes[1] === "duplicadas" && m === "POST") { exigirAdmin(eu); return duplicadasSerasa(env, eu, true); }
     if (partes.length === 2 && m === "PATCH") return alterarSerasa(req, env, eu, partes[1]);
     if (partes.length === 2 && m === "DELETE") { exigirAdmin(eu); return excluirSerasa(env, partes[1]); }
   }
@@ -1248,4 +1250,52 @@ async function consertarRasSalvos(env) {
   }
   await executarEmLotes(env, stmts);
   if (stmts.length) await sincronizarComBase(env);
+}
+
+// Parcelas duplicadas no mesmo período (mesmo aluno, vencimento, valor e tipo), criadas por uma
+// importação que não reconheceu as parcelas já salvas (ex.: RA grudado no nome, já consertado).
+// Linhas iguais dentro de UMA importação são parcelas de verdade (a planilha pode ter repetidas):
+// por isso cada grupo mantém a maior quantidade vinda de uma mesma importação (mesmo minuto) e
+// só o que passar disso é duplicado. Fica a parcela mais antiga; o que a equipe marcou na cópia
+// (Mentor, Serasa, inclusão, observação) passa para a que fica, se lá estiver vazio.
+async function duplicadasSerasa(env, eu, remover) {
+  const todas = (await env.DB.prepare("SELECT * FROM serasa ORDER BY criado_em, id").all()).results;
+  const periodos = {};
+  (await env.DB.prepare("SELECT id, nome FROM serasa_periodos").all()).results.forEach((p) => { periodos[p.id] = p.nome; });
+  const grupos = {};
+  todas.forEach((r) => { const k = r.periodo_id + "#" + chaveSerasa(serasaSaida(r)); (grupos[k] = grupos[k] || []).push(r); });
+  const apagar = [], ajustes = [], exemplos = [];
+  let nGrupos = 0;
+  Object.keys(grupos).forEach((k) => {
+    const g = grupos[k];
+    if (g.length < 2) return;
+    const porLote = {};
+    g.forEach((r) => { const lote = String(r.criado_em || "").slice(0, 16); porLote[lote] = (porLote[lote] || 0) + 1; });
+    const manter = Math.max(...Object.values(porLote));
+    if (g.length <= manter) return;
+    nGrupos++;
+    const ficam = g.slice(0, manter), saem = g.slice(manter);
+    saem.forEach((s, i) => {
+      const f = ficam[i % ficam.length], mud = {};
+      ["mentor", "serasa", "data_inclusao", "resp_inclusao", "observacao", "responsavel", "cpf"].forEach((c) => { if (!f[c] && s[c]) { mud[c] = s[c]; f[c] = s[c]; } });
+      if (texto(s.nome).length > texto(f.nome).length) { mud.nome = s.nome; f.nome = s.nome; }
+      if (Object.keys(mud).length) ajustes.push([f.id, mud]);
+      apagar.push(s.id);
+    });
+    if (exemplos.length < 200) exemplos.push({ nome: ficam[0].nome || ficam[0].responsavel, ra: ficam[0].ra, vencimento: ficam[0].vencimento, valor: ficam[0].valor, periodo: periodos[ficam[0].periodo_id] || "Sem período", vezes: g.length, ficam: manter });
+  });
+  if (remover && apagar.length) {
+    const stmts = [];
+    const agora = agoraISO();
+    // junta as marcações do mesmo registro (pode receber de mais de uma cópia)
+    const porId = {};
+    ajustes.forEach(([id, mud]) => { porId[id] = { ...(porId[id] || {}), ...mud }; });
+    Object.keys(porId).forEach((id) => {
+      const cs = Object.keys(porId[id]);
+      stmts.push(env.DB.prepare(`UPDATE serasa SET ${cs.map((c) => c + " = ?").join(", ")}, atualizado_em = ?, atualizado_por = ? WHERE id = ?`).bind(...cs.map((c) => porId[id][c]), agora, eu.nome, id));
+    });
+    emLotes(apagar, 50).forEach((lote) => stmts.push(env.DB.prepare(`DELETE FROM serasa WHERE id IN (${lote.map(() => "?").join(",")})`).bind(...lote)));
+    await executarEmLotes(env, stmts);
+  }
+  return json({ duplicadas: apagar.length, grupos: nGrupos, exemplos, removidas: remover ? apagar.length : 0 });
 }
