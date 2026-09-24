@@ -364,6 +364,7 @@
         <label for="impPeriodo">Importar para o período (a aba da planilha)</label>
         <select id="impPeriodo"></select>
         <span class="hint" id="impPeriodoHint">Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.</span>
+        <label class="check-linha"><input type="checkbox" id="impEspelhar" checked> <span><b>Deixar o período igual ao arquivo</b> — o que está no período e não está no arquivo sai dele (cópias são apagadas; o resto vai para “Sem período”). Antes de gravar, o site mostra o que vai mudar.</span></label>
       </div>
       <div class="dropzone" id="dropzone">Arraste o arquivo .csv ou o relatório em .pdf aqui, ou clique para selecionar<input type="file" id="fileInput" accept=".csv,.txt,.pdf,text/csv,text/plain,application/vnd.ms-excel,application/pdf" hidden></div>
       <div class="field">

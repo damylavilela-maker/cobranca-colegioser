@@ -370,3 +370,5 @@ table.data.as-tab td.mudou{background:var(--warn-soft)}
 .mens-total{margin-top:8px}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .msel-op.on .msel-chip{color:var(--ink)}}
 .msel.cima .msel-pop{top:auto;bottom:calc(100% + 4px)}
+.check-linha{display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13.5px;font-weight:400;cursor:pointer}
+.check-linha input{width:auto;margin-top:3px}

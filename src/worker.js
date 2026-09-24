@@ -971,6 +971,8 @@ async function excluirSerasa(env, id) {
 // período são aproveitadas (recebem o período) em vez de duplicadas.
 async function importarSerasa(req, env, eu) {
   const b = await corpo(req);
+  // simular: calcula tudo sem gravar (para mostrar antes). espelhar: o período fica igual ao arquivo.
+  const simular = b.simular === true, espelhar = b.espelhar === true;
   const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 10000) : [];
   if (!linhas.length) throw new HttpError(400, "Nenhuma linha para importar.");
 
@@ -989,8 +991,8 @@ async function importarSerasa(req, env, eu) {
   });
   const criadosPeriodos = [];
   for (const k of Object.keys(novos)) {
-    const p = novos[k], id = novoId();
-    await env.DB.prepare("INSERT INTO serasa_periodos (id, nome, inicio, fim, criado_em, criado_por) VALUES (?,?,?,?,?,?)")
+    const p = novos[k], id = simular ? "novo:" + k : novoId();
+    if (!simular) await env.DB.prepare("INSERT INTO serasa_periodos (id, nome, inicio, fim, criado_em, criado_por) VALUES (?,?,?,?,?,?)")
       .bind(id, p.nome, p.ini || hojeISO(), p.fim || hojeISO(), agoraISO(), eu.nome).run();
     porNome[k] = id; criadosPeriodos.push(p.nome);
   }
@@ -1006,7 +1008,7 @@ async function importarSerasa(req, env, eu) {
   });
   const stmts = [];
   let criados = 0, atualizados = 0, iguais = 0, incompletas = 0, repetidas = 0;
-  const ocorrencia = {}, porPeriodo = {};
+  const ocorrencia = {}, porPeriodo = {}, usados = new Set();
   // compara tudo menos as datas de criação/alteração e quem alterou
   const comparavel = (o, id) => { const v = serasaValores(o, id, null); return JSON.stringify(v.slice(0, 13).concat(v.slice(16))); };
   const base = await carregarBase(env);
@@ -1021,9 +1023,12 @@ async function importarSerasa(req, env, eu) {
     let achado = (noPeriodo[kp] || [])[n - 1];
     if (!achado && semPeriodo[k] && semPeriodo[k].length) achado = semPeriodo[k].shift();
     if (achado) {
+      usados.add(achado.id);
       const base = serasaSaida(achado);
       const junto = { ...base, periodoId: pid };
       ["nome", "responsavel", "cpf", "tipo", "respInclusao", "observacao"].forEach((c) => { if (texto(l[c])) junto[c] = l[c]; });
+      // nome cortado (PDF do Google Planilhas) não substitui o nome completo já salvo
+      if (texto(base.nome).length > texto(l.nome).length && texto(base.nome).toUpperCase().startsWith(texto(l.nome).toUpperCase())) junto.nome = base.nome;
       ["mentor", "serasa"].forEach((c) => { if (statusSerasaValido(l[c])) junto[c] = l[c]; });
       if (dataISO(l.dataInclusao)) junto.dataInclusao = l.dataInclusao;
       const mudou = comparavel(junto, achado.id) !== comparavel(base, achado.id);
@@ -1035,10 +1040,40 @@ async function importarSerasa(req, env, eu) {
       criados++;
     }
   }
-  await executarEmLotes(env, stmts);
-  // completa com a Base de dados também as parcelas que já estavam salvas
-  await sincronizarComBase(env);
-  return json({ criados, atualizados, iguais, incompletas, repetidas, ignorados: iguais + incompletas + repetidas, periodosCriados: criadosPeriodos, porPeriodo });
+  // Período igual ao arquivo: o que está no período e não veio no arquivo sai dele. Se a mesma
+  // parcela existe em outro lugar (outra aba ou repetida aqui), é cópia e é apagada, passando as
+  // marcações da equipe para a que fica; se não existe em outro lugar, vai para "Sem período".
+  let copiasApagadas = 0, paraSemPeriodo = 0;
+  const saem = [];
+  if (espelhar) {
+    const alvos = new Set(Object.keys(porPeriodo).filter((p) => p && !p.startsWith("novo:")));
+    const todas = Object.values(noPeriodo).flat();
+    const porChave = {};
+    todas.forEach((r) => { const k = chaveSerasa(serasaSaida(r)); (porChave[k] = porChave[k] || []).push(r); });
+    const marcas = ["mentor", "serasa", "data_inclusao", "resp_inclusao", "observacao"];
+    for (const r of todas) {
+      if (!alvos.has(r.periodo_id) || usados.has(r.id)) continue;
+      const k = chaveSerasa(serasaSaida(r));
+      const outra = (porChave[k] || []).find((o) => o.id !== r.id && (usados.has(o.id) || !alvos.has(o.periodo_id)));
+      if (outra) {
+        const sets = [], vals = [];
+        marcas.forEach((c) => { if (r[c]) { sets.push(`${c} = CASE WHEN ${c} = '' THEN ? ELSE ${c} END`); vals.push(r[c]); } });
+        if (sets.length) stmts.push(env.DB.prepare(`UPDATE serasa SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, outra.id));
+        stmts.push(env.DB.prepare("DELETE FROM serasa WHERE id = ?").bind(r.id));
+        copiasApagadas++;
+      } else {
+        stmts.push(env.DB.prepare("UPDATE serasa SET periodo_id = '', atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agoraISO(), eu.nome, r.id));
+        paraSemPeriodo++;
+      }
+      if (saem.length < 300) saem.push({ nome: r.nome || r.responsavel, ra: r.ra, vencimento: r.vencimento, valor: r.valor, destino: outra ? "cópia (apagada)" : "Sem período" });
+    }
+  }
+  if (!simular) {
+    await executarEmLotes(env, stmts);
+    // completa com a Base de dados também as parcelas que já estavam salvas
+    await sincronizarComBase(env);
+  }
+  return json({ simulacao: simular, criados, atualizados, iguais, incompletas, repetidas, ignorados: iguais + incompletas + repetidas, periodosCriados: criadosPeriodos, porPeriodo, copiasApagadas, paraSemPeriodo, saem });
 }
 
 // Atualiza várias parcelas de uma vez (ex.: "incluídas no Serasa hoje").

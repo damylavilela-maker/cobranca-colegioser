@@ -713,11 +713,12 @@
   // A mesma janela de importação atende Painel/Contraturno (alunos) e Serasa (parcelas).
   var modoImport = "alunos";
   var confirmouPeriodo = false; // o aviso de período já foi mostrado para este arquivo
+  var simulado = false; // "igual ao arquivo": a prévia do que muda já foi mostrada
   function processarCSV(text) { processarTabela(parseCSV(text)); }
   // tabela já separada em colunas (vinda do CSV ou do PDF)
   function processarTabela(p) {
     var h = p.headers;
-    confirmouPeriodo = false;
+    confirmouPeriodo = false; simulado = false;
     if (modoImport === "serasa") return processarCSVSerasa(p);
     if (modoImport === "base") return processarCSVBase(p);
     var ix = {
@@ -822,7 +823,7 @@
   }
   function processarPDF(buf) {
     var out = $("importResult");
-    confirmouPeriodo = false;
+    confirmouPeriodo = false; simulado = false;
     out.innerHTML = '<div class="import-summary">Lendo o PDF…</div>';
     $("btnConfirmImport").disabled = true;
     // Painel/Contraturno: primeiro tenta o leitor próprio do relatório de Inadimplência
@@ -981,7 +982,7 @@
     var r = new FileReader(); r.onload = function () { processarPDF(new Uint8Array(r.result)); }; r.readAsArrayBuffer(f);
   }
   function abrirImportacao(modo) {
-    modoImport = modo; confirmouPeriodo = false;
+    modoImport = modo; confirmouPeriodo = false; simulado = false;
     pendentes = []; $("importResult").innerHTML = ""; $("pasteArea").value = ""; $("fileInput").value = "";
     var b = $("btnConfirmImport");
     b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : modo === "base" ? "Importar para a base" : "Importar alunos";
@@ -1002,7 +1003,9 @@
     abrir("mImportar");
   }
   $("btnImportar").addEventListener("click", function () { abrirImportacao("alunos"); });
+  $("impEspelhar").addEventListener("change", function () { simulado = false; var b = $("btnConfirmImport"); if (!b.hidden && pendentes.length) b.textContent = "Importar parcelas"; });
   $("impPeriodo").addEventListener("change", function () {
+    simulado = false;
     // o aviso aparece uma vez por arquivo; depois dele, vale o período que a pessoa escolher
     var b = $("btnConfirmImport");
     if (!b.hidden && pendentes.length) b.textContent = confirmouPeriodo ? "Importar em " + nomeDoPeriodo(this.value) : "Importar parcelas";
@@ -1056,12 +1059,32 @@
           return;
         }
       }
-      return api("POST", "/api/serasa/importar", { linhas: pendentes, periodoId: destino }).then(function (d) {
+      var espelhar = $("impEspelhar").checked;
+      if (espelhar && !simulado) {
+        // 1º clique: mostra o que vai mudar no período, sem gravar nada
+        return api("POST", "/api/serasa/importar", { linhas: pendentes, periodoId: destino, espelhar: true, simular: true }).then(function (d) {
+          simulado = true;
+          var html = '<div class="aviso-import" id="avisoEspelho"><b>Conferência antes de gravar' + (temColunaPeriodo ? "" : " — período " + esc(nomeDoPeriodo(destino))) + ":</b> " +
+            d.criados + " parcela(s) nova(s), " + d.atualizados + " atualizada(s), " + d.iguais + " já iguais." +
+            (d.copiasApagadas || d.paraSemPeriodo ? " <b>Saem do período " + (d.copiasApagadas + d.paraSemPeriodo) + " parcela(s)</b> que não estão no arquivo: " +
+              d.copiasApagadas + " cópia(s) apagada(s) e " + d.paraSemPeriodo + " para “Sem período”." : " Nada sai do período.") +
+            " Depois disso o período fica com <b>" + (Object.keys(d.porPeriodo).reduce(function (s, k) { return s + d.porPeriodo[k]; }, 0)) + "</b> parcela(s), como no arquivo.</div>" +
+            (d.saem && d.saem.length ? '<div class="import-preview" style="margin-top:8px"><table><thead><tr><th>Sai do período</th><th>RA</th><th>Vencimento</th><th>Valor</th><th>Destino</th></tr></thead><tbody>' +
+              d.saem.map(function (s) { return "<tr><td>" + esc(s.nome) + "</td><td>" + esc(s.ra) + "</td><td>" + br(s.vencimento) + '</td><td class="tabular">' + money(s.valor) + "</td><td>" + esc(s.destino) + "</td></tr>"; }).join("") + "</tbody></table></div>" : "");
+          var velho = document.getElementById("avisoEspelhoWrap"); if (velho) velho.remove();
+          var box = document.createElement("div"); box.id = "avisoEspelhoWrap"; box.innerHTML = html;
+          $("importResult").prepend(box);
+          btn.disabled = false; btn.textContent = "Confirmar e importar";
+        }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); });
+      }
+      return api("POST", "/api/serasa/importar", { linhas: pendentes, periodoId: destino, espelhar: espelhar }).then(function (d) {
         btn.hidden = true;
         var partes = [];
         if (d.periodosCriados && d.periodosCriados.length) partes.push("<b>" + d.periodosCriados.length + "</b> período(s) criado(s): " + d.periodosCriados.map(esc).join(", "));
         partes.push("<b>" + d.criados + "</b> parcela(s) nova(s)");
         partes.push("<b>" + d.atualizados + "</b> atualizada(s) com o que veio na planilha");
+        if (d.copiasApagadas) partes.push("<b>" + d.copiasApagadas + "</b> cópia(s) apagada(s)");
+        if (d.paraSemPeriodo) partes.push("<b>" + d.paraSemPeriodo + "</b> que não estavam no arquivo foram para “Sem período”");
         if (d.iguais) partes.push("<b>" + d.iguais + "</b> já estavam no painel exatamente iguais (nada a mudar)");
         if (d.repetidas) partes.push(d.repetidas + " linha(s) iguais a outra da mesma aba (importadas também, como na planilha)");
         if (d.incompletas) partes.push(d.incompletas + " sem nome ou vencimento (não importadas)");
