@@ -1068,11 +1068,9 @@ async function importarSerasa(req, env, eu) {
       if (saem.length < 300) saem.push({ nome: r.nome || r.responsavel, ra: r.ra, vencimento: r.vencimento, valor: r.valor, destino: outra ? "cópia (apagada)" : "Sem período" });
     }
   }
-  if (!simular) {
-    await executarEmLotes(env, stmts);
-    // completa com a Base de dados também as parcelas que já estavam salvas
-    await sincronizarComBase(env);
-  }
+  // (as linhas do arquivo já vieram completadas com a Base de dados; a base inteira é
+  // sincronizada quando ela é importada)
+  if (!simular) await executarEmLotes(env, stmts);
   return json({ simulacao: simular, criados, atualizados, iguais, incompletas, repetidas, ignorados: iguais + incompletas + repetidas, periodosCriados: criadosPeriodos, porPeriodo, copiasApagadas, paraSemPeriodo, saem });
 }
 

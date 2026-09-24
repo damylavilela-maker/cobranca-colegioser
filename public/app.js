@@ -1,6 +1,8 @@
 // Painel de Cobrança — Colégio Ser (interface)
 (function () {
   "use strict";
+  // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
+  var VERSAO = "24/09 · v3";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -69,7 +71,7 @@
       return r.json().catch(function () { return {}; }).then(function (data) {
         if (r.status === 401 && !opts.silent401) { irParaLogin("Sua sessão expirou. Entre novamente."); }
         if (r.status === 403 && data && data.codigo === "trocar_senha") { mostrarTroca(); }
-        if (!r.ok) { var e = new Error(data.erro || ("Erro " + r.status)); e.status = r.status; e.codigo = data.codigo; throw e; }
+        if (!r.ok) { var e = new Error(data.erro || ("O servidor não conseguiu concluir (erro " + r.status + "). Tente de novo em instantes; se continuar, avise quem cuida do sistema.")); e.status = r.status; e.codigo = data.codigo; throw e; }
         return data;
       });
     }, function () { throw new Error("Sem conexão com o servidor. Verifique a internet e tente de novo."); });
@@ -170,6 +172,7 @@
   function entrar() {
     $("boot").hidden = true; $("auth").hidden = true; $("app").hidden = false;
     $("uNome").textContent = eu.nome;
+    $("versao").textContent = "Versão " + VERSAO;
     $("uPerfil").textContent = eu.perfil === "admin" ? "Administrador(a)" : "Atendente";
     $("uAvatar").textContent = eu.nome.split(" ").map(function (p) { return p[0] || ""; }).slice(0, 2).join("").toUpperCase();
     document.querySelectorAll("[data-admin]").forEach(function (el) { el.hidden = eu.perfil !== "admin"; });
@@ -981,8 +984,14 @@
     if (!ehPDF(f)) return lerArquivo(f, processarCSV);
     var r = new FileReader(); r.onload = function () { processarPDF(new Uint8Array(r.result)); }; r.readAsArrayBuffer(f);
   }
+  function mostrarErroImport(msg) {
+    var el = document.getElementById("erroImport") || document.createElement("div");
+    el.id = "erroImport"; el.className = "form-err"; el.hidden = false; el.textContent = "Não foi possível importar: " + msg;
+    $("importResult").prepend(el);
+  }
   function abrirImportacao(modo) {
     modoImport = modo; confirmouPeriodo = false; simulado = false;
+    $("impEspelhar").checked = true; // sempre começa marcado: o período fica igual ao arquivo
     pendentes = []; $("importResult").innerHTML = ""; $("pasteArea").value = ""; $("fileInput").value = "";
     var b = $("btnConfirmImport");
     b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : modo === "base" ? "Importar para a base" : "Importar alunos";
@@ -1075,7 +1084,7 @@
           var box = document.createElement("div"); box.id = "avisoEspelhoWrap"; box.innerHTML = html;
           $("importResult").prepend(box);
           btn.disabled = false; btn.textContent = "Confirmar e importar";
-        }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); });
+        }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); mostrarErroImport(x.message); });
       }
       return api("POST", "/api/serasa/importar", { linhas: pendentes, periodoId: destino, espelhar: espelhar }).then(function (d) {
         btn.hidden = true;
@@ -1095,7 +1104,7 @@
         $("btnVerImportadas").addEventListener("click", function () { fecharModais(); });
         toast(nada ? "Nada a atualizar: as parcelas já estavam no painel." : "Planilha da Serasa importada.");
         return carregar().then(function () { mostrarImportadas(d.porPeriodo || {}); });
-      }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); });
+      }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); mostrarErroImport(x.message); });
     }
     api("POST", "/api/alunos/importar", { linhas: pendentes, carteira: carteira }).then(function (d) {
       btn.hidden = true;
