@@ -145,7 +145,7 @@
           <div class="scroll-x"><table class="mini" id="anoEvolTable"></table></div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>Valor negociado por mensalidade</h3><select id="mensEvolAnoSel" aria-label="Ano"></select></div>
+          <div class="card-head"><h3>Valor negociado por mês</h3><select id="mensEvolAnoSel" aria-label="Ano"></select></div>
           <div class="scroll-x"><table class="mini" id="mensEvolTable"></table></div>
         </div>
       </div>
@@ -312,9 +312,15 @@
           <div class="field"><label for="aValorNovo">Valor em aberto atualizado (opcional)</label><input type="number" step="0.01" min="0" id="aValorNovo" placeholder="Mantém o valor atual"></div>
         </div>
         <div class="field">
-          <label>Mensalidades negociadas neste atendimento (opcional)</label>
-          <div class="mens-head"><select id="aMensAno" aria-label="Ano das mensalidades"></select><span class="mens-total">Total negociado: <b id="aMensTotal">R$ 0,00</b></span></div>
-          <div class="mens-grid" id="aMensGrid"></div>
+          <label>Valores negociados neste atendimento (opcional)</label>
+          <div class="neg-selects" id="aNegSelects">
+            <select id="aMensAno" aria-label="Ano dos meses"></select>
+            <div class="msel" data-tipo="mensalidade"></div>
+            <div class="msel" data-tipo="acordo"></div>
+            <div class="msel" data-tipo="cheque"></div>
+          </div>
+          <div class="neg-linhas" id="aNegLinhas"></div>
+          <div class="mens-total">Total negociado: <b id="aMensTotal">R$ 0,00</b></div>
         </div>
         <div class="m-foot spread">
           <button type="button" class="btn ghost small" id="btnArquivarAluno">Arquivar aluno</button>

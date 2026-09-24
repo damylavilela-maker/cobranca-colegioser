@@ -791,9 +791,10 @@ function atendSaida(r) {
 
 function mensalidadesValidas(lista) {
   if (!Array.isArray(lista)) return [];
-  return lista.slice(0, 36)
+  // tipo: mensalidade, acordo ou cheque (registros antigos, sem tipo, são mensalidades)
+  return lista.slice(0, 108)
     .filter((m) => m && typeof m.mes === "string" && /^\d{4}-\d{2}$/.test(m.mes))
-    .map((m) => ({ mes: m.mes, valor: numero(m.valor) }));
+    .map((m) => ({ tipo: ["acordo", "cheque"].includes(m.tipo) ? m.tipo : "mensalidade", mes: m.mes, valor: numero(m.valor) }));
 }
 
 async function listarAtendimentos(env, url) {

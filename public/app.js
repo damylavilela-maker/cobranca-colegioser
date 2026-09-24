@@ -414,9 +414,11 @@
     var anoSel = $("aMensAno");
     if (!anoSel.options.length) {
       var y = new Date().getFullYear();
-      fill(anoSel, [String(y - 1), String(y), String(y + 1)]);
+      fill(anoSel, [y - 1, y, y + 1].map(function (n) { return { v: String(n), l: "Ano " + n }; }));
     }
     anoSel.value = String(new Date().getFullYear());
+    negSel = {};
+    document.querySelectorAll("#aNegSelects .msel").forEach(function (b) { b.classList.remove("aberto", "cima"); });
     renderMensGrid();
   }
 
@@ -437,9 +439,10 @@
         "<div><b>" + esc(t.motivo || "") + "</b>" + (t.observacao ? " — " + esc(t.observacao) : "") + "</div>" +
         (t.proximoRetorno ? '<div class="tl-extra">Próximo retorno: ' + br(t.proximoRetorno) + "</div>" : "") +
         (t.valorRecuperado ? '<div class="tl-extra rec">Valor recuperado: ' + money(t.valorRecuperado) + "</div>" : "") +
-        (mens.length ? '<div class="tl-extra">Mensalidades negociadas: ' + mens.map(function (m) {
-          var mm = parseInt(m.mes.slice(5, 7), 10); return cap(MESES[mm - 1]).slice(0, 3) + "/" + m.mes.slice(0, 4) + " (" + money(m.valor) + ")";
-        }).join(", ") + " · total " + money(t.valorNegociadoTotal || 0) + "</div>" : "") +
+        (mens.length ? '<div class="tl-extra">Negociado: ' + NEG_TIPOS.map(function (tp) {
+          var d = mens.filter(function (m) { return (m.tipo || "mensalidade") === tp.k; });
+          return d.length ? "<b>" + tp.pl + "</b> " + d.map(function (m) { return mesCurto(m.mes) + " (" + money(m.valor) + ")"; }).join(", ") : "";
+        }).filter(Boolean).join(" · ") + " · total " + money(t.valorNegociadoTotal || 0) + "</div>" : "") +
         "</div>";
     }).join("");
   }
@@ -459,33 +462,94 @@
   $("aMotivo").addEventListener("change", function () { $("aMotivoOutroWrap").hidden = this.value !== "Outro"; });
 
   // mensalidades negociadas
+  // Valores negociados: três listas suspensas (Mensalidade, Acordo, Cheques) em que se marcam
+  // os meses do ano escolhido; cada mês marcado ganha uma linha para o valor negociado.
+  var NEG_TIPOS = [{ k: "mensalidade", l: "Mensalidade", pl: "Mensalidades" }, { k: "acordo", l: "Acordo", pl: "Acordo" }, { k: "cheque", l: "Cheques", pl: "Cheques" }];
+  function tipoNeg(k) { for (var i = 0; i < NEG_TIPOS.length; i++) if (NEG_TIPOS[i].k === k) return NEG_TIPOS[i]; return NEG_TIPOS[0]; }
+  function mesCurto(mes) { var mm = parseInt(mes.slice(5, 7), 10); return cap(MESES[mm - 1]).slice(0, 3) + "/" + mes.slice(0, 4); }
+  var negSel = {}; // "tipo|AAAA-MM" -> { tipo, mes, valor }
   function renderMensGrid() {
+    // renderiza os três campos suspensos (mantém aberto o que estava aberto)
     var ano = $("aMensAno").value;
-    $("aMensGrid").innerHTML = MESES.map(function (nome, i) {
-      var k = ano + "-" + pad2(i + 1);
-      return '<div class="mens-item"><label><input type="checkbox" class="mens-chk" data-mes="' + k + '"> ' + cap(nome) + "</label>" +
-        '<input type="number" step="0.01" min="0" class="mens-val" data-mes="' + k + '" placeholder="0,00" aria-label="Valor de ' + nome + '" hidden></div>';
+    document.querySelectorAll("#aNegSelects .msel").forEach(function (box) {
+      var tipo = box.getAttribute("data-tipo"), t = tipoNeg(tipo), aberto = box.classList.contains("aberto");
+      var marcados = Object.keys(negSel).filter(function (k) { return negSel[k].tipo === tipo; }).length;
+      var busca = box.querySelector(".msel-busca"), q = busca ? busca.value : "";
+      box.innerHTML = '<button type="button" class="msel-btn' + (marcados ? " tem" : "") + '" aria-haspopup="listbox" aria-expanded="' + aberto + '">' + t.l +
+        (marcados ? ' <span class="msel-n">' + marcados + "</span>" : "") + '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>' +
+        '<div class="msel-pop"' + (aberto ? "" : " hidden") + '><div class="msel-busca-wrap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>' +
+        '<input class="msel-busca" placeholder="Buscar mês" aria-label="Buscar mês" value="' + esc(q) + '"></div><div class="msel-lista" role="listbox" aria-multiselectable="true">' +
+        MESES.map(function (nome, i) {
+          var mes = ano + "-" + pad2(i + 1), on = !!negSel[tipo + "|" + mes];
+          var oculto = q && normNome(nome).indexOf(normNome(q)) === -1;
+          return '<button type="button" class="msel-op' + (on ? " on" : "") + '" role="option" aria-selected="' + on + '" data-mes="' + mes + '"' + (oculto ? " hidden" : "") + '><span class="msel-chip">' + cap(nome) + "</span>" +
+            '<svg class="msel-ok" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5 5L20 7"/></svg></button>';
+        }).join("") + '</div><div class="msel-rodape">' + ano + '<button type="button" class="linkbtn msel-fechar">Pronto</button></div></div>';
+    });
+    renderNegLinhas();
+  }
+  function renderNegLinhas() {
+    var ks = Object.keys(negSel).sort(function (a, b) {
+      var x = negSel[a], y = negSel[b];
+      return NEG_TIPOS.indexOf(tipoNeg(x.tipo)) - NEG_TIPOS.indexOf(tipoNeg(y.tipo)) || x.mes.localeCompare(y.mes);
+    });
+    $("aNegLinhas").innerHTML = ks.map(function (k) {
+      var m = negSel[k];
+      return '<div class="neg-linha"><span class="tag">' + tipoNeg(m.tipo).l + '</span><b class="tabular">' + mesCurto(m.mes) + "</b>" +
+        '<input type="number" step="0.01" min="0" class="neg-val" data-k="' + esc(k) + '" value="' + (m.valor === "" || m.valor == null ? "" : esc(m.valor)) + '" placeholder="Valor negociado" aria-label="Valor negociado de ' + tipoNeg(m.tipo).l + " " + mesCurto(m.mes) + '">' +
+        '<button type="button" class="x neg-tirar" data-k="' + esc(k) + '" aria-label="Remover">×</button></div>';
     }).join("");
     atualizarMensTotal();
   }
   function coletarMensalidades() {
-    var out = [];
-    document.querySelectorAll(".mens-chk:checked").forEach(function (c) {
-      var mes = c.getAttribute("data-mes"), inp = document.querySelector('.mens-val[data-mes="' + mes + '"]');
-      out.push({ mes: mes, valor: parseFloat(inp.value) || 0 });
-    });
-    return out;
+    return Object.keys(negSel).map(function (k) { var m = negSel[k]; return { tipo: m.tipo, mes: m.mes, valor: parseFloat(m.valor) || 0 }; });
   }
   function atualizarMensTotal() { $("aMensTotal").textContent = money(coletarMensalidades().reduce(function (s, m) { return s + m.valor; }, 0)); }
   $("aMensAno").addEventListener("change", renderMensGrid);
-  $("aMensGrid").addEventListener("change", function (e) {
-    if (e.target.classList.contains("mens-chk")) {
-      var inp = document.querySelector('.mens-val[data-mes="' + e.target.getAttribute("data-mes") + '"]');
-      inp.hidden = !e.target.checked; if (!e.target.checked) inp.value = ""; else inp.focus();
+  $("aNegSelects").addEventListener("click", function (e) {
+    var box = e.target.closest(".msel"); if (!box) return;
+    var tipo = box.getAttribute("data-tipo");
+    if (e.target.closest(".msel-btn")) {
+      var abrirEste = !box.classList.contains("aberto");
+      document.querySelectorAll("#aNegSelects .msel").forEach(function (b) { b.classList.remove("aberto", "cima"); });
+      if (abrirEste) { box.classList.add("aberto"); var bi = box.querySelector(".msel-busca"); if (bi) bi.value = ""; }
+      renderMensGrid();
+      if (abrirEste) {
+        var nova = document.querySelector('#aNegSelects .msel[data-tipo="' + tipo + '"]'), pop = nova.querySelector(".msel-pop"), r = pop.getBoundingClientRect();
+        // sem espaço embaixo: abre para cima
+        if (r.bottom > window.innerHeight && nova.getBoundingClientRect().top > r.height) nova.classList.add("cima");
+        nova.querySelector(".msel-busca").focus();
+      }
+      return;
     }
+    if (e.target.closest(".msel-fechar")) { box.classList.remove("aberto", "cima"); renderMensGrid(); return; }
+    var op = e.target.closest(".msel-op"); if (!op) return;
+    var k = tipo + "|" + op.getAttribute("data-mes");
+    if (negSel[k]) delete negSel[k]; else negSel[k] = { tipo: tipo, mes: op.getAttribute("data-mes"), valor: "" };
+    renderMensGrid();
+  });
+  $("aNegSelects").addEventListener("input", function (e) {
+    if (!e.target.classList.contains("msel-busca")) return;
+    var q = normNome(e.target.value), lista = e.target.closest(".msel-pop").querySelectorAll(".msel-op");
+    lista.forEach(function (op) { op.hidden = !!q && normNome(op.textContent).indexOf(q) === -1; });
+  });
+  // fecha a lista ao clicar fora dela
+  document.addEventListener("mousedown", function (e) {
+    if (e.target.closest && e.target.closest("#aNegSelects .msel")) return;
+    var abertos = document.querySelectorAll("#aNegSelects .msel.aberto");
+    if (!abertos.length) return;
+    abertos.forEach(function (b) { b.classList.remove("aberto", "cima"); });
+    renderMensGrid();
+  });
+  $("aNegLinhas").addEventListener("input", function (e) {
+    if (!e.target.classList.contains("neg-val")) return;
+    var m = negSel[e.target.getAttribute("data-k")]; if (m) m.valor = e.target.value;
     atualizarMensTotal();
   });
-  $("aMensGrid").addEventListener("input", function (e) { if (e.target.classList.contains("mens-val")) atualizarMensTotal(); });
+  $("aNegLinhas").addEventListener("click", function (e) {
+    var b = e.target.closest(".neg-tirar"); if (!b) return;
+    delete negSel[b.getAttribute("data-k")]; renderMensGrid();
+  });
 
   $("formAt").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -960,10 +1024,22 @@
   // em que o atendimento aconteceu.
   function renderMensalidadesEvol() {
     var ano = prepararSelect($("mensEvolAnoSel"), anosDisponiveis(true).map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
-    var por = {}, tot = 0;
-    atends.forEach(function (a) { (a.mensalidadesNegociadas || []).forEach(function (m) { if (m.mes && m.mes.slice(0, 4) === ano) { var k = m.mes.slice(5, 7); por[k] = (por[k] || 0) + (Number(m.valor) || 0); tot += Number(m.valor) || 0; } }); });
-    var rows = MESES.map(function (n, i) { var v = por[pad2(i + 1)] || 0; return "<tr><td>" + cap(n) + '</td><td class="tabular' + (v ? " rec" : "") + '">' + (v ? money(v) : "—") + "</td></tr>"; });
-    $("mensEvolTable").innerHTML = "<thead><tr><th>Mensalidade</th><th>Valor negociado</th></tr></thead><tbody>" + rows.join("") + '</tbody><tfoot><tr><td>Total do ano</td><td class="tabular">' + (tot ? money(tot) : "—") + "</td></tr></tfoot>";
+    var por = {}, tot = { total: 0 };
+    NEG_TIPOS.forEach(function (tp) { tot[tp.k] = 0; });
+    atends.forEach(function (a) {
+      (a.mensalidadesNegociadas || []).forEach(function (m) {
+        if (!m.mes || m.mes.slice(0, 4) !== ano) return;
+        var k = m.mes.slice(5, 7), tp = tipoNeg(m.tipo || "mensalidade").k, v = Number(m.valor) || 0;
+        por[k] = por[k] || { total: 0 }; por[k][tp] = (por[k][tp] || 0) + v; por[k].total += v; tot[tp] += v; tot.total += v;
+      });
+    });
+    function cel(v, cls) { return '<td class="tabular' + (v ? " " + (cls || "") : "") + '">' + (v ? money(v) : "—") + "</td>"; }
+    var rows = MESES.map(function (n, i) {
+      var p = por[pad2(i + 1)] || {};
+      return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function (tp) { return cel(p[tp.k]); }).join("") + cel(p.total, "rec") + "</tr>";
+    });
+    $("mensEvolTable").innerHTML = "<thead><tr><th>Mês</th>" + NEG_TIPOS.map(function (tp) { return "<th>" + tp.l + "</th>"; }).join("") + "<th>Total</th></tr></thead><tbody>" + rows.join("") +
+      "</tbody><tfoot><tr><td>Total do ano</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + cel(tot.total) + "</tr></tfoot>";
   }
 
   function renderControleDiario() {
