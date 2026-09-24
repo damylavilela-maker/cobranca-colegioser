@@ -194,6 +194,9 @@ export default {
         // Uma vez: apaga da base os campos sensíveis guardados pela 1ª versão (CPF, situação e demais colunas).
         const limpa = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('base_sem_dados_sensiveis', ?)").bind(agora).run();
         if (!limpa.meta || limpa.meta.changes > 0) await env.DB.prepare("UPDATE base_alunos SET cpf = '', situacao = '', extras = '{}'").run();
+        // Uma vez: nomes da Serasa que vieram cortados de PDF voltam a ser o nome completo da base (pelo RA).
+        const nomes = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('serasa_nomes_da_base', ?)").bind(agora).run();
+        if (!nomes.meta || nomes.meta.changes > 0) await sincronizarComBase(env);
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -1028,6 +1031,8 @@ async function importarSerasa(req, env, eu) {
     }
   }
   await executarEmLotes(env, stmts);
+  // completa com a Base de dados também as parcelas que já estavam salvas
+  await sincronizarComBase(env);
   return json({ criados, atualizados, iguais, incompletas, repetidas, ignorados: iguais + incompletas + repetidas, periodosCriados: criadosPeriodos, porPeriodo });
 }
 
@@ -1139,11 +1144,14 @@ function completarComBase(r, bx) {
   return o;
 }
 
-// Parcela da Serasa: só completa o que está vazio (RA e nome identificam a parcela e não mudam).
+// Parcela da Serasa: com RA, o nome completo vem da base (o RA é que identifica a parcela,
+// então trocar o nome não duplica; corrige nomes que vieram cortados de um PDF). Sem RA, o nome
+// faz parte da identificação e não muda. O responsável só é preenchido se estiver vazio.
 function completarSerasaComBase(l, base) {
   const bx = acharNaBase(base, l);
   if (!bx) return l;
   const o = { ...l };
+  if (texto(o.ra) && bx.nome) o.nome = bx.nome;
   if (!texto(o.responsavel) && texto(o.nome)) o.responsavel = bx.responsavel;
   return o;
 }
@@ -1207,7 +1215,7 @@ async function sincronizarComBase(env) {
   const parcelas = (await env.DB.prepare("SELECT id, ra, nome, responsavel FROM serasa").all()).results;
   for (const p of parcelas) {
     const novo = completarSerasaComBase(p, base);
-    const campos = ["responsavel"].filter((c) => texto(novo[c]) && novo[c] !== p[c]);
+    const campos = ["nome", "responsavel"].filter((c) => texto(novo[c]) && novo[c] !== p[c]);
     if (!campos.length) continue;
     stmts.push(env.DB.prepare(`UPDATE serasa SET ${campos.map((c) => c + " = ?").join(", ")} WHERE id = ?`).bind(...campos.map((c) => novo[c]), p.id));
     nSerasa++;

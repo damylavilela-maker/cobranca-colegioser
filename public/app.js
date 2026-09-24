@@ -908,7 +908,7 @@
         var achado = acharCabecalho(linhas), inicio = 0;
         if (achado) { cols = achado.cab; inicio = achado.ate + 1; }
         if (!cols) return;
-        var ultimaY = null;
+        var daPagina = [];
         for (var i = inicio; i < linhas.length; i++) {
           var l = linhas[i], vals = cols.map(function () { return []; });
           l.cels.forEach(function (c) {
@@ -923,13 +923,35 @@
           var row = vals.map(function (v) { return v.join(" "); });
           var cheias = row.filter(Boolean).length;
           if (!cheias) continue;
-          var hLinha = (l.cels[0].h || 8) * 2.2;
-          if (rows.length && !row[0] && cheias <= Math.max(1, cols.length / 3) && ultimaY != null && l.y - ultimaY < hLinha) {
-            var ant = rows[rows.length - 1];
-            row.forEach(function (v, k) { if (v) ant[k] = (ant[k] ? ant[k] + " " : "") + v; });
-          } else rows.push(row);
-          ultimaY = l.y;
+          // pedaço de texto quebrado (ex.: nome em 2 linhas): sem a 1ª coluna, sem números e com poucas células
+          var frag = !row[0] && cheias <= Math.max(1, cols.length / 3) && !l.cels.some(function (c) { return ehNumero(c.s); });
+          daPagina.push({ y: l.y, h: l.cels[0].h || 8, row: row, frag: frag });
         }
+        // Cada pedaço vai para a linha de dados mais próxima, acima OU abaixo: planilhas exportadas
+        // com alinhamento embaixo põem o começo do nome na linha de cima. Pedaço longe de tudo
+        // (título, rodapé) é descartado.
+        var cheiasPag = daPagina.filter(function (d) { return !d.frag; });
+        cheiasPag.forEach(function (c) { c.partes = [c]; });
+        // cada pedaço segue a linha vizinha mais perto (as linhas de uma mesma célula ficam mais
+        // juntas que duas linhas da tabela); a corrente de pedaços termina numa linha de dados
+        daPagina.forEach(function (d, i) {
+          if (!d.frag) return;
+          var ant = daPagina[i - 1], prox = daPagina[i + 1];
+          var ga = ant ? d.y - ant.y : Infinity, gp = prox ? prox.y - d.y : Infinity;
+          var viz = ga < gp || (ga === gp && ant && !ant.frag) ? ant : prox, gap = Math.min(ga, gp);
+          d.segue = viz && gap <= d.h * 2.6 ? viz : null;
+        });
+        daPagina.forEach(function (d) {
+          if (!d.frag) return;
+          var alvo = d.segue, passos = 0;
+          while (alvo && alvo.frag && passos++ < 10) alvo = alvo.segue;
+          if (alvo && !alvo.frag) alvo.partes.push(d);
+        });
+        cheiasPag.forEach(function (c) {
+          // junta as partes de cima para baixo, coluna por coluna
+          c.partes.sort(function (a, b) { return a.y - b.y; });
+          rows.push(cols.map(function (x, k) { return c.partes.map(function (p) { return p.row[k]; }).filter(Boolean).join(" "); }));
+        });
       });
       if (!cols) return null;
       var raw = cols.map(function (c) { return c.s; });
