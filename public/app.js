@@ -713,8 +713,10 @@
   // A mesma janela de importação atende Painel/Contraturno (alunos) e Serasa (parcelas).
   var modoImport = "alunos";
   var confirmouPeriodo = false; // o aviso de período já foi mostrado para este arquivo
-  function processarCSV(text) {
-    var p = parseCSV(text), h = p.headers;
+  function processarCSV(text) { processarTabela(parseCSV(text)); }
+  // tabela já separada em colunas (vinda do CSV ou do PDF)
+  function processarTabela(p) {
+    var h = p.headers;
     confirmouPeriodo = false;
     if (modoImport === "serasa") return processarCSVSerasa(p);
     if (modoImport === "base") return processarCSVBase(p);
@@ -782,7 +784,7 @@
       tc.items.forEach(function (it) {
         var s = (it.str || "").trim(); if (!s) return;
         var t = window.pdfjsLib.Util.transform(vp.transform, it.transform); // posição como aparece na tela (vale para página deitada)
-        itens.push({ x: t[4], y: t[5], cx: t[4] + (it.width || 0) / 2, s: s });
+        itens.push({ x: t[4], y: t[5], w: it.width || 0, h: Math.hypot(t[2], t[3]) || it.height || 8, cx: t[4] + (it.width || 0) / 2, s: s });
       });
       itens.sort(function (a, b) { return a.y - b.y || a.x - b.x; });
       var linhas = [];
@@ -821,26 +823,120 @@
   function processarPDF(buf) {
     var out = $("importResult");
     confirmouPeriodo = false;
-    if (modoImport === "serasa") {
-      out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Na aba Serasa a importação é pelo CSV da planilha. O PDF é aceito no Painel e no Contraturno.</div>';
-    if (modoImport === "base") {
-      out.innerHTML = '<div class="import-summary" style="color:var(--danger)">A Base de dados importa o relatório de alunos em CSV. No sistema, exporte o relatório em Excel e salve como CSV (Arquivo → Salvar como → CSV UTF-8).</div>';
-      $("btnConfirmImport").disabled = true; return;
-    }
-      $("btnConfirmImport").disabled = true; return;
-    }
     out.innerHTML = '<div class="import-summary">Lendo o PDF…</div>';
     $("btnConfirmImport").disabled = true;
-    lerRelatorioPDF(buf).then(function (r) {
-      if (!r.brutos.length) {
-        out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não encontrei parcelas neste PDF. ' +
-          (r.cabecalho ? "O cabeçalho do relatório foi reconhecido, mas nenhuma linha de aluno." : "Use o relatório de Inadimplência do sistema (colunas Código, Nome, Data vcto. … Devido).") +
-          " Se o PDF for uma imagem digitalizada, exporte de novo direto do sistema.</div>";
-        return;
+    // Painel/Contraturno: primeiro tenta o leitor próprio do relatório de Inadimplência
+    var especifico = modoImport === "alunos" ? lerRelatorioPDF(buf) : Promise.resolve(null);
+    especifico.then(function (r) {
+      if (r && r.brutos.length) {
+        return mostrarPreviaAlunos(r.brutos, " Valor em aberto = coluna <b>Devido</b> do relatório (saldo + multa + juros). No PDF os nomes longos vêm cortados; para quem já está cadastrado, o nome completo é mantido.");
       }
-      mostrarPreviaAlunos(r.brutos, " Valor em aberto = coluna <b>Devido</b> do relatório (saldo + multa + juros). No PDF os nomes longos vêm cortados; para quem já está cadastrado, o nome completo é mantido.");
+      // qualquer outro relatório em tabela: vira linhas e colunas e segue o mesmo caminho do CSV
+      return pdfParaTabela(buf).then(function (p) {
+        if (!p) {
+          out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não encontrei uma tabela com cabeçalho neste PDF (ex.: colunas RA, Nome, Vencimento, Valor…). ' +
+            "Se o PDF for uma imagem digitalizada, exporte de novo direto do sistema, ou use o CSV.</div>";
+          return;
+        }
+        processarTabela(p);
+        var aviso = document.createElement("div");
+        aviso.className = "import-summary";
+        aviso.textContent = "Lido do PDF: " + p.rows.length + " linha(s) em " + p.paginas + " página(s). Confira a prévia; se alguma coluna vier trocada, use o CSV do mesmo relatório.";
+        out.appendChild(aviso);
+      });
     }).catch(function (x) {
       out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não consegui ler este PDF: ' + esc(x.message || x) + "</div>";
+    });
+  }
+
+  // Leitor genérico de tabela em PDF. O PDF não tem células, só texto posicionado:
+  // 1) acha a linha de cabeçalho (a que mais parece nomes de coluna, juntando títulos em 2 linhas);
+  // 2) cada coluna começa onde começa o seu título; números (alinhados à direita) vão para a
+  //    coluna cujo título termina mais perto de onde o número termina;
+  // 3) texto que invade a coluna seguinte (ex.: "14881 NOME DO ALUNO") é separado por palavra;
+  // 4) linha que só continua o texto da anterior (nome quebrado em 2 linhas) é juntada a ela.
+  function pdfParaTabela(buf) {
+    return carregarPdfJs().then(function (pdfjs) { return pdfjs.getDocument({ data: buf }).promise; }).then(function (pdf) {
+      var paginas = [];
+      for (var n = 1; n <= pdf.numPages; n++) paginas.push(pdf.getPage(n).then(linhasDaPagina));
+      return Promise.all(paginas);
+    }).then(function (paginas) {
+      var cols = null, rows = [];
+      function ehNumero(s) { return /^-?(R\$\s*)?[\d.]*\d([.,]\d{1,2})?$/.test(s) && !/^\d{2}\/\d{2}/.test(s); }
+      function juntarPerto(cels) {
+        // junta pedaços do mesmo título/célula separados só por um espaço
+        var out = [];
+        cels.forEach(function (c) {
+          var u = out[out.length - 1];
+          if (u && c.x - (u.x + u.w) < Math.max(2, (c.h || 8) * 0.35)) { u.s += " " + c.s; u.w = c.x + c.w - u.x; }
+          else out.push({ x: c.x, w: c.w, h: c.h, s: c.s });
+        });
+        return out;
+      }
+      function acharCabecalho(linhas) {
+        var melhor = null;
+        linhas.forEach(function (l, i) {
+          var cs = juntarPerto(l.cels);
+          if (cs.length < 3) return;
+          var sc = scoreHeader(cs.map(function (c) { return c.s; }));
+          if (sc >= 2 && (!melhor || sc > melhor.sc)) melhor = { i: i, sc: sc, cs: cs };
+        });
+        if (!melhor) return null;
+        var cab = melhor.cs.map(function (c) { return { x: c.x, fim: c.x + c.w, s: c.s }; }), usadas = [melhor.i];
+        // título em duas linhas: completa com a linha logo acima/abaixo (só texto, perto)
+        [melhor.i - 1, melhor.i + 1].forEach(function (j) {
+          var l = linhas[j]; if (!l) return;
+          var lim = (l.cels[0].h || 8) * 1.8;
+          if (Math.abs(l.y - linhas[melhor.i].y) > lim || l.cels.some(function (c) { return ehNumero(c.s); })) return;
+          var ok = false;
+          juntarPerto(l.cels).forEach(function (c) {
+            var meio = c.x + c.w / 2, alvo = null;
+            cab.forEach(function (k) { if (meio >= k.x - 6 && meio <= k.fim + 6) alvo = k; });
+            if (alvo) { alvo.s = j < melhor.i ? c.s + " " + alvo.s : alvo.s + " " + c.s; alvo.x = Math.min(alvo.x, c.x); alvo.fim = Math.max(alvo.fim, c.x + c.w); ok = true; }
+          });
+          if (ok) usadas.push(j);
+        });
+        return { cab: cab, ate: Math.max.apply(null, usadas) };
+      }
+      function colunaDoTexto(x) { var k = 0; for (var i = 0; i < cols.length; i++) if (x >= cols[i].x - 4) k = i; return k; }
+      function colunaDoNumero(fim) {
+        var k = 0, d = Infinity;
+        cols.forEach(function (c, i) { var dd = Math.abs(c.fim - fim); if (dd < d) { d = dd; k = i; } });
+        return k;
+      }
+      paginas.forEach(function (linhas) {
+        var achado = acharCabecalho(linhas), inicio = 0;
+        if (achado) { cols = achado.cab; inicio = achado.ate + 1; }
+        if (!cols) return;
+        var ultimaY = null;
+        for (var i = inicio; i < linhas.length; i++) {
+          var l = linhas[i], vals = cols.map(function () { return []; });
+          l.cels.forEach(function (c) {
+            if (ehNumero(c.s)) { vals[colunaDoNumero(c.x + c.w)].push(c.s); return; }
+            var k = colunaDoTexto(c.x), prox = cols[k + 1];
+            if (prox && c.x + c.w > prox.x + 4 && c.s.indexOf(" ") !== -1) {
+              // texto que atravessa colunas: separa as palavras pela posição estimada
+              var larg = c.w / c.s.length, pos = 0;
+              c.s.split(" ").forEach(function (p) { if (p) vals[colunaDoTexto(c.x + pos * larg)].push(p); pos += p.length + 1; });
+            } else vals[k].push(c.s);
+          });
+          var row = vals.map(function (v) { return v.join(" "); });
+          var cheias = row.filter(Boolean).length;
+          if (!cheias) continue;
+          var hLinha = (l.cels[0].h || 8) * 2.2;
+          if (rows.length && !row[0] && cheias <= Math.max(1, cols.length / 3) && ultimaY != null && l.y - ultimaY < hLinha) {
+            var ant = rows[rows.length - 1];
+            row.forEach(function (v, k) { if (v) ant[k] = (ant[k] ? ant[k] + " " : "") + v; });
+          } else rows.push(row);
+          ultimaY = l.y;
+        }
+      });
+      if (!cols) return null;
+      var raw = cols.map(function (c) { return c.s; });
+      // cabeçalho repetido nas páginas seguintes não é dado
+      var hn = raw.map(normHeader).join("|");
+      rows = rows.filter(function (r) { return r.map(normHeader).join("|") !== hn; });
+      return { headers: raw.map(normHeader), raw: raw, rows: rows, paginas: paginas.length };
     });
   }
   function ehPDF(f) { return /\.pdf$/i.test(f.name || "") || f.type === "application/pdf"; }
@@ -855,10 +951,10 @@
     b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : modo === "base" ? "Importar para a base" : "Importar alunos";
     $("mImpT").textContent = modo === "serasa" ? "Importar planilha — Serasa" : modo === "base" ? "Importar relatório de alunos — Base de dados" : carteira === "contraturno" ? "Importar planilha — Contraturno" : "Importar planilha";
     $("mImpSub").textContent = modo === "base"
-      ? "Envie o CSV do relatório total de alunos. Só são importados: aluno, matrícula, descrição da turma e nome, e-mail e telefone do responsável financeiro. As demais colunas (dados sensíveis) são ignoradas e não saem do seu computador."
+      ? "Envie o relatório total de alunos em CSV ou PDF. Só são importados: aluno, matrícula, descrição da turma e nome, e-mail e telefone do responsável financeiro. As demais colunas (dados sensíveis) são ignoradas e não saem do seu computador."
       : modo === "serasa"
-      ? "Envie o CSV de uma aba da planilha (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
-      : "Envie um CSV exportado do relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento) ou o PDF do relatório de Inadimplência do sistema.";
+      ? "Envie uma aba da planilha em CSV ou PDF (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
+      : "Envie o relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " em CSV ou PDF (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento). O PDF do relatório de Inadimplência do sistema também é aceito.";
     $("impPeriodoWrap").hidden = modo !== "serasa";
     $("impPeriodo").disabled = false;
     $("impPeriodoHint").textContent = "Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.";
@@ -1257,10 +1353,17 @@
       $("btnConfirmImport").disabled = true; return;
     }
     function c(r, i) { return i !== -1 ? (r[i] || "").trim() : ""; }
-    function juntar(r, lista) { var v = []; lista.forEach(function (i) { var s = c(r, i); if (s && v.indexOf(s) === -1) v.push(s); }); return v.join(" / "); }
+    function juntar(r, lista, padrao) {
+      // telefone e e-mail: guarda só o que tem cara de telefone / e-mail (nada de outro dado
+      // que tenha vindo junto na mesma célula)
+      var v = [];
+      lista.forEach(function (i) { (c(r, i).match(padrao) || []).forEach(function (s) { s = s.trim(); if (s && v.indexOf(s) === -1) v.push(s); }); });
+      return v.join(" / ");
+    }
+    var TEL = /(\+?55\s?)?\(?\d{2}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}|\b\d{4,5}-\d{4}\b/g, MAIL = /[^\s@;,/]+@[^\s@;,/]+\.[^\s@;,/]+/g;
     // só os 6 campos seguem para o servidor
     pendentes = p.rows.map(function (r) {
-      return { ra: c(r, ix.ra), nome: c(r, ix.nome), turma: c(r, ix.turma), responsavel: c(r, ix.responsavel), email: juntar(r, mails), telefone: juntar(r, tels) };
+      return { ra: c(r, ix.ra), nome: c(r, ix.nome), turma: c(r, ix.turma), responsavel: c(r, ix.responsavel), email: juntar(r, mails, MAIL), telefone: juntar(r, tels, TEL) };
     }).filter(function (r) { var n = r.nome.toUpperCase(); return n && n !== "NOME" && n !== "ALUNO" && n.length <= 150; });
     function nomesCol(lista) { return lista.map(function (i) { return p.raw[i]; }).join(" + "); }
     var origem = { ra: ix.ra !== -1 ? p.raw[ix.ra] : "", nome: p.raw[ix.nome], turma: ix.turma !== -1 ? p.raw[ix.turma] : "", responsavel: ix.responsavel !== -1 ? p.raw[ix.responsavel] : "", email: nomesCol(mails), telefone: nomesCol(tels) };

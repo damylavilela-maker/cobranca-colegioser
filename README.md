@@ -73,7 +73,9 @@ senha provisória. No primeiro login a pessoa troca a senha.
   Ao importar, escolha o período de destino — ou use um arquivo com a coluna PERÍODO.
   O histórico completo, com o período de cada linha, está em `migracao/serasa-por-periodo.csv`
   (Serasa → Importar planilha → arraste o arquivo). Reimportar não duplica.
-- **Importar relatório em PDF** (Painel e Contraturno) — além do CSV, a importação aceita o PDF do relatório
+- **Importar em PDF** (todas as abas com importação) — além do CSV, aceita PDF de relatório em tabela: um
+  leitor genérico acha o cabeçalho e monta as colunas (no navegador). No Painel/Contraturno há ainda um leitor
+  próprio para o PDF do relatório
   de Inadimplência do sistema (Código, Nome, Data vcto. … Devido). O PDF é lido no navegador (pdf.js);
   cada linha é uma parcela, agrupadas por RA, e o valor em aberto é a coluna Devido.
 - **Base de dados** — alunos e responsáveis financeiros (relatório total do sistema, em CSV). Guarda SÓ:
