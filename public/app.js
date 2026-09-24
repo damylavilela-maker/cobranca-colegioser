@@ -1029,7 +1029,7 @@
     var rec = {}, tot = 0;
     atends.forEach(function (a) { if (a.data && a.data.slice(0, 4) === ano) { var m = a.data.slice(5, 7); rec[m] = (rec[m] || 0) + (Number(a.valorRecuperado) || 0); } });
     var rows = MESES.map(function (n, i) { var v = rec[pad2(i + 1)] || 0; tot += v; return "<tr><td>" + cap(n) + '</td><td class="tabular' + (v ? " rec" : "") + '">' + (v ? money(v) : "—") + "</td></tr>"; });
-    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Valor recuperado</th></tr></thead><tbody>" + rows.join("") + '</tbody><tfoot><tr><td>Total do ano</td><td class="tabular">' + (tot ? money(tot) : "—") + "</td></tr></tfoot>";
+    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Total recuperado</th></tr></thead><tbody>" + rows.join("") + '</tbody><tfoot><tr><td>Total do ano</td><td class="tabular">' + (tot ? money(tot) : "—") + "</td></tr></tfoot>";
   }
   // As mensalidades negociadas contam no mês da MENSALIDADE (ex.: janeiro), não no mês
   // em que o atendimento aconteceu.
@@ -1060,9 +1060,14 @@
     var ano = parseInt(mesSel.slice(0, 4), 10), mesN = parseInt(mesSel.slice(5, 7), 10);
     var doMes = atends.filter(function (a) { return a.data && a.data.slice(0, 7) === mesSel; });
     var tb = $("ctrlTable");
-    if (!doMes.length) { tb.innerHTML = '<tbody><tr><td class="empty-ctrl">Nenhum atendimento registrado neste mês ainda.</td></tr></tbody>'; renderFaixa(doMes); return; }
+    // colunas só para atendimentos com atendente identificada (registros antigos sem nome ficam de fora)
+    var semNome = doMes.filter(function (a) { var n = (a.responsavel || "").trim(); return !n || n === "—"; }).length;
+    $("ctrlNota").textContent = semNome ? semNome + " atendimento(s) deste mês sem atendente identificada não aparecem nesta tabela." : "";
+    var doMesFaixa = doMes;
+    doMes = doMes.filter(function (a) { var n = (a.responsavel || "").trim(); return n && n !== "—"; });
+    if (!doMes.length) { tb.innerHTML = '<tbody><tr><td class="empty-ctrl">Nenhum atendimento registrado neste mês ainda.</td></tr></tbody>'; renderFaixa(doMesFaixa); return; }
 
-    var porAt = {}; doMes.forEach(function (a) { var k = a.responsavel || "—"; porAt[k] = (porAt[k] || 0) + 1; });
+    var porAt = {}; doMes.forEach(function (a) { var k = a.responsavel; porAt[k] = (porAt[k] || 0) + 1; });
     var ats = Object.keys(porAt).sort(function (a, b) { return porAt[b] - porAt[a]; });
     var diasNoMes = new Date(ano, mesN, 0).getDate();
     var ate = mesSel === mesAtual() ? new Date().getDate() : diasNoMes;
@@ -1092,7 +1097,7 @@
     }
     var foot = '<td class="date-cell">Total do mês</td>' + ats.map(function (at) { var t = tAt[at]; return CANAIS.map(function (c) { return "<td>" + t[c] + "</td>"; }).join("") + "<td>" + t.total + "</td><td>" + (t.rec ? money(t.rec) : "—") + "</td>"; }).join("") + "<td>" + tg + "</td><td>" + (tgr ? money(tgr) : "—") + "</td>";
     tb.innerHTML = "<thead>" + th1 + th2 + "</thead><tbody>" + body.join("") + "</tbody><tfoot><tr>" + foot + "</tr></tfoot>";
-    renderFaixa(doMes);
+    renderFaixa(doMesFaixa);
   }
 
   var FAIXAS = [{ k: "30", l: "Até 30 dias", c: "info" }, { k: "60", l: "31–60 dias", c: "warn" }, { k: "90", l: "61–90 dias", c: "gold" }, { k: "90+", l: "Mais de 90 dias", c: "danger" }];
