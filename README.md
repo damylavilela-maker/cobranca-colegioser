@@ -76,9 +76,11 @@ senha provisória. No primeiro login a pessoa troca a senha.
 - **Importar relatório em PDF** (Painel e Contraturno) — além do CSV, a importação aceita o PDF do relatório
   de Inadimplência do sistema (Código, Nome, Data vcto. … Devido). O PDF é lido no navegador (pdf.js);
   cada linha é uma parcela, agrupadas por RA, e o valor em aberto é a coluna Devido.
-- **Base de dados** — cadastro completo dos alunos (relatório total do sistema, em CSV). Todas as colunas
-  ficam guardadas. Ao importar a base, os alunos do Painel/Contraturno recebem nome completo, turma,
-  responsável e contato, e as parcelas do Serasa recebem responsável e CPF que estiverem vazios. Nas
+- **Base de dados** — alunos e responsáveis financeiros (relatório total do sistema, em CSV). Guarda SÓ:
+  aluno, matrícula, descrição da turma e nome, e-mail e telefone do responsável financeiro; as demais
+  colunas (CPF, RG, endereço, nascimento…) são descartadas no navegador e nunca chegam ao servidor.
+  Ao importar a base, os alunos do Painel/Contraturno recebem nome completo, turma, responsável e
+  contato, e as parcelas do Serasa recebem o responsável quando estiver vazio. Nas
   importações seguintes do Painel/Contraturno/Serasa isso acontece automaticamente (pelo RA; sem RA,
   pelo nome, se for único na base).
 

@@ -191,6 +191,9 @@ export default {
           await env.DB.batch(PERIODOS_INICIAIS.map(([nome, ini, fim]) => env.DB.prepare(
             "UPDATE serasa_periodos SET nome = ? WHERE criado_por = 'planilha' AND inicio = ? AND fim = ?").bind(nome, ini, fim)));
         }
+        // Uma vez: apaga da base os campos sensíveis guardados pela 1ª versão (CPF, situação e demais colunas).
+        const limpa = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('base_sem_dados_sensiveis', ?)").bind(agora).run();
+        if (!limpa.meta || limpa.meta.changes > 0) await env.DB.prepare("UPDATE base_alunos SET cpf = '', situacao = '', extras = '{}'").run();
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -1083,16 +1086,15 @@ async function salvarPeriodo(req, env, eu, id) {
 
 // ---------------------------------------------------------------- Base de dados (cadastro dos alunos)
 
-const BASE_CAMPOS = ["ra", "nome", "turma", "responsavel", "cpf", "telefone", "email", "situacao"];
+// Só estes campos são guardados (os demais dados do relatório são sensíveis e não entram no sistema).
+const BASE_CAMPOS = ["ra", "nome", "turma", "responsavel", "telefone", "email"];
 
 function normNome(s) { return String(s || "").trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " "); }
 
 function baseSaida(r) {
-  let extras = {};
-  try { extras = JSON.parse(r.extras || "{}"); } catch (e) { extras = {}; }
   return {
-    id: r.id, ra: r.ra, nome: r.nome, turma: r.turma, responsavel: r.responsavel, cpf: r.cpf,
-    telefone: r.telefone, email: r.email, situacao: r.situacao, extras, atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por
+    id: r.id, ra: r.ra, nome: r.nome, turma: r.turma, responsavel: r.responsavel,
+    telefone: r.telefone, email: r.email, atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por
   };
 }
 
@@ -1142,7 +1144,6 @@ function completarSerasaComBase(l, base) {
   if (!bx) return l;
   const o = { ...l };
   if (!texto(o.responsavel) && texto(o.nome)) o.responsavel = bx.responsavel;
-  if (!texto(o.cpf)) o.cpf = bx.cpf;
   return o;
 }
 
@@ -1155,15 +1156,13 @@ async function importarBase(req, env, eu) {
   atuais.forEach((a) => { if (a.ra) porRa[a.ra.trim().toLowerCase()] = a; else porNome[normNome(a.nome)] = a; });
   const agora = agoraISO(), stmts = [], vistos = new Set();
   let criados = 0, atualizados = 0, iguais = 0, incompletas = 0;
-  const cols = ["id", ...BASE_CAMPOS, "extras", "atualizado_em", "atualizado_por"];
+  const cols = ["id", ...BASE_CAMPOS, "atualizado_em", "atualizado_por"];
   for (const l of linhas) {
     const o = {
       ra: texto(l.ra, 30), nome: texto(l.nome, 150), turma: texto(l.turma, 80), responsavel: texto(l.responsavel, 150),
-      cpf: texto(l.cpf, 20), telefone: texto(l.telefone, 80), email: texto(l.email, 150), situacao: texto(l.situacao, 60)
+      telefone: texto(l.telefone, 80), email: texto(l.email, 150)
     };
     if (!o.nome) { incompletas++; continue; }
-    const extras = {};
-    if (l.extras && typeof l.extras === "object") Object.keys(l.extras).slice(0, 80).forEach((k) => { const v = texto(l.extras[k], 500); if (v) extras[texto(k, 80)] = v; });
     const chave = o.ra ? "ra:" + o.ra.toLowerCase() : "nm:" + normNome(o.nome);
     if (vistos.has(chave)) continue; // mesma pessoa repetida no arquivo: vale a 1ª linha
     vistos.add(chave);
@@ -1172,14 +1171,11 @@ async function importarBase(req, env, eu) {
       // campo vazio no arquivo não apaga o que já estava na base
       const junto = {};
       BASE_CAMPOS.forEach((c) => { junto[c] = o[c] || achado[c] || ""; });
-      let antigos = {};
-      try { antigos = JSON.parse(achado.extras || "{}"); } catch (e) { antigos = {}; }
-      const ex = JSON.stringify({ ...antigos, ...extras });
-      if (BASE_CAMPOS.every((c) => junto[c] === achado[c]) && ex === (achado.extras || "{}")) { iguais++; continue; }
-      stmts.push(env.DB.prepare(insertSQL("base_alunos", cols)).bind(achado.id, ...BASE_CAMPOS.map((c) => junto[c]), ex, agora, eu.nome));
+      if (BASE_CAMPOS.every((c) => junto[c] === achado[c])) { iguais++; continue; }
+      stmts.push(env.DB.prepare(`UPDATE base_alunos SET ${BASE_CAMPOS.map((c) => c + " = ?").join(", ")}, atualizado_em = ?, atualizado_por = ? WHERE id = ?`).bind(...BASE_CAMPOS.map((c) => junto[c]), agora, eu.nome, achado.id));
       atualizados++;
     } else {
-      stmts.push(env.DB.prepare(insertSQL("base_alunos", cols)).bind(novoId(), ...BASE_CAMPOS.map((c) => o[c]), JSON.stringify(extras), agora, eu.nome));
+      stmts.push(env.DB.prepare(insertSQL("base_alunos", cols)).bind(novoId(), ...BASE_CAMPOS.map((c) => o[c]), agora, eu.nome));
       criados++;
     }
   }
@@ -1207,10 +1203,10 @@ async function sincronizarComBase(env) {
     stmts.push(env.DB.prepare(`UPDATE alunos SET ${campos.map((c) => c + " = ?").join(", ")}, atualizado_em = ? WHERE id = ?`).bind(...campos.map((c) => novo[c]), agora, a.id));
     nAlunos++;
   }
-  const parcelas = (await env.DB.prepare("SELECT id, ra, nome, responsavel, cpf FROM serasa").all()).results;
+  const parcelas = (await env.DB.prepare("SELECT id, ra, nome, responsavel FROM serasa").all()).results;
   for (const p of parcelas) {
     const novo = completarSerasaComBase(p, base);
-    const campos = ["responsavel", "cpf"].filter((c) => texto(novo[c]) && novo[c] !== p[c]);
+    const campos = ["responsavel"].filter((c) => texto(novo[c]) && novo[c] !== p[c]);
     if (!campos.length) continue;
     stmts.push(env.DB.prepare(`UPDATE serasa SET ${campos.map((c) => c + " = ?").join(", ")} WHERE id = ?`).bind(...campos.map((c) => novo[c]), p.id));
     nSerasa++;

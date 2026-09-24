@@ -780,7 +780,7 @@
     b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : modo === "base" ? "Importar para a base" : "Importar alunos";
     $("mImpT").textContent = modo === "serasa" ? "Importar planilha — Serasa" : modo === "base" ? "Importar relatório de alunos — Base de dados" : carteira === "contraturno" ? "Importar planilha — Contraturno" : "Importar planilha";
     $("mImpSub").textContent = modo === "base"
-      ? "Envie o CSV do relatório total de alunos do sistema, com os dados cadastrais (RA, Aluno, Turma, Responsável financeiro, CPF, Telefone, E-mail…). Todas as colunas do arquivo ficam guardadas."
+      ? "Envie o CSV do relatório total de alunos. Só são importados: aluno, matrícula, descrição da turma e nome, e-mail e telefone do responsável financeiro. As demais colunas (dados sensíveis) são ignoradas e não saem do seu computador."
       : modo === "serasa"
       ? "Envie o CSV de uma aba da planilha (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
       : "Envie um CSV exportado do relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento) ou o PDF do relatório de Inadimplência do sistema.";
@@ -1060,7 +1060,7 @@
     return t.length ? t.map(function (k) { return '<span class="tag">' + ABAS_NOME[k] + "</span>"; }).join(" ") : '<span class="muted">—</span>';
   }
   function renderBase() {
-    if (!baseCarregada) { $("baseTbody").innerHTML = '<tr><td colspan="7" class="empty">Carregando…</td></tr>'; return; }
+    if (!baseCarregada) { $("baseTbody").innerHTML = '<tr><td colspan="6" class="empty">Carregando…</td></tr>'; return; }
     var b = baseAlunos, n = b.length;
     function conta(f) { return b.filter(function (x) { return x[f]; }).length; }
     $("baseKpis").innerHTML = [
@@ -1071,20 +1071,18 @@
     ].map(function (t) { return '<div class="kpi ' + (t.cls || "") + '"><div class="num tabular">' + t.n + '</div><div class="lbl">' + t.l + "</div></div>"; }).join("");
     $("baseSub").textContent = baseUltima
       ? "Última importação em " + br(baseUltima.em) + " às " + new Date(baseUltima.em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + " por " + baseUltima.por + " · completa automaticamente o Painel, o Contraturno e o Serasa"
-      : "Cadastro completo dos alunos — completa automaticamente o Painel, o Contraturno e o Serasa";
-    var turmas = {}, sits = {};
-    b.forEach(function (x) { if (x.turma) turmas[x.turma] = 1; if (x.situacao) sits[x.situacao] = 1; });
+      : "Alunos e responsáveis financeiros — completa automaticamente o Painel, o Contraturno e o Serasa";
+    var turmas = {};
+    b.forEach(function (x) { if (x.turma) turmas[x.turma] = 1; });
     prepararSelect($("bTurma"), [{ v: "", l: "Todas as turmas" }].concat(Object.keys(turmas).sort().map(function (t) { return { v: esc(t), l: esc(t) }; })), "");
-    prepararSelect($("bSituacao"), [{ v: "", l: "Todas as situações" }].concat(Object.keys(sits).sort().map(function (t) { return { v: esc(t), l: esc(t) }; })), "");
-    var q = $("bBusca").value.trim().toLowerCase(), qDig = q.replace(/\D/g, ""), ft = $("bTurma").value, fs = $("bSituacao").value, fa = $("bAba").value;
+    var q = $("bBusca").value.trim().toLowerCase(), qDig = q.replace(/\D/g, ""), ft = $("bTurma").value, fa = $("bAba").value;
     var abasDe = indiceAbas();
     baseFiltrada = b.filter(function (x) {
       if (ft && x.turma !== ft) return false;
-      if (fs && x.situacao !== fs) return false;
       if (fa) { var ab = abasDe(x); if (fa === "nenhuma" ? Object.keys(ab).length : !ab[fa]) return false; }
       if (q) {
         var hay = [x.ra, x.nome, x.responsavel, x.email, x.turma].join(" ").toLowerCase();
-        var digOk = qDig.length >= 4 && ((x.cpf || "").replace(/\D/g, "").indexOf(qDig) !== -1 || (x.telefone || "").replace(/\D/g, "").indexOf(qDig) !== -1);
+        var digOk = qDig.length >= 4 && (x.telefone || "").replace(/\D/g, "").indexOf(qDig) !== -1;
         if (hay.indexOf(q) === -1 && !digOk) return false;
       }
       return true;
@@ -1092,13 +1090,13 @@
     $("baseCount").textContent = baseFiltrada.length + (baseFiltrada.length === 1 ? " aluno" : " alunos");
     var tb = $("baseTbody");
     if (!baseFiltrada.length) {
-      tb.innerHTML = '<tr><td colspan="7" class="empty"><b>' + (n ? "Nenhum aluno com estes filtros" : "A base ainda está vazia") + '</b><div class="muted">' +
+      tb.innerHTML = '<tr><td colspan="6" class="empty"><b>' + (n ? "Nenhum aluno com estes filtros" : "A base ainda está vazia") + '</b><div class="muted">' +
         (n ? "Ajuste a busca ou os filtros acima." : "Importe o relatório total de alunos do sistema em “Importar relatório de alunos”.") + "</div></td></tr>";
     } else {
       tb.innerHTML = baseFiltrada.slice(0, baseLimite).map(function (x) {
         return '<tr class="click" data-id="' + esc(x.id) + '"><td class="tabular">' + (esc(x.ra) || '<span class="muted">—</span>') + '</td><td><div class="nome">' + esc(x.nome) + "</div>" +
-          (x.situacao ? '<div class="meta">' + esc(x.situacao) + "</div>" : "") + "</td><td>" + (esc(x.turma) || '<span class="muted">—</span>') + "</td>" +
-          "<td>" + (esc(x.responsavel) || '<span class="muted">—</span>') + '</td><td class="tabular">' + (esc(x.cpf) || '<span class="muted">—</span>') + "</td>" +
+          "</td><td>" + (esc(x.turma) || '<span class="muted">—</span>') + "</td>" +
+          "<td>" + (esc(x.responsavel) || '<span class="muted">—</span>') + "</td>" +
           "<td>" + (x.telefone ? '<div class="tabular">' + esc(x.telefone) + "</div>" : "") + (x.email ? '<div class="meta">' + esc(x.email) + "</div>" : "") + (!x.telefone && !x.email ? '<span class="muted">—</span>' : "") + "</td>" +
           "<td>" + tagsAbas(abasDe(x)) + "</td></tr>";
       }).join("");
@@ -1106,37 +1104,34 @@
     $("baseMais").hidden = baseFiltrada.length <= baseLimite;
     $("baseMais").textContent = "Mostrar mais (" + (baseFiltrada.length - baseLimite) + " restantes)";
   }
-  ["bBusca", "bTurma", "bSituacao", "bAba"].forEach(function (id) { $(id).addEventListener("input", function () { baseLimite = 300; renderBase(); }); });
+  ["bBusca", "bTurma", "bAba"].forEach(function (id) { $(id).addEventListener("input", function () { baseLimite = 300; renderBase(); }); });
   $("baseMais").addEventListener("click", function () { baseLimite += 300; renderBase(); });
   $("baseTbody").addEventListener("click", function (e) {
     var tr = e.target.closest("tr[data-id]"); if (!tr) return;
     var x = null; baseAlunos.forEach(function (y) { if (y.id === tr.getAttribute("data-id")) x = y; });
     if (!x) return;
     $("bsTitulo").textContent = x.nome;
-    $("bsSub").textContent = [x.ra ? "RA " + x.ra : "", x.turma, x.situacao].filter(Boolean).join(" · ");
+    $("bsSub").textContent = [x.ra ? "Matrícula " + x.ra : "", x.turma].filter(Boolean).join(" · ");
     var abas = indiceAbas()(x);
     $("bsAbas").innerHTML = "Aparece em: " + tagsAbas(abas);
-    var campos = [["RA", x.ra], ["Aluno", x.nome], ["Turma", x.turma], ["Situação", x.situacao], ["Responsável financeiro", x.responsavel], ["CPF", x.cpf], ["Telefone", x.telefone], ["E-mail", x.email]];
-    Object.keys(x.extras || {}).forEach(function (k) { campos.push([k, x.extras[k]]); });
+    var campos = [["Matrícula", x.ra], ["Aluno", x.nome], ["Descrição da turma", x.turma], ["Responsável financeiro", x.responsavel], ["E-mail do resp. financeiro", x.email], ["Telefone do resp. financeiro", x.telefone]];
     $("bsDados").innerHTML = campos.filter(function (c) { return c[1]; }).map(function (c) { return "<dt>" + esc(c[0]) + "</dt><dd>" + esc(c[1]) + "</dd>"; }).join("");
     $("bsAtualizado").textContent = x.atualizadoEm ? "Atualizado em " + br(x.atualizadoEm) + (x.atualizadoPor ? " por " + x.atualizadoPor : "") + " (importação do relatório)" : "";
     abrir("mBase");
   });
   $("btnBaseImportar").addEventListener("click", function () { abrirImportacao("base"); });
   $("btnBaseExportar").addEventListener("click", function () {
-    var chaves = {}, lista = baseFiltrada.length ? baseFiltrada : baseAlunos;
-    lista.forEach(function (x) { Object.keys(x.extras || {}).forEach(function (k) { chaves[k] = 1; }); });
-    var ex = Object.keys(chaves);
-    var cab = ["RA", "ALUNO", "TURMA", "SITUAÇÃO", "RESPONSÁVEL FINANCEIRO", "CPF", "TELEFONE", "E-MAIL"].concat(ex);
-    var linhas = lista.map(function (x) {
-      return [x.ra, x.nome, x.turma, x.situacao, x.responsavel, x.cpf, x.telefone, x.email].concat(ex.map(function (k) { return (x.extras || {})[k] || ""; })).map(csvCampo).join(";");
-    });
+    var lista = baseFiltrada.length ? baseFiltrada : baseAlunos;
+    var cab = ["MATRÍCULA", "ALUNO", "DESCRIÇÃO DA TURMA", "RESPONSÁVEL FINANCEIRO", "E-MAIL DO RESP. FINANCEIRO", "TELEFONE DO RESP. FINANCEIRO"];
+    var linhas = lista.map(function (x) { return [x.ra, x.nome, x.turma, x.responsavel, x.email, x.telefone].map(csvCampo).join(";"); });
     baixar("base_alunos_" + hoje() + ".csv", cab.map(csvCampo).join(";") + "\n" + linhas.join("\n"));
     toast("Base exportada (" + linhas.length + " alunos).");
   });
 
-  // Colunas do relatório de alunos. Escolhe a coluna pelo nome do cabeçalho: primeiro o nome
-  // exato, depois "contém", evitando colunas de outro assunto (ex.: "CPF do aluno" para o responsável).
+  // Relatório de alunos: a base guarda SÓ estes campos (os demais são dados sensíveis e nem
+  // saem do navegador): aluno, matrícula, descrição da turma e nome, e-mail e telefone do
+  // responsável financeiro. A coluna é escolhida pelo nome do cabeçalho: primeiro o nome
+  // exato, depois "contém", evitando colunas de outro assunto (ex.: telefone do aluno).
   function colunaBase(h, exatos, contem, evitar) {
     evitar = evitar || [];
     function ok(c) { return c && !evitar.some(function (e) { return c.indexOf(e) !== -1; }); }
@@ -1144,49 +1139,52 @@
     for (var m = 0; m < contem.length; m++) for (var k = 0; k < h.length; k++) if (ok(h[k]) && h[k].indexOf(contem[m]) !== -1) return k;
     return -1;
   }
-  function colunasBase(h, contem, evitar) {
-    var out = [];
-    h.forEach(function (c, i) { if (c && contem.some(function (t) { return c.indexOf(t) !== -1; }) && !(evitar || []).some(function (e) { return c.indexOf(e) !== -1; })) out.push(i); });
-    return out;
+  // colunas de contato do responsável financeiro (todas as que houver, ex.: celular e telefone)
+  function colunasContatoResp(h, tipos) {
+    function achar(filtro) {
+      var out = [];
+      h.forEach(function (c, i) { if (c && tipos.some(function (t) { return c.indexOf(t) !== -1; }) && filtro(c)) out.push(i); });
+      return out;
+    }
+    var fin = achar(function (c) { return c.indexOf("financ") !== -1; });
+    return fin.length ? fin : achar(function (c) { return /resp/.test(c) && !/pedag|academ|mae|pai/.test(c); });
   }
+  var BASE_CAMPOS_IMP = [["ra", "Matrícula"], ["nome", "Aluno"], ["turma", "Descrição da turma"], ["responsavel", "Responsável financeiro"], ["email", "E-mail do resp. financeiro"], ["telefone", "Telefone do resp. financeiro"]];
   function processarCSVBase(p) {
     var h = p.headers, out = $("importResult");
     var ix = {
-      ra: colunaBase(h, ["ra", "codigo", "cod", "cod.", "matricula", "codigo do aluno", "cod. aluno", "registro academico"], ["matricula", "codigo do aluno", "cod. aluno", "codigo"], ["resp", "turma", "curso"]),
-      nome: colunaBase(h, ["nome do aluno", "aluno", "nome", "nome completo", "nome aluno", "nome completo do aluno"], ["nome do aluno", "aluno", "nome"], ["resp", "mae", "pai", "social", "cpf", "codigo"]),
-      turma: colunaBase(h, ["turma"], ["turma", "classe"]),
-      situacao: colunaBase(h, ["situacao", "situacao academica", "situacao da matricula", "status"], ["situacao", "status"], ["financ"]),
-      responsavel: colunaBase(h, ["responsavel financeiro", "resp. financeiro", "resp financeiro", "nome do responsavel financeiro", "responsavel", "nome do responsavel"], ["responsavel financeiro", "resp. financeiro", "resp financeiro", "responsavel"], ["cpf", "tel", "cel", "fone", "mail", "rg", "cod", "endereco"]),
-      cpf: colunaBase(h, ["cpf do responsavel financeiro", "cpf responsavel financeiro", "cpf resp. financeiro", "cpf do responsavel", "cpf responsavel", "cpf"], ["cpf resp", "cpf do resp", "cpf"], ["aluno"])
+      ra: colunaBase(h, ["matricula", "ra", "codigo", "codigo do aluno", "cod. aluno", "registro academico"], ["matricula", "codigo do aluno", "cod. aluno"], ["resp", "turma", "curso", "data", "situacao", "tipo"]),
+      nome: colunaBase(h, ["aluno", "nome do aluno", "nome", "nome completo", "nome aluno", "nome completo do aluno"], ["nome do aluno", "aluno"], ["resp", "mae", "pai", "social", "cpf", "codigo", "matricula", "mail", "tel", "nasc"]),
+      turma: colunaBase(h, ["descricao da turma", "turma", "descricao turma"], ["descricao da turma", "turma"], ["cod", "id "]),
+      responsavel: colunaBase(h, ["nome do responsavel financeiro", "responsavel financeiro", "nome resp. financeiro", "resp. financeiro", "resp financeiro"], ["nome do responsavel financeiro", "responsavel financeiro", "resp. financeiro", "resp financeiro"], ["cpf", "tel", "cel", "fone", "mail", "rg", "cod", "endereco", "nasc", "profiss"])
     };
-    var tels = colunasBase(h, ["celular", "telefone", "fone", "whats"]), mails = colunasBase(h, ["e-mail", "email"]);
+    var tels = colunasContatoResp(h, ["telefone", "celular", "fone", "whats"]), mails = colunasContatoResp(h, ["e-mail", "email"]);
     if (ix.nome === -1) {
       out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não encontrei a coluna com o nome do aluno. Colunas identificadas: ' + esc((p.raw || []).filter(Boolean).join(", ") || "nenhuma") + ".</div>";
       $("btnConfirmImport").disabled = true; return;
     }
     function c(r, i) { return i !== -1 ? (r[i] || "").trim() : ""; }
     function juntar(r, lista) { var v = []; lista.forEach(function (i) { var s = c(r, i); if (s && v.indexOf(s) === -1) v.push(s); }); return v.join(" / "); }
+    // só os 6 campos seguem para o servidor
     pendentes = p.rows.map(function (r) {
-      var extras = {};
-      (p.raw || []).forEach(function (nomeCol, i) { var s = c(r, i); if (nomeCol && s) extras[nomeCol.trim()] = s; });
-      return { ra: c(r, ix.ra), nome: c(r, ix.nome), turma: c(r, ix.turma), situacao: c(r, ix.situacao), responsavel: c(r, ix.responsavel), cpf: c(r, ix.cpf), telefone: juntar(r, tels), email: juntar(r, mails), extras: extras };
+      return { ra: c(r, ix.ra), nome: c(r, ix.nome), turma: c(r, ix.turma), responsavel: c(r, ix.responsavel), email: juntar(r, mails), telefone: juntar(r, tels) };
     }).filter(function (r) { var n = r.nome.toUpperCase(); return n && n !== "NOME" && n !== "ALUNO" && n.length <= 150; });
-    // as colunas principais já têm campo próprio; nos "extras" ficam só as demais
-    var principais = [ix.ra, ix.nome, ix.turma, ix.situacao, ix.responsavel, ix.cpf].concat(tels, mails).filter(function (i) { return i !== -1; }).map(function (i) { return (p.raw[i] || "").trim(); });
-    pendentes.forEach(function (r) { principais.forEach(function (k) { delete r.extras[k]; }); });
-    var mapa = [["RA", ix.ra], ["Aluno", ix.nome], ["Turma", ix.turma], ["Situação", ix.situacao], ["Responsável financeiro", ix.responsavel], ["CPF", ix.cpf]].map(function (m) {
-      return '<span class="tag">' + m[0] + " ← " + (m[1] !== -1 ? esc(p.raw[m[1]]) : '<i class="muted">não encontrada</i>') + "</span>";
-    }).concat(['<span class="tag">Telefone ← ' + (tels.length ? esc(tels.map(function (i) { return p.raw[i]; }).join(" + ")) : '<i class="muted">não encontrada</i>') + "</span>",
-      '<span class="tag">E-mail ← ' + (mails.length ? esc(mails.map(function (i) { return p.raw[i]; }).join(" + ")) : '<i class="muted">não encontrada</i>') + "</span>"]).join(" ");
-    var outras = (p.raw || []).filter(function (x) { return x && principais.indexOf(x.trim()) === -1; }).length;
+    function nomesCol(lista) { return lista.map(function (i) { return p.raw[i]; }).join(" + "); }
+    var origem = { ra: ix.ra !== -1 ? p.raw[ix.ra] : "", nome: p.raw[ix.nome], turma: ix.turma !== -1 ? p.raw[ix.turma] : "", responsavel: ix.responsavel !== -1 ? p.raw[ix.responsavel] : "", email: nomesCol(mails), telefone: nomesCol(tels) };
+    var mapa = BASE_CAMPOS_IMP.map(function (m) {
+      return '<span class="tag">' + m[1] + " ← " + (origem[m[0]] ? esc(origem[m[0]]) : '<i class="muted">não encontrada</i>') + "</span>";
+    }).join(" ");
+    var usadas = {};
+    [ix.ra, ix.nome, ix.turma, ix.responsavel].concat(mails, tels).forEach(function (i) { if (i !== -1) usadas[i] = 1; });
+    var ignoradas = (p.raw || []).filter(function (x, i) { return x && !usadas[i]; }).length;
     out.innerHTML = '<div class="base-mapa">' + mapa + "</div>" +
-      '<div class="import-preview"><table><thead><tr><th>RA</th><th>Aluno</th><th>Turma</th><th>Responsável</th><th>CPF</th><th>Telefone</th></tr></thead><tbody>' +
+      '<div class="import-preview"><table><thead><tr><th>Matrícula</th><th>Aluno</th><th>Turma</th><th>Resp. financeiro</th><th>E-mail</th><th>Telefone</th></tr></thead><tbody>' +
       pendentes.slice(0, 8).map(function (r) {
-        return "<tr><td>" + esc(r.ra) + "</td><td>" + esc(r.nome) + "</td><td>" + esc(r.turma) + "</td><td>" + esc(r.responsavel) + "</td><td>" + esc(r.cpf) + "</td><td>" + esc(r.telefone) + "</td></tr>";
+        return "<tr><td>" + esc(r.ra) + "</td><td>" + esc(r.nome) + "</td><td>" + esc(r.turma) + "</td><td>" + esc(r.responsavel) + "</td><td>" + esc(r.email) + "</td><td>" + esc(r.telefone) + "</td></tr>";
       }).join("") + "</tbody></table></div>" +
       '<div class="import-summary"><b>' + pendentes.length + " aluno(s)</b> no arquivo" + (pendentes.length > 8 ? " (mostrando os 8 primeiros)" : "") + "." +
-      (outras ? " As outras " + outras + " coluna(s) também ficam guardadas na ficha do aluno." : "") +
-      " Quem já está na base é atualizado (pelo RA); campos vazios no arquivo não apagam o que já existe. Ao terminar, os alunos do Painel, do Contraturno e do Serasa são completados com estes dados.</div>";
+      (ignoradas ? " <b>" + ignoradas + " coluna(s) não são importadas</b> (dados sensíveis como CPF, RG, endereço e nascimento ficam fora do sistema)." : "") +
+      " Quem já está na base é atualizado pela matrícula; campos vazios no arquivo não apagam o que já existe. Ao terminar, o Painel, o Contraturno e o Serasa são completados com estes dados.</div>";
     $("btnConfirmImport").disabled = !pendentes.length;
   }
   function importarBaseEmPartes(btn) {

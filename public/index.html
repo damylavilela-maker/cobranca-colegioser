@@ -214,7 +214,7 @@
     <!-- BASE DE DADOS -->
     <div id="v-base" class="view" hidden>
       <div class="page-head">
-        <div><h1>Base de dados</h1><div class="sub" id="baseSub">Cadastro completo dos alunos — completa automaticamente o Painel, o Contraturno e o Serasa</div></div>
+        <div><h1>Base de dados</h1><div class="sub" id="baseSub">Alunos e responsáveis financeiros — completa automaticamente o Painel, o Contraturno e o Serasa</div></div>
         <div class="actions">
           <button type="button" class="btn ghost small" id="btnBaseExportar">Exportar</button>
           <button type="button" class="btn primary small" id="btnBaseImportar">Importar relatório de alunos</button>
@@ -222,9 +222,8 @@
       </div>
       <div class="kpis k4" id="baseKpis"></div>
       <div class="filters">
-        <input type="search" id="bBusca" placeholder="Buscar aluno, RA, responsável, CPF, telefone ou e-mail…" aria-label="Buscar">
+        <input type="search" id="bBusca" placeholder="Buscar aluno, matrícula, responsável, telefone ou e-mail…" aria-label="Buscar">
         <select id="bTurma" aria-label="Turma"></select>
-        <select id="bSituacao" aria-label="Situação"></select>
         <select id="bAba" aria-label="Aparece nas abas">
           <option value="">Todas as abas</option>
           <option value="regular">No Painel</option>
@@ -236,7 +235,7 @@
       <div class="count" id="baseCount"></div>
       <div class="table-wrap">
         <table class="data">
-          <thead><tr><th>RA</th><th>Aluno</th><th>Turma</th><th>Responsável financeiro</th><th>CPF</th><th>Contato</th><th>Nas abas</th></tr></thead>
+          <thead><tr><th>Matrícula</th><th>Aluno</th><th>Turma</th><th>Responsável financeiro</th><th>Contato do responsável</th><th>Nas abas</th></tr></thead>
           <tbody id="baseTbody"></tbody>
         </table>
       </div>
