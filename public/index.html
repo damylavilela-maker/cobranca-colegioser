@@ -97,7 +97,7 @@
       <div class="page-head">
         <div><h1 id="painelTitulo">Painel de cobrança</h1><div class="sub" id="saudacao">—</div></div>
         <div class="actions">
-          <span class="sync" id="sync" title="Os dados são atualizados automaticamente a cada minuto"><i></i><span id="syncLbl">—</span></span>
+          <span class="sync" id="sync" title="Os dados são atualizados automaticamente a cada 30 segundos"><i></i><span class="sync-lbl" id="syncLbl">—</span></span>
           <button type="button" class="btn ghost small" id="btnArquivados">Arquivados</button>
           <button type="button" class="btn ghost small" id="btnModelo">Baixar modelo</button>
           <button type="button" class="btn ghost small" id="btnImportar">Importar planilha</button>
@@ -130,7 +130,8 @@
 
     <!-- EVOLUÇÃO -->
     <div id="v-evolucao" class="view" hidden>
-      <div class="page-head"><div><h1>Evolução</h1><div class="sub">Produção da equipe e recuperação ao longo do tempo</div></div></div>
+      <div class="page-head"><div><h1>Evolução</h1><div class="sub">Produção da equipe e recuperação ao longo do tempo — soma tudo o que é registrado no Painel e no Contraturno, por todas as atendentes</div></div>
+        <div class="actions"><span class="sync" title="Os dados são atualizados automaticamente a cada 30 segundos"><i></i><span class="sync-lbl">—</span></span><button type="button" class="btn ghost small" id="btnEvolAtualizar">Atualizar agora</button></div></div>
       <div class="cards">
         <div class="card"><h3>Atendimentos nos últimos 14 dias</h3><div class="days" id="days"></div><div class="day-lbls" id="dayLbls"></div></div>
         <div class="card"><h3>Últimos atendimentos registrados</h3><div class="feed" id="feed"></div></div>

@@ -182,6 +182,9 @@
     iniciarPolling();
   }
 
+  // Todas as telas (Painel, Contraturno, Evolução…) são calculadas a partir destes dados.
+  // Eles são recarregados a cada 30 s, ao voltar para o site e ao trocar de aba.
+  var ultimaCarga = 0;
   function carregar() {
     return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa"), api("GET", "/api/serasa/periodos")])
       .then(function (r) {
@@ -190,25 +193,31 @@
         atendentesAtivos = r[2].atendentes;
         parcelas = r[3].parcelas;
         periodos = r[4].periodos;
+        ultimaCarga = Date.now();
         marcarSync(true);
         renderTudo();
+        // ficha aberta: o histórico mostra na hora o que colegas registraram (o formulário não é mexido)
+        if (!$("mDetalhe").hidden && alunos[curId]) renderTimeline();
       })
       .catch(function (e) { marcarSync(false); if (e.status !== 401 && e.status !== 403) toast(e.message); });
   }
   function marcarSync(ok) {
-    $("sync").classList.toggle("off", !ok);
-    $("syncLbl").textContent = ok ? "Atualizado às " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "Sem conexão";
+    var txt = ok ? "Atualizado às " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "Sem conexão";
+    document.querySelectorAll(".sync").forEach(function (s) { s.classList.toggle("off", !ok); });
+    document.querySelectorAll(".sync-lbl").forEach(function (s) { s.textContent = txt; });
   }
   function iniciarPolling() {
     pararPolling();
     pollTimer = setInterval(function () {
       if (document.hidden || !eu) return;
-      if (!$("mDetalhe").hidden || !$("mImportar").hidden || !$("mSerasa").hidden || !$("mPeriodo").hidden || !$("mAlunoSer").hidden) return; // não atrapalha quem está preenchendo
+      // as janelas abertas não são redesenhadas (quem está preenchendo não perde nada); só a
+      // importação em andamento espera
+      if (!$("mImportar").hidden) return;
       carregar();
-    }, 60000);
+    }, 30000);
   }
   function pararPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
-  document.addEventListener("visibilitychange", function () { if (!document.hidden && eu && $("mDetalhe").hidden) carregar(); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && eu) carregar(); });
 
   function renderTudo() {
     if (view === "painel" || view === "contraturno") renderPainel();
@@ -247,6 +256,8 @@
     document.querySelectorAll(".view").forEach(function (x) { x.hidden = x.id !== "v-" + el; });
     document.querySelectorAll("#nav button").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-view") === v); });
     if (v === "usuarios") carregarUsuarios();
+    // ao trocar de aba, busca o que foi registrado por todos desde a última atualização
+    if (eu && Date.now() - ultimaCarga > 5000) carregar();
     if (v === "base" && !baseCarregada) carregarBaseDados();
     renderTudo();
     window.scrollTo(0, 0);
@@ -1104,6 +1115,7 @@
     barras("faixaVencList", rows, total, money);
   }
   ["anoEvolSel", "mensEvolAnoSel", "ctrlMesSel"].forEach(function (id) { $(id).addEventListener("change", renderEvolucao); });
+  $("btnEvolAtualizar").addEventListener("click", function () { var b = this; b.disabled = true; carregar().then(function () { b.disabled = false; toast("Evolução atualizada."); }); });
 
   // ---------------------------------------------------------------- Base de dados
   // Cadastro completo dos alunos (relatório total do sistema). O servidor usa esta base para
