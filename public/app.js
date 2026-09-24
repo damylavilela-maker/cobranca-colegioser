@@ -665,6 +665,10 @@
         valorAberto: ix.valor !== -1 ? parseMoneyBR(r[ix.valor]) : 0, vencimento: ix.venc !== -1 ? parseDateBR(r[ix.venc]) : ""
       };
     });
+    mostrarPreviaAlunos(brutos, "");
+  }
+  function mostrarPreviaAlunos(brutos, nota) {
+    var out = $("importResult");
     pendentes = agrupar(brutos);
     var temVenc = pendentes.some(function (r) { return r.vencimento; });
     out.innerHTML = '<div class="import-preview"><table><thead><tr><th>Aluno</th><th>Turma</th><th>Responsável</th><th>Valor</th><th>Parcelas</th>' + (temVenc ? "<th>Vencimento</th>" : "") + "</tr></thead><tbody>" +
@@ -674,8 +678,92 @@
       '<div class="import-summary">' + pendentes.length + " aluno(s) únicos encontrados" + (pendentes.length > 8 ? " (mostrando os 8 primeiros)" : "") +
       (brutos.length !== pendentes.length ? " — " + brutos.length + " linhas foram agrupadas por aluno (parcelas somadas)." : ".") +
       " Quem já existir " + (carteira === "contraturno" ? "no Contraturno" : "no Painel") + " (mesmo RA ou nome) será atualizado, não duplicado." +
-      (temVenc ? "" : " Não encontrei coluna de vencimento — a análise por faixa de atraso só vale para alunos com essa data.") + "</div>";
+      (temVenc ? "" : " Não encontrei coluna de vencimento — a análise por faixa de atraso só vale para alunos com essa data.") + (nota || "") + "</div>";
     $("btnConfirmImport").disabled = !pendentes.length;
+  }
+
+  // ---- relatório de inadimplência em PDF (exportado pelo sistema acadêmico)
+  // O PDF não tem células: lemos o texto com a posição de cada pedaço, montamos as linhas
+  // pela altura na página e usamos o cabeçalho (Código, Nome, Data vcto., Devido) para
+  // saber o que é cada número. Uma linha do relatório = uma parcela.
+  var PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+  function carregarPdfJs() {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    return new Promise(function (ok, falhou) {
+      var s = document.createElement("script"); s.src = PDFJS + "pdf.min.js";
+      s.onload = function () { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; ok(window.pdfjsLib); };
+      s.onerror = function () { falhou(new Error("Não consegui carregar o leitor de PDF. Confira a internet e tente de novo.")); };
+      document.head.appendChild(s);
+    });
+  }
+  function linhasDaPagina(pg) {
+    var vp = pg.getViewport({ scale: 1 });
+    return pg.getTextContent().then(function (tc) {
+      var itens = [];
+      tc.items.forEach(function (it) {
+        var s = (it.str || "").trim(); if (!s) return;
+        var t = window.pdfjsLib.Util.transform(vp.transform, it.transform); // posição como aparece na tela (vale para página deitada)
+        itens.push({ x: t[4], y: t[5], cx: t[4] + (it.width || 0) / 2, s: s });
+      });
+      itens.sort(function (a, b) { return a.y - b.y || a.x - b.x; });
+      var linhas = [];
+      itens.forEach(function (it) {
+        var l = linhas.length ? linhas[linhas.length - 1] : null;
+        if (l && Math.abs(l.y - it.y) <= 3) l.cels.push(it); else linhas.push({ y: it.y, cels: [it] });
+      });
+      linhas.forEach(function (l) { l.cels.sort(function (a, b) { return a.x - b.x; }); l.texto = l.cels.map(function (c) { return c.s; }).join(" "); });
+      return linhas;
+    });
+  }
+  function lerRelatorioPDF(buf) {
+    return carregarPdfJs().then(function (pdfjs) { return pdfjs.getDocument({ data: buf }).promise; }).then(function (pdf) {
+      var paginas = [];
+      for (var n = 1; n <= pdf.numPages; n++) paginas.push(pdf.getPage(n).then(linhasDaPagina));
+      return Promise.all(paginas);
+    }).then(function (paginas) {
+      var brutos = [], achouCabecalho = false;
+      paginas.forEach(function (linhas) {
+        var colDevido = null;
+        linhas.forEach(function (l) {
+          var cab = l.cels.filter(function (c) { return /^devido$/i.test(c.s); })[0];
+          if (cab && l.cels.some(function (c) { return /^c[oó]digo$/i.test(c.s); })) { colDevido = cab.cx; achouCabecalho = true; return; }
+          var m = l.texto.match(/^(\d{1,12})\s+(.+?)\s+(\d{2}\/\d{2}\/\d{4})\s+(.*)$/);
+          if (!m || !/[A-Za-zÀ-ú]/.test(m[2])) return;
+          var nums = l.cels.filter(function (c) { return /^-?[\d.]*\d[.,]\d{2}$/.test(c.s); });
+          if (!nums.length) return;
+          var dev = nums[nums.length - 1];
+          if (colDevido != null) nums.forEach(function (c) { if (Math.abs(c.cx - colDevido) < Math.abs(dev.cx - colDevido)) dev = c; });
+          brutos.push({ ra: m[1], nome: m[2].trim(), valorAberto: parseMoneyBR(dev.s), vencimento: parseDateBR(m[3]), turma: "", responsavel: "", telefone: "", email: "" });
+        });
+      });
+      return { brutos: brutos, cabecalho: achouCabecalho };
+    });
+  }
+  function processarPDF(buf) {
+    var out = $("importResult");
+    confirmouPeriodo = false;
+    if (modoImport === "serasa") {
+      out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Na aba Serasa a importação é pelo CSV da planilha. O PDF é aceito no Painel e no Contraturno.</div>';
+      $("btnConfirmImport").disabled = true; return;
+    }
+    out.innerHTML = '<div class="import-summary">Lendo o PDF…</div>';
+    $("btnConfirmImport").disabled = true;
+    lerRelatorioPDF(buf).then(function (r) {
+      if (!r.brutos.length) {
+        out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não encontrei parcelas neste PDF. ' +
+          (r.cabecalho ? "O cabeçalho do relatório foi reconhecido, mas nenhuma linha de aluno." : "Use o relatório de Inadimplência do sistema (colunas Código, Nome, Data vcto. … Devido).") +
+          " Se o PDF for uma imagem digitalizada, exporte de novo direto do sistema.</div>";
+        return;
+      }
+      mostrarPreviaAlunos(r.brutos, " Valor em aberto = coluna <b>Devido</b> do relatório (saldo + multa + juros). No PDF os nomes longos vêm cortados; para quem já está cadastrado, o nome completo é mantido.");
+    }).catch(function (x) {
+      out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não consegui ler este PDF: ' + esc(x.message || x) + "</div>";
+    });
+  }
+  function ehPDF(f) { return /\.pdf$/i.test(f.name || "") || f.type === "application/pdf"; }
+  function receberArquivoImport(f) {
+    if (!ehPDF(f)) return lerArquivo(f, processarCSV);
+    var r = new FileReader(); r.onload = function () { processarPDF(new Uint8Array(r.result)); }; r.readAsArrayBuffer(f);
   }
   function abrirImportacao(modo) {
     modoImport = modo; confirmouPeriodo = false;
@@ -685,7 +773,7 @@
     $("mImpT").textContent = modo === "serasa" ? "Importar planilha — Serasa" : carteira === "contraturno" ? "Importar planilha — Contraturno" : "Importar planilha";
     $("mImpSub").textContent = modo === "serasa"
       ? "Envie o CSV de uma aba da planilha (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
-      : "Envie um CSV exportado do relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento)";
+      : "Envie um CSV exportado do relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento) ou o PDF do relatório de Inadimplência do sistema.";
     $("impPeriodoWrap").hidden = modo !== "serasa";
     $("impPeriodo").disabled = false;
     $("impPeriodoHint").textContent = "Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.";
@@ -703,14 +791,15 @@
     if (!b.hidden && pendentes.length) b.textContent = confirmouPeriodo ? "Importar em " + nomeDoPeriodo(this.value) : "Importar parcelas";
   });
   function lerArquivo(f, cb) { var r = new FileReader(); r.onload = function () { cb(String(r.result)); }; r.readAsText(f, "utf-8"); }
-  function ligarDropzone(dz, input, cb) {
+  function ligarDropzone(dz, input, cb, porArquivo) {
+    var receber = porArquivo || function (f) { lerArquivo(f, cb); };
     dz.addEventListener("click", function (e) { if (e.target !== input) input.click(); });
     dz.addEventListener("dragover", function (e) { e.preventDefault(); dz.classList.add("drag"); });
     dz.addEventListener("dragleave", function () { dz.classList.remove("drag"); });
-    dz.addEventListener("drop", function (e) { e.preventDefault(); dz.classList.remove("drag"); var f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) lerArquivo(f, cb); });
-    input.addEventListener("change", function () { if (input.files && input.files[0]) lerArquivo(input.files[0], cb); });
+    dz.addEventListener("drop", function (e) { e.preventDefault(); dz.classList.remove("drag"); var f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) receber(f); });
+    input.addEventListener("change", function () { if (input.files && input.files[0]) receber(input.files[0]); });
   }
-  ligarDropzone($("dropzone"), $("fileInput"), processarCSV);
+  ligarDropzone($("dropzone"), $("fileInput"), processarCSV, receberArquivoImport);
   $("btnProcessPaste").addEventListener("click", function () { var t = $("pasteArea").value; if (!t.trim()) return toast("Cole o conteúdo do CSV antes de processar."); processarCSV(t); });
 
   $("btnConfirmImport").addEventListener("click", function () {
