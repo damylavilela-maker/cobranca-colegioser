@@ -170,6 +170,10 @@
         </div>
       </div>
       <div class="kpis k6" id="serKpis"></div>
+      <div class="card neg-mes">
+        <div class="card-head"><div><h3>Acompanhamento de negativações por mês</h3><div class="meta" id="negMesSub"></div></div><select id="negMesAno" aria-label="Ano da negativação"></select></div>
+        <div class="table-wrap"><table class="neg-tab" id="negMesTab"></table></div>
+      </div>
       <div class="filters">
         <span class="periodo-filtro">
           <select id="sPeriodo" aria-label="Período de vencimento"></select>
@@ -199,7 +203,7 @@
       <div class="count" id="serCount"></div>
       <div class="table-wrap">
         <table class="data">
-          <thead><tr><th style="width:36px"><input type="checkbox" id="serSelTodos" aria-label="Selecionar todas as parcelas visíveis"></th><th>Aluno / responsável</th><th>Vencimento</th><th>Valor</th><th>Tipo</th><th>Mentor</th><th>Serasa</th><th>Inclusão</th></tr></thead>
+          <thead><tr><th style="width:36px"><input type="checkbox" id="serSelTodos" aria-label="Selecionar todas as parcelas visíveis"></th><th>Aluno / responsável</th><th>Parcelas</th><th>Valor total</th><th>Mentor</th><th>Serasa</th><th>Inclusão</th></tr></thead>
           <tbody id="serTbody"></tbody>
         </table>
       </div>
@@ -328,6 +332,30 @@
       </div>
       <div id="importResult"></div>
       <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="btnConfirmImport" disabled>Importar alunos</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="mAlunoSer" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="asTitulo">
+    <div class="m-head"><div><h2 id="asTitulo">Aluno</h2><div class="sub" id="asSub"></div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div class="as-resumo" id="asResumo"></div>
+      <div class="table-wrap">
+        <table class="data as-tab">
+          <thead><tr><th>Vencimento</th><th>Valor</th><th>Tipo</th><th class="col-per">Período</th>
+            <th><label class="sim-todas"><input type="checkbox" id="asMentorTodas"> Mentor</label></th>
+            <th><label class="sim-todas"><input type="checkbox" id="asSerasaTodas"> Serasa</label></th>
+            <th>Inclusão</th><th></th></tr></thead>
+          <tbody id="asTbody"></tbody>
+        </table>
+      </div>
+      <div class="meta">Marque <b>Sim</b> quando a parcela já foi incluída no Mentor ou negativada no Serasa. A caixa no título marca todas as parcelas do aluno. Use ✎ para outras situações (pago, jurídico…).</div>
+      <div class="form-err" id="asErr" hidden></div>
+      <div class="m-foot spread">
+        <button type="button" class="btn ghost small" id="asNovaParcela">+ Parcela para este aluno</button>
+        <span class="row-end"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="asSalvar" disabled>Salvar alterações</button></span>
+      </div>
     </div>
   </div>
 </div>

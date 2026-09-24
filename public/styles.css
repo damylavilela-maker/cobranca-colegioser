@@ -304,3 +304,26 @@ table.ctrl .empty-ctrl{padding:20px;color:var(--muted)}
 .bulk .mover{display:inline-flex;gap:6px;align-items:center}
 .bulk .mover select{width:auto;padding:6px 10px;font-size:13.5px}
 .aviso-import{background:var(--warn-soft);color:var(--ink);border:1px solid var(--warn);border-radius:10px;padding:10px 12px;font-size:13.5px}
+
+/* Serasa: acompanhamento de negativações por mês */
+.card.neg-mes{margin-bottom:18px}
+.card.neg-mes .card-head h3{margin:0 0 2px}
+.neg-tab{width:100%;border-collapse:collapse;min-width:760px;font-size:13.5px}
+.neg-tab th,.neg-tab td{padding:7px 8px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
+.neg-tab thead th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.neg-tab tbody th{text-align:left;color:var(--muted);font-weight:700}
+.neg-tab tr.destaque td{font-size:16px;color:var(--brand)}
+.neg-tab .tot{background:var(--surface-2);font-weight:700}
+.neg-tab td.futuro{color:var(--muted);opacity:.5}
+.neg-tab tr.barras td,.neg-tab tr.barras th{height:54px;vertical-align:bottom;border-bottom:none;padding-bottom:0}
+.neg-bar{display:block;width:60%;max-width:34px;min-height:2px;margin:0 auto;border-radius:5px 5px 0 0;background:var(--brand-bright)}
+/* Serasa: lista por aluno e janela do aluno */
+.pills-col{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.as-resumo{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:14px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+table.data.as-tab{min-width:640px}
+table.data.as-tab td{padding:9px 10px;vertical-align:middle}
+table.data.as-tab th{padding:10px}
+label.sim,label.sim-todas{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:700;white-space:nowrap}
+label.sim input,label.sim-todas input{width:auto;cursor:pointer}
+label.sim-todas{text-transform:uppercase;letter-spacing:.06em;font-size:12px}
+table.data.as-tab td.mudou{background:var(--warn-soft)}

@@ -202,7 +202,7 @@
     pararPolling();
     pollTimer = setInterval(function () {
       if (document.hidden || !eu) return;
-      if (!$("mDetalhe").hidden || !$("mImportar").hidden || !$("mSerasa").hidden || !$("mPeriodo").hidden) return; // não atrapalha quem está preenchendo
+      if (!$("mDetalhe").hidden || !$("mImportar").hidden || !$("mSerasa").hidden || !$("mPeriodo").hidden || !$("mAlunoSer").hidden) return; // não atrapalha quem está preenchendo
       carregar();
     }, 60000);
   }
@@ -1047,19 +1047,20 @@
     if (periodoSel && periodoSel !== SEM_PERIODO && !periodoAtual()) periodoSel = "";
     renderPeriodos();
     var p = periodoSel ? parcelas.filter(function (x) { return doPeriodo(x, periodoSel); }) : parcelas;
+    var chaveDe = chavesAluno(p);
     // indicadores
-    var negVal = 0, neg = 0, pend = 0, pagas = 0, jur = 0, alunosSet = {};
+    var neg = 0, pend = 0, pagas = 0, jur = 0, alunosSet = {}, negAlunos = {};
     p.forEach(function (x) {
-      alunosSet[(x.ra || "").trim() || (x.nome || x.responsavel || "").toLowerCase()] = 1;
-      if (x.serasa === "ok") { neg++; negVal += Number(x.valor) || 0; }
+      alunosSet[chaveDe(x)] = 1;
+      if (x.serasa === "ok") { neg++; negAlunos[chaveDe(x)] = 1; }
       if (!x.serasa && ["", "ok", "negociado"].indexOf(x.mentor || "") !== -1) pend++;
       if (x.mentor === "pago" || x.serasa === "pago") pagas++;
       if (x.mentor === "juridico" || x.serasa === "juridico") jur++;
     });
     var tiles = [
-      { n: p.length, l: "Parcelas · " + Object.keys(alunosSet).length + " alunos" },
-      { n: money(negVal), l: "Valor negativado no Serasa", cls: "lead" },
-      { n: neg, l: "Parcelas negativadas", c: "success" },
+      { n: Object.keys(alunosSet).length, l: "Alunos", cls: "lead" },
+      { n: p.length, l: "Parcelas" },
+      { n: neg, l: "Parcelas negativadas · " + Object.keys(negAlunos).length + " alunos", c: "success" },
       { n: pend, l: "Aguardando inclusão", c: "warn" },
       { n: pagas, l: "Pagas", c: "info" },
       { n: jur, l: "No jurídico", c: "danger" }
@@ -1084,38 +1085,116 @@
       if (fa && (x.vencimento || "").slice(0, 4) !== fa) return false;
       return true;
     });
-    serFiltrada.sort(function (a, b) {
-      if (ord === "valor") return (Number(b.valor) || 0) - (Number(a.valor) || 0);
-      if (ord === "nome") return (a.nome || a.responsavel || "").localeCompare(b.nome || b.responsavel || "");
-      if (ord === "venc_asc") return (a.vencimento || "").localeCompare(b.vencimento || "");
-      return (b.vencimento || "").localeCompare(a.vencimento || "");
+    // Uma linha por aluno: todas as parcelas dele (dentro dos filtros) ficam juntas.
+    var grupos = {}, ordemG = [];
+    serFiltrada.forEach(function (x) {
+      var k = chaveDe(x), g = grupos[k];
+      if (!g) { g = grupos[k] = { chave: k, itens: [], total: 0, ultimo: "", primeiro: "" }; ordemG.push(g); }
+      g.itens.push(x); g.total += Number(x.valor) || 0;
+      if (x.vencimento && x.vencimento > g.ultimo) g.ultimo = x.vencimento;
+      if (x.vencimento && (!g.primeiro || x.vencimento < g.primeiro)) g.primeiro = x.vencimento;
     });
+    function nomeG(g) { var x = g.itens[0]; return x.nome || x.responsavel || ""; }
+    ordemG.sort(function (a, b) {
+      if (ord === "valor") return b.total - a.total;
+      if (ord === "nome") return nomeG(a).localeCompare(nomeG(b));
+      if (ord === "venc_asc") return a.primeiro.localeCompare(b.primeiro);
+      return b.ultimo.localeCompare(a.ultimo);
+    });
+    serGrupos = ordemG;
     var total = serFiltrada.reduce(function (s, x) { return s + (Number(x.valor) || 0); }, 0);
-    $("serCount").textContent = serFiltrada.length + (serFiltrada.length === 1 ? " parcela" : " parcelas") + " · " + money(total);
+    $("serCount").textContent = ordemG.length + (ordemG.length === 1 ? " aluno" : " alunos") + " · " +
+      serFiltrada.length + (serFiltrada.length === 1 ? " parcela" : " parcelas") + " · " + money(total);
 
     var tb = $("serTbody");
     if (!serFiltrada.length) {
       var msg = !parcelas.length ? ["Nenhuma parcela cadastrada ainda", "Importe a planilha da Serasa ou cadastre a primeira parcela."]
         : !p.length ? ["Nenhuma parcela neste período", "Importe o relatório desta aba em “Importar planilha”, escolhendo este período."]
         : ["Nenhuma parcela com estes filtros", "Ajuste a busca ou os filtros acima."];
-      tb.innerHTML = '<tr><td colspan="8" class="empty"><b>' + msg[0] + '</b><div class="muted">' + msg[1] + "</div></td></tr>";
+      tb.innerHTML = '<tr><td colspan="7" class="empty"><b>' + msg[0] + '</b><div class="muted">' + msg[1] + "</div></td></tr>";
     } else {
-      tb.innerHTML = serFiltrada.slice(0, serLimite).map(function (x) {
-        var quem = x.nome || x.responsavel || "—";
-        var meta = [x.ra ? "RA " + x.ra : "", x.nome && x.responsavel ? x.responsavel : ""].filter(Boolean).join(" · ");
-        return '<tr class="click" data-id="' + esc(x.id) + '"><td><input type="checkbox" class="ser-chk" data-id="' + esc(x.id) + '"' + (serSel[x.id] ? " checked" : "") + ' aria-label="Selecionar"></td>' +
-          '<td><div class="nome">' + esc(quem) + "</div>" + (meta ? '<div class="meta">' + esc(meta) + "</div>" : "") + "</td>" +
-          '<td class="tabular">' + br(x.vencimento) + "</td>" +
-          '<td class="tabular money">' + money(x.valor) + "</td>" +
-          "<td>" + (x.tipo ? esc(x.tipo) : '<span class="muted">—</span>') + "</td>" +
-          "<td>" + serPill(x.mentor) + "</td><td>" + serPill(x.serasa) + "</td>" +
-          "<td>" + (x.dataInclusao ? br(x.dataInclusao) : '<span class="muted">—</span>') + (x.respInclusao ? '<div class="meta">' + esc(x.respInclusao) + "</div>" : "") + "</td></tr>";
+      tb.innerHTML = ordemG.slice(0, serLimite).map(function (g) {
+        var x = g.itens[0], n = g.itens.length;
+        var ra = "", resp = "";
+        g.itens.forEach(function (y) { ra = ra || y.ra || ""; resp = resp || (y.nome && y.responsavel ? y.responsavel : ""); });
+        var meta = [ra ? "RA " + ra : "", resp].filter(Boolean).join(" · ");
+        var todas = g.itens.every(function (y) { return serSel[y.id]; });
+        var inc = "", quemInc = "";
+        g.itens.forEach(function (y) { if (y.dataInclusao && y.dataInclusao > inc) { inc = y.dataInclusao; quemInc = y.respInclusao || ""; } });
+        var vencs = g.primeiro === g.ultimo ? br(g.primeiro) : br(g.primeiro) + " a " + br(g.ultimo);
+        return '<tr class="click" data-grupo="' + esc(g.chave) + '"><td><input type="checkbox" class="ser-chk" data-grupo="' + esc(g.chave) + '"' + (todas ? " checked" : "") + ' aria-label="Selecionar as parcelas deste aluno"></td>' +
+          '<td><div class="nome">' + esc(x.nome || x.responsavel || "—") + "</div>" + (meta ? '<div class="meta">' + esc(meta) + "</div>" : "") + "</td>" +
+          '<td><b class="tabular">' + n + (n === 1 ? " parcela" : " parcelas") + '</b><div class="meta tabular">' + vencs + "</div></td>" +
+          '<td class="tabular money">' + money(g.total) + "</td>" +
+          "<td>" + resumoSt(g.itens, "mentor") + "</td><td>" + resumoSt(g.itens, "serasa") + "</td>" +
+          "<td>" + (inc ? br(inc) : '<span class="muted">—</span>') + (quemInc ? '<div class="meta">' + esc(quemInc) + "</div>" : "") + "</td></tr>";
       }).join("");
     }
-    $("serMais").hidden = serFiltrada.length <= serLimite;
-    $("serMais").textContent = "Mostrar mais (" + (serFiltrada.length - serLimite) + " restantes)";
+    $("serMais").hidden = ordemG.length <= serLimite;
+    $("serMais").textContent = "Mostrar mais (" + (ordemG.length - serLimite) + " alunos restantes)";
     atualizarSelecao();
+    renderNegMes(p, chaveDe);
+    if (!$("mAlunoSer").hidden) renderAlunoSer();
   }
+  var serGrupos = [];
+  // Identifica o aluno: RA; sem RA, o nome (usando o RA de outra parcela do mesmo nome, se houver).
+  function normNome(s) { return String(s || "").trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " "); }
+  function chavesAluno(lista) {
+    var raDoNome = {};
+    lista.forEach(function (x) { var ra = (x.ra || "").trim(), n = normNome(x.nome || x.responsavel); if (ra && n && !raDoNome[n]) raDoNome[n] = ra; });
+    return function (x) {
+      var ra = (x.ra || "").trim(), n = normNome(x.nome || x.responsavel);
+      return ra ? "ra:" + ra : raDoNome[n] ? "ra:" + raDoNome[n] : "n:" + n;
+    };
+  }
+  // Situação das parcelas do aluno: uma etiqueta por situação, com a quantidade quando varia.
+  function resumoSt(itens, campo) {
+    var n = {}, ordem = [];
+    itens.forEach(function (y) { var v = y[campo] || ""; if (!n[v]) { n[v] = 0; ordem.push(v); } n[v]++; });
+    if (ordem.length === 1) return serPill(ordem[0]) + (itens.length > 1 ? ' <span class="meta">todas</span>' : "");
+    return '<div class="pills-col">' + SER_ST.filter(function (s) { return n[s.v]; }).map(function (s) {
+      return '<span class="pill" style="color:var(--' + s.c + ');background:var(--' + s.c + '-soft)"><i></i>' + s.l + " " + n[s.v] + "</span>";
+    }).join("") + "</div>";
+  }
+
+  // ---- acompanhamento de negativações por mês (pela data de inclusão no Serasa)
+  var MESES_CURTOS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  // Conta como negativação a parcela incluída no Serasa, mesmo que depois tenha sido paga ou negociada.
+  function foiNegativada(x) { return x.serasa === "ok" || (!!x.dataInclusao && !!x.serasa && x.serasa !== "nao_negativar"); }
+  function renderNegMes(p, chaveDe) {
+    // em "todos os períodos" a mesma parcela pode estar em mais de uma aba: conta uma vez só
+    var vistas = {}, porMes = {}, semData = { n: 0, alunos: {}, valor: 0 }, anos = {};
+    p.forEach(function (x) {
+      if (!foiNegativada(x)) return;
+      var ch = chaveDe(x) + "|" + (x.vencimento || "") + "|" + (Number(x.valor) || 0).toFixed(2) + "|" + (x.tipo || "");
+      if (vistas[ch]) return; vistas[ch] = 1;
+      var m = (x.dataInclusao || "").slice(0, 7), alvo;
+      if (/^\d{4}-\d{2}$/.test(m)) { anos[m.slice(0, 4)] = 1; alvo = porMes[m] || (porMes[m] = { n: 0, alunos: {}, valor: 0 }); } else alvo = semData;
+      alvo.n++; alvo.alunos[chaveDe(x)] = 1; alvo.valor += Number(x.valor) || 0;
+    });
+    var listaAnos = Object.keys(anos).sort().reverse(), anoHoje = String(new Date().getFullYear());
+    if (listaAnos.indexOf(anoHoje) === -1) listaAnos.unshift(anoHoje);
+    var ano = prepararSelect($("negMesAno"), listaAnos.map(function (y) { return { v: y, l: y }; }), anos[anoHoje] ? anoHoje : listaAnos[0]);
+    var cols = MESES_CURTOS.map(function (nm, i) { var k = ano + "-" + pad2(i + 1); return { l: nm, d: porMes[k] || { n: 0, alunos: {}, valor: 0 }, futuro: k > mesAtual() }; });
+    var tot = { n: 0, alunos: {}, valor: 0 };
+    cols.forEach(function (c) { tot.n += c.d.n; tot.valor += c.d.valor; Object.keys(c.d.alunos).forEach(function (k) { tot.alunos[k] = 1; }); });
+    var mx = Math.max.apply(null, cols.map(function (c) { return c.d.n; })) || 1;
+    function nAl(d) { return Object.keys(d.alunos).length; }
+    function linha(rot, f, cls) {
+      return "<tr" + (cls ? ' class="' + cls + '"' : "") + "><th>" + rot + "</th>" + cols.map(function (c) {
+        return '<td class="tabular' + (c.futuro ? " futuro" : "") + '">' + (c.futuro && !c.d.n ? "" : f(c.d)) + "</td>";
+      }).join("") + '<td class="tabular tot">' + f(tot) + "</td></tr>";
+    }
+    $("negMesTab").innerHTML = "<thead><tr><th></th>" + cols.map(function (c) { return "<th>" + c.l + "</th>"; }).join("") + '<th class="tot">Total ' + ano + "</th></tr></thead><tbody>" +
+      "<tr class=\"barras\"><th></th>" + cols.map(function (c) { return '<td><span class="neg-bar" style="height:' + Math.round(c.d.n / mx * 100) + '%" title="' + c.d.n + ' negativações"></span></td>'; }).join("") + "<td></td></tr>" +
+      linha("Negativações", function (d) { return "<b>" + d.n + "</b>"; }, "destaque") +
+      linha("Alunos", nAl) +
+      linha("Valor", function (d) { return d.n ? money(d.valor).replace(/,\d{2}$/, "") : "—"; }) + "</tbody>";
+    var p1 = periodoAtual();
+    $("negMesSub").textContent = "Parcelas incluídas no Serasa em cada mês, pela data de inclusão" + (p1 ? " · período " + p1.nome : " · todos os períodos") +
+      (semData.n ? " · " + semData.n + " negativada(s) sem data de inclusão não entram na tabela" : "") + ".";
+  }
+  $("negMesAno").addEventListener("change", function () { renderSerasa(); });
   // Depois de importar, a lista atrás da janela passa a mostrar as parcelas do arquivo:
   // limpa os filtros e escolhe o período para onde elas foram (ou todos, se foram para vários).
   function mostrarImportadas(porPeriodo) {
@@ -1129,7 +1208,8 @@
   function atualizarSelecao() {
     var n = Object.keys(serSel).length;
     $("serBulk").hidden = !n;
-    $("serSelCount").textContent = n + (n === 1 ? " selecionada" : " selecionadas");
+    var nAl = serGrupos.filter(function (g) { return g.itens.some(function (y) { return serSel[y.id]; }); }).length;
+    $("serSelCount").textContent = (nAl ? nAl + (nAl === 1 ? " aluno · " : " alunos · ") : "") + n + (n === 1 ? " parcela selecionada" : " parcelas selecionadas");
     $("serSelTodos").checked = serFiltrada.length > 0 && serFiltrada.every(function (x) { return serSel[x.id]; });
     if (n) {
       var sel = $("serMoverPara"), atual = sel.value;
@@ -1139,10 +1219,15 @@
   }
   ["sBusca", "sMentor", "sSerasa", "sAno", "sOrdem"].forEach(function (id) { $(id).addEventListener("input", function () { serLimite = 300; renderSerasa(); }); });
   $("serMais").addEventListener("click", function () { serLimite += 300; renderSerasa(); });
+  function grupoPorChave(k) { for (var i = 0; i < serGrupos.length; i++) if (serGrupos[i].chave === k) return serGrupos[i]; return null; }
   $("serTbody").addEventListener("click", function (e) {
     var chk = e.target.closest(".ser-chk");
-    if (chk) { if (chk.checked) serSel[chk.getAttribute("data-id")] = 1; else delete serSel[chk.getAttribute("data-id")]; atualizarSelecao(); return; }
-    var tr = e.target.closest("tr[data-id]"); if (tr) abrirParcela(tr.getAttribute("data-id"));
+    if (chk) {
+      var g = grupoPorChave(chk.getAttribute("data-grupo"));
+      if (g) g.itens.forEach(function (y) { if (chk.checked) serSel[y.id] = 1; else delete serSel[y.id]; });
+      atualizarSelecao(); return;
+    }
+    var tr = e.target.closest("tr[data-grupo]"); if (tr) abrirAlunoSer(tr.getAttribute("data-grupo"));
   });
   $("serSelTodos").addEventListener("change", function () {
     // marca todas as parcelas do filtro atual (inclusive as que ainda não apareceram na tela)
@@ -1172,6 +1257,100 @@
         toast(d.atualizados + " parcela(s) atualizada(s)."); serSel = {}; return carregar();
       }).catch(function (x) { toast(x.message); }).then(function () { b.disabled = false; });
     });
+  });
+
+  // janela do aluno: todas as parcelas dele no período, com "Sim" no Mentor e no Serasa
+  var alunoSerChave = null, asEdits = {};
+  function parcelasDoAluno() {
+    var p = periodoSel ? parcelas.filter(function (x) { return doPeriodo(x, periodoSel); }) : parcelas;
+    var chaveDe = chavesAluno(p);
+    return p.filter(function (x) { return chaveDe(x) === alunoSerChave; })
+      .sort(function (a, b) { return (a.vencimento || "").localeCompare(b.vencimento || ""); });
+  }
+  function asValor(x, campo) { var e = asEdits[x.id]; return e && e[campo] !== undefined ? e[campo] : (x[campo] || ""); }
+  function asDefinir(x, campo, marcado) {
+    var orig = x[campo] || "", novo = marcado ? "ok" : (orig === "ok" ? "" : orig);
+    var e = asEdits[x.id] || (asEdits[x.id] = {});
+    if (novo === orig) delete e[campo]; else e[campo] = novo;
+    if (!Object.keys(e).length) delete asEdits[x.id];
+  }
+  function abrirAlunoSer(chave) {
+    alunoSerChave = chave; asEdits = {}; mostrarErro($("asErr"), "");
+    if (!parcelasDoAluno().length) return;
+    renderAlunoSer(); abrir("mAlunoSer");
+  }
+  function renderAlunoSer() {
+    var itens = parcelasDoAluno();
+    if (!itens.length) { $("mAlunoSer").hidden = true; return; }
+    var ra = "", nome = "", resp = "", cpf = "", total = 0;
+    itens.forEach(function (x) { ra = ra || x.ra || ""; nome = nome || x.nome || ""; resp = resp || x.responsavel || ""; cpf = cpf || x.cpf || ""; total += Number(x.valor) || 0; });
+    $("asTitulo").textContent = nome || resp || "Aluno";
+    $("asSub").textContent = [ra ? "RA " + ra : "", nome && resp ? "Responsável: " + resp : "", cpf ? "CPF " + cpf : ""].filter(Boolean).join(" · ");
+    var nMent = itens.filter(function (x) { return asValor(x, "mentor") === "ok"; }).length;
+    var nSer = itens.filter(function (x) { return asValor(x, "serasa") === "ok"; }).length;
+    var p1 = periodoAtual();
+    $("asResumo").innerHTML = "<span><b>" + itens.length + "</b> " + (itens.length === 1 ? "parcela" : "parcelas") + "</span><span><b>" + money(total) + "</b> no total</span>" +
+      "<span>Mentor: <b>" + nMent + "</b> de " + itens.length + "</span><span>Serasa: <b>" + nSer + "</b> de " + itens.length + "</span>" +
+      '<span class="muted">' + (p1 ? "Período " + esc(p1.nome) : periodoSel === SEM_PERIODO ? "Sem período" : "Todos os períodos") + "</span>";
+    var mostrarPer = !periodoSel;
+    document.querySelectorAll("#mAlunoSer .col-per").forEach(function (th) { th.hidden = !mostrarPer; });
+    function celula(x, campo) {
+      var v = asValor(x, campo), mudou = asEdits[x.id] && asEdits[x.id][campo] !== undefined;
+      return '<td class="' + (mudou ? "mudou" : "") + '"><label class="sim"><input type="checkbox" data-id="' + esc(x.id) + '" data-campo="' + campo + '"' + (v === "ok" ? " checked" : "") + "> Sim</label>" +
+        (v && v !== "ok" ? " " + serPill(v) : "") + "</td>";
+    }
+    $("asTbody").innerHTML = itens.map(function (x) {
+      return "<tr><td class=\"tabular\">" + br(x.vencimento) + '</td><td class="tabular money">' + money(x.valor) + "</td><td>" + (x.tipo ? esc(x.tipo) : '<span class="muted">—</span>') + "</td>" +
+        (mostrarPer ? "<td>" + (x.periodoId ? esc(nomeDoPeriodo(x.periodoId)) : '<span class="muted">Sem período</span>') + "</td>" : "") +
+        celula(x, "mentor") + celula(x, "serasa") +
+        "<td>" + (x.dataInclusao ? br(x.dataInclusao) : '<span class="muted">—</span>') + (x.respInclusao ? '<div class="meta">' + esc(x.respInclusao) + "</div>" : "") + "</td>" +
+        '<td><button type="button" class="btn ghost small icone" data-editar="' + esc(x.id) + '" title="Editar parcela" aria-label="Editar parcela">✎</button></td></tr>';
+    }).join("");
+    $("asMentorTodas").checked = nMent === itens.length;
+    $("asSerasaTodas").checked = nSer === itens.length;
+    var n = Object.keys(asEdits).length;
+    $("asSalvar").disabled = !n;
+    $("asSalvar").textContent = n ? "Salvar alterações (" + n + (n === 1 ? " parcela)" : " parcelas)") : "Salvar alterações";
+  }
+  $("asTbody").addEventListener("change", function (e) {
+    var c = e.target.closest("input[data-campo]"); if (!c) return;
+    var x = porIdParcela(c.getAttribute("data-id")); if (!x) return;
+    asDefinir(x, c.getAttribute("data-campo"), c.checked); renderAlunoSer();
+  });
+  $("asTbody").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-editar]"); if (b) abrirParcela(b.getAttribute("data-editar"));
+  });
+  [["asMentorTodas", "mentor"], ["asSerasaTodas", "serasa"]].forEach(function (par) {
+    $(par[0]).addEventListener("change", function () {
+      var on = this.checked;
+      parcelasDoAluno().forEach(function (x) { asDefinir(x, par[1], on); });
+      renderAlunoSer();
+    });
+  });
+  $("asSalvar").addEventListener("click", function () {
+    // agrupa as mudanças por campo e valor e grava em lote
+    var lotes = {};
+    Object.keys(asEdits).forEach(function (id) {
+      Object.keys(asEdits[id]).forEach(function (campo) {
+        var k = campo + "|" + asEdits[id][campo]; (lotes[k] || (lotes[k] = [])).push(id);
+      });
+    });
+    var b = this, n = Object.keys(asEdits).length; b.disabled = true;
+    var cadeia = Promise.resolve();
+    Object.keys(lotes).forEach(function (k) {
+      var partes = k.split("|"), corpo = { ids: lotes[k] }; corpo[partes[0]] = partes[1];
+      cadeia = cadeia.then(function () { return api("POST", "/api/serasa/lote", corpo); });
+    });
+    cadeia.then(function () {
+      asEdits = {}; toast(n + (n === 1 ? " parcela atualizada." : " parcelas atualizadas.")); return carregar();
+    }).catch(function (x) { mostrarErro($("asErr"), x.message); b.disabled = false; });
+  });
+  $("asNovaParcela").addEventListener("click", function () {
+    var itens = parcelasDoAluno(), v = {};
+    itens.forEach(function (x) { ["ra", "nome", "responsavel", "cpf"].forEach(function (f) { v[f] = v[f] || x[f] || ""; }); });
+    abrirParcela(null);
+    $("srRa").value = v.ra || ""; $("srNome").value = v.nome || ""; $("srResp").value = v.responsavel || ""; $("srCpf").value = v.cpf || "";
+    setTimeout(function () { $("srVenc").focus(); }, 40);
   });
 
   // cadastro / edição de parcela
@@ -1218,7 +1397,7 @@
     req.then(function (d) {
       var i = parcelas.findIndex(function (p) { return p.id === d.parcela.id; });
       if (i === -1) parcelas.unshift(d.parcela); else parcelas[i] = d.parcela;
-      fecharModais(); renderSerasa(); toast(parcelaAtual ? "Parcela atualizada." : "Parcela cadastrada.");
+      $("mSerasa").hidden = true; delete asEdits[d.parcela.id]; renderSerasa(); toast(parcelaAtual ? "Parcela atualizada." : "Parcela cadastrada.");
     }).catch(function (x) { mostrarErro(err, x.message); });
   });
   $("srExcluir").addEventListener("click", function () {
@@ -1226,7 +1405,7 @@
     if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
     api("DELETE", "/api/serasa/" + encodeURIComponent(parcelaAtual.id)).then(function () {
       parcelas = parcelas.filter(function (p) { return p.id !== parcelaAtual.id; }); delete serSel[parcelaAtual.id];
-      fecharModais(); renderSerasa(); toast("Parcela excluída.");
+      $("mSerasa").hidden = true; delete asEdits[parcelaAtual.id]; renderSerasa(); toast("Parcela excluída.");
     }).catch(function (x) { toast(x.message); });
   });
 
@@ -1280,13 +1459,22 @@
       var quem = (r.nome || r.responsavel).toUpperCase();
       return quem && quem !== "NOME" && quem !== "RESPONSÁVEL FINANCEIRO" && r.vencimento;
     });
-    out.innerHTML = '<div class="import-preview"><table><thead><tr><th>Aluno / responsável</th><th>Vencimento</th><th>Valor</th><th>Mentor</th><th>Serasa</th><th>Inclusão</th></tr></thead><tbody>' +
-      pendentes.slice(0, 8).map(function (r) {
-        return "<tr><td>" + esc(r.nome || r.responsavel) + (r.ra ? ' <span class="muted">RA ' + esc(r.ra) + "</span>" : "") + "</td><td>" + br(r.vencimento) + '</td><td class="tabular">' + money(r.valor) +
-          "</td><td>" + serSt(r.mentor).l + "</td><td>" + serSt(r.serasa).l + "</td><td>" + br(r.dataInclusao) + "</td></tr>";
+    // prévia com as parcelas unificadas por aluno
+    var chaveImp = chavesAluno(pendentes), gImp = {}, ordImp = [];
+    pendentes.forEach(function (r) {
+      var k = chaveImp(r), g = gImp[k];
+      if (!g) { g = gImp[k] = { r: r, n: 0, total: 0, vencs: [], ment: 0, ser: 0 }; ordImp.push(g); }
+      g.n++; g.total += Number(r.valor) || 0; g.vencs.push(r.vencimento);
+      if (r.mentor === "ok") g.ment++; if (r.serasa === "ok") g.ser++;
+    });
+    out.innerHTML = '<div class="import-preview"><table><thead><tr><th>Aluno / responsável</th><th>Parcelas</th><th>Valor total</th><th>Mentor OK</th><th>Serasa OK</th></tr></thead><tbody>' +
+      ordImp.slice(0, 8).map(function (g) {
+        var r = g.r, v = g.vencs.sort();
+        return "<tr><td>" + esc(r.nome || r.responsavel) + (r.ra ? ' <span class="muted">RA ' + esc(r.ra) + "</span>" : "") + "</td><td>" + g.n + ' <span class="muted">(' + br(v[0]) + (v.length > 1 ? " a " + br(v[v.length - 1]) : "") + ")</span></td>" +
+          '<td class="tabular">' + money(g.total) + "</td><td>" + g.ment + " de " + g.n + "</td><td>" + g.ser + " de " + g.n + "</td></tr>";
       }).join("") + "</tbody></table></div>" +
-      '<div class="import-summary">' + pendentes.length + " parcela(s) encontradas" + (pendentes.length > 8 ? " (mostrando as 8 primeiras)" : "") +
-      ". Parcelas que já existirem no período (mesmo aluno, vencimento, valor e tipo) só recebem os campos que vierem preenchidos — nada que a equipe já marcou é apagado.</div>";
+      '<div class="import-summary"><b>' + ordImp.length + " aluno(s)</b> com " + pendentes.length + " parcela(s) no arquivo" + (ordImp.length > 8 ? " (mostrando os 8 primeiros)" : "") +
+      ". Na lista, as parcelas de cada aluno ficam juntas em uma linha só. Parcelas que já existirem no período (mesmo aluno, vencimento, valor e tipo) só recebem os campos que vierem preenchidos — nada que a equipe já marcou é apagado.</div>";
     // Arquivo com a coluna PERÍODO: cada linha vai para o período (aba) indicado nela.
     var comPeriodo = {};
     pendentes.forEach(function (r) { if (r.periodo) comPeriodo[r.periodo] = (comPeriodo[r.periodo] || 0) + 1; });

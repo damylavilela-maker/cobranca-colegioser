@@ -64,6 +64,9 @@ senha provisória. No primeiro login a pessoa troca a senha.
 - **Serasa** — controle de negativação por parcela (RA, aluno, responsável, CPF, vencimento, valor, tipo,
   situação no Mentor e no Serasa, data e responsável pela inclusão). Importação de planilha, seleção de
   várias parcelas para marcar "Mentor OK", "Serasa: incluído hoje", "Pago" ou "Não negativar", e exportação.
+  A lista mostra uma linha por aluno com todas as parcelas dele; ao clicar abre a janela do aluno, com
+  "Sim" no Mentor e no Serasa por parcela (ou todas de uma vez). A tabela "Acompanhamento de negativações
+  por mês" conta as parcelas incluídas no Serasa em cada mês, pela data de inclusão.
   Cada **período** equivale a uma aba da planilha: cada parcela pertence a um período, e a mesma
   parcela pode estar em mais de um (como na planilha). Os 9 períodos da planilha já vêm criados; os
   próximos são criados em "+ Novo período" e entram no campo "Período" (o ✎ edita ou exclui).
