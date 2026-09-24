@@ -109,7 +109,24 @@ const SCHEMA = [
     criado_em TEXT NOT NULL,
     criado_por TEXT NOT NULL DEFAULT ''
   )`,
-  `CREATE TABLE IF NOT EXISTS meta (chave TEXT PRIMARY KEY, valor TEXT NOT NULL)`
+  `CREATE TABLE IF NOT EXISTS meta (chave TEXT PRIMARY KEY, valor TEXT NOT NULL)`,
+  // Base de dados: cadastro completo dos alunos (relatório total do sistema). É a fonte dos
+  // dados cadastrais que completam as outras abas quando um relatório vem cortado.
+  `CREATE TABLE IF NOT EXISTS base_alunos (
+    id TEXT PRIMARY KEY,
+    ra TEXT NOT NULL DEFAULT '',
+    nome TEXT NOT NULL DEFAULT '',
+    turma TEXT NOT NULL DEFAULT '',
+    responsavel TEXT NOT NULL DEFAULT '',
+    cpf TEXT NOT NULL DEFAULT '',
+    telefone TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    situacao TEXT NOT NULL DEFAULT '',
+    extras TEXT NOT NULL DEFAULT '{}',
+    atualizado_em TEXT NOT NULL,
+    atualizado_por TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_base_ra ON base_alunos(ra)`
 ];
 
 // Períodos que já existiam na planilha "SERASA - SER", criados uma única vez. O nome é o
@@ -271,6 +288,11 @@ async function rotear(req, env, url) {
     if (partes[1] === "lote" && m === "POST") return loteSerasa(req, env, eu);
     if (partes.length === 2 && m === "PATCH") return alterarSerasa(req, env, eu, partes[1]);
     if (partes.length === 2 && m === "DELETE") { exigirAdmin(eu); return excluirSerasa(env, partes[1]); }
+  }
+
+  if (partes[0] === "base") {
+    if (partes.length === 1 && m === "GET") return listarBase(env);
+    if (partes[1] === "importar" && m === "POST") return importarBase(req, env, eu);
   }
 
   if (partes[0] === "atendimentos") {
@@ -676,17 +698,23 @@ async function importarPlanilha(req, env) {
   const tocados = new Set();
   const agora = agoraISO();
   const stmts = [];
-  let criados = 0, atualizados = 0;
+  let criados = 0, atualizados = 0, daBase = 0;
+  const base = await carregarBase(env);
 
-  for (const r of linhas) {
+  for (const r0 of linhas) {
+    if (!texto(r0.nome, 150)) continue;
+    // completa com a Base de dados (nome inteiro, turma, responsável, contato)
+    const bx = acharNaBase(base, r0);
+    const r = bx ? completarComBase(r0, bx) : r0;
+    if (bx) daBase++;
     const nome = texto(r.nome, 150);
-    if (!nome) continue;
     const ra = texto(r.ra, 30);
-    const achado = (ra && porRa[ra.toLowerCase()]) || porNome[nome.toLowerCase()];
+    const achado = (ra && porRa[ra.toLowerCase()]) || porNome[nome.toLowerCase()] || porNome[texto(r0.nome, 150).toLowerCase()];
     if (achado) {
       if (tocados.has(achado.id)) continue;
       const sets = ["valor_aberto = ?", "parcelas_aberto = ?", "ultima_atualizacao_financeira = ?", "atualizado_em = ?"];
       const vals = [numero(r.valorAberto), parseInt(r.parcelas, 10) || 1, agora, agora];
+      if (bx && bx.nome && bx.nome !== achado.nome) { sets.push("nome = ?"); vals.push(bx.nome); }
       const opc = { turma: texto(r.turma, 80), responsavel: texto(r.responsavel, 150), telefone: texto(r.telefone, 60), email: texto(r.email, 150) };
       for (const k of Object.keys(opc)) if (opc[k]) { sets.push(`${k} = ?`); vals.push(opc[k]); }
       if (ra && !achado.ra) { sets.push("ra = ?"); vals.push(ra); }
@@ -712,7 +740,7 @@ async function importarPlanilha(req, env) {
   }
   await executarEmLotes(env, stmts);
   const foraDaPlanilha = ativosAntes.filter((a) => !tocados.has(a.id)).map((a) => ({ id: a.id, nome: a.nome, valorAberto: a.valor_aberto }));
-  return json({ criados, atualizados, foraDaPlanilha });
+  return json({ criados, atualizados, foraDaPlanilha, daBase });
 }
 
 // Marca alunos como regularizados e registra o valor em aberto deles como recuperado.
@@ -969,7 +997,9 @@ async function importarSerasa(req, env, eu) {
   const ocorrencia = {}, porPeriodo = {};
   // compara tudo menos as datas de criação/alteração e quem alterou
   const comparavel = (o, id) => { const v = serasaValores(o, id, null); return JSON.stringify(v.slice(0, 13).concat(v.slice(16))); };
-  for (const l of linhas) {
+  const base = await carregarBase(env);
+  for (const l0 of linhas) {
+    const l = completarSerasaComBase(l0, base);
     if ((!texto(l.nome) && !texto(l.responsavel)) || !dataISO(l.vencimento)) { incompletas++; continue; }
     const pid = texto(l.periodo) ? porNome[texto(l.periodo, 60).toLowerCase()] : padrao;
     const k = chaveSerasa(l), kp = pid + "#" + k;
@@ -1049,4 +1079,142 @@ async function salvarPeriodo(req, env, eu, id) {
       .bind(id, nome, inicio, fim, agoraISO(), eu.nome).run();
   }
   return json({ periodo: periodoSaida(await env.DB.prepare("SELECT * FROM serasa_periodos WHERE id = ?").bind(id).first()) });
+}
+
+// ---------------------------------------------------------------- Base de dados (cadastro dos alunos)
+
+const BASE_CAMPOS = ["ra", "nome", "turma", "responsavel", "cpf", "telefone", "email", "situacao"];
+
+function normNome(s) { return String(s || "").trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " "); }
+
+function baseSaida(r) {
+  let extras = {};
+  try { extras = JSON.parse(r.extras || "{}"); } catch (e) { extras = {}; }
+  return {
+    id: r.id, ra: r.ra, nome: r.nome, turma: r.turma, responsavel: r.responsavel, cpf: r.cpf,
+    telefone: r.telefone, email: r.email, situacao: r.situacao, extras, atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por
+  };
+}
+
+async function listarBase(env) {
+  const r = await env.DB.prepare("SELECT * FROM base_alunos ORDER BY nome").all();
+  const ult = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'base_ultima_importacao'").first();
+  let ultima = null;
+  try { ultima = ult ? JSON.parse(ult.valor) : null; } catch (e) { ultima = null; }
+  return json({ alunos: r.results.map(baseSaida), ultimaImportacao: ultima });
+}
+
+// Índices da base: por RA e, para quem vem sem RA, por nome (só quando o nome é único na base).
+async function carregarBase(env) {
+  const r = (await env.DB.prepare("SELECT * FROM base_alunos").all()).results;
+  const porRa = {}, porNome = {}, repetido = {};
+  r.forEach((b) => {
+    if (b.ra) porRa[b.ra.trim().toLowerCase()] = b;
+    const n = normNome(b.nome);
+    if (!n) return;
+    if (porNome[n] && porNome[n].ra !== b.ra) repetido[n] = true;
+    porNome[n] = b;
+  });
+  Object.keys(repetido).forEach((n) => { delete porNome[n]; });
+  return { porRa, porNome, vazia: !r.length };
+}
+
+function acharNaBase(base, o) {
+  if (!base || base.vazia) return null;
+  const ra = texto(o.ra, 30).toLowerCase();
+  if (ra) return base.porRa[ra] || null;
+  return base.porNome[normNome(o.nome)] || null;
+}
+
+// Aluno do Painel/Contraturno: os dados cadastrais da base valem mais que os do relatório
+// (o relatório pode vir com nome cortado ou sem contato). O financeiro continua do relatório.
+function completarComBase(r, bx) {
+  const o = { ...r };
+  o.ra = texto(r.ra, 30) || bx.ra;
+  if (bx.nome) o.nome = bx.nome;
+  ["turma", "responsavel", "telefone", "email"].forEach((c) => { if (bx[c]) o[c] = bx[c]; });
+  return o;
+}
+
+// Parcela da Serasa: só completa o que está vazio (RA e nome identificam a parcela e não mudam).
+function completarSerasaComBase(l, base) {
+  const bx = acharNaBase(base, l);
+  if (!bx) return l;
+  const o = { ...l };
+  if (!texto(o.responsavel) && texto(o.nome)) o.responsavel = bx.responsavel;
+  if (!texto(o.cpf)) o.cpf = bx.cpf;
+  return o;
+}
+
+async function importarBase(req, env, eu) {
+  const b = await corpo(req);
+  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 20000) : [];
+  if (!linhas.length) throw new HttpError(400, "Nenhuma linha para importar.");
+  const atuais = (await env.DB.prepare("SELECT * FROM base_alunos").all()).results;
+  const porRa = {}, porNome = {};
+  atuais.forEach((a) => { if (a.ra) porRa[a.ra.trim().toLowerCase()] = a; else porNome[normNome(a.nome)] = a; });
+  const agora = agoraISO(), stmts = [], vistos = new Set();
+  let criados = 0, atualizados = 0, iguais = 0, incompletas = 0;
+  const cols = ["id", ...BASE_CAMPOS, "extras", "atualizado_em", "atualizado_por"];
+  for (const l of linhas) {
+    const o = {
+      ra: texto(l.ra, 30), nome: texto(l.nome, 150), turma: texto(l.turma, 80), responsavel: texto(l.responsavel, 150),
+      cpf: texto(l.cpf, 20), telefone: texto(l.telefone, 80), email: texto(l.email, 150), situacao: texto(l.situacao, 60)
+    };
+    if (!o.nome) { incompletas++; continue; }
+    const extras = {};
+    if (l.extras && typeof l.extras === "object") Object.keys(l.extras).slice(0, 80).forEach((k) => { const v = texto(l.extras[k], 500); if (v) extras[texto(k, 80)] = v; });
+    const chave = o.ra ? "ra:" + o.ra.toLowerCase() : "nm:" + normNome(o.nome);
+    if (vistos.has(chave)) continue; // mesma pessoa repetida no arquivo: vale a 1ª linha
+    vistos.add(chave);
+    const achado = o.ra ? (porRa[o.ra.toLowerCase()] || porNome[normNome(o.nome)]) : porNome[normNome(o.nome)];
+    if (achado) {
+      // campo vazio no arquivo não apaga o que já estava na base
+      const junto = {};
+      BASE_CAMPOS.forEach((c) => { junto[c] = o[c] || achado[c] || ""; });
+      let antigos = {};
+      try { antigos = JSON.parse(achado.extras || "{}"); } catch (e) { antigos = {}; }
+      const ex = JSON.stringify({ ...antigos, ...extras });
+      if (BASE_CAMPOS.every((c) => junto[c] === achado[c]) && ex === (achado.extras || "{}")) { iguais++; continue; }
+      stmts.push(env.DB.prepare(insertSQL("base_alunos", cols)).bind(achado.id, ...BASE_CAMPOS.map((c) => junto[c]), ex, agora, eu.nome));
+      atualizados++;
+    } else {
+      stmts.push(env.DB.prepare(insertSQL("base_alunos", cols)).bind(novoId(), ...BASE_CAMPOS.map((c) => o[c]), JSON.stringify(extras), agora, eu.nome));
+      criados++;
+    }
+  }
+  await executarEmLotes(env, stmts);
+  // o arquivo pode vir em partes; a sincronização com as outras abas roda na última
+  if (b.ultimaParte === false) return json({ criados, atualizados, iguais, incompletas, sincronizados: null });
+  const sinc = await sincronizarComBase(env);
+  await env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('base_ultima_importacao', ?)")
+    .bind(JSON.stringify({ em: agora, por: eu.nome, linhas: linhas.length })).run();
+  return json({ criados, atualizados, iguais, incompletas, sincronizados: sinc });
+}
+
+// Depois de importar a base, atualiza os cadastros que já estão nas outras abas.
+async function sincronizarComBase(env) {
+  const base = await carregarBase(env);
+  if (base.vazia) return { alunos: 0, serasa: 0 };
+  const agora = agoraISO(), stmts = [];
+  let nAlunos = 0, nSerasa = 0;
+  const alunos = (await env.DB.prepare("SELECT * FROM alunos").all()).results;
+  for (const a of alunos) {
+    const bx = acharNaBase(base, a); if (!bx) continue;
+    const novo = completarComBase(a, bx);
+    const campos = ["ra", "nome", "turma", "responsavel", "telefone", "email"].filter((c) => texto(novo[c]) && novo[c] !== a[c]);
+    if (!campos.length) continue;
+    stmts.push(env.DB.prepare(`UPDATE alunos SET ${campos.map((c) => c + " = ?").join(", ")}, atualizado_em = ? WHERE id = ?`).bind(...campos.map((c) => novo[c]), agora, a.id));
+    nAlunos++;
+  }
+  const parcelas = (await env.DB.prepare("SELECT id, ra, nome, responsavel, cpf FROM serasa").all()).results;
+  for (const p of parcelas) {
+    const novo = completarSerasaComBase(p, base);
+    const campos = ["responsavel", "cpf"].filter((c) => texto(novo[c]) && novo[c] !== p[c]);
+    if (!campos.length) continue;
+    stmts.push(env.DB.prepare(`UPDATE serasa SET ${campos.map((c) => c + " = ?").join(", ")} WHERE id = ?`).bind(...campos.map((c) => novo[c]), p.id));
+    nSerasa++;
+  }
+  await executarEmLotes(env, stmts);
+  return { alunos: nAlunos, serasa: nSerasa };
 }

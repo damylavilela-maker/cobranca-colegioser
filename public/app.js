@@ -178,6 +178,7 @@
     if (view === "usuarios" && eu.perfil !== "admin") view = "painel";
     ir(view);
     carregar();
+    carregarBaseDados();
     iniciarPolling();
   }
 
@@ -213,6 +214,7 @@
     if (view === "painel" || view === "contraturno") renderPainel();
     if (view === "evolucao") renderEvolucao();
     if (view === "serasa") renderSerasa();
+    if (view === "base") renderBase();
     if (view === "usuarios") renderUsuarios();
     atualizarBadge();
   }
@@ -245,6 +247,7 @@
     document.querySelectorAll(".view").forEach(function (x) { x.hidden = x.id !== "v-" + el; });
     document.querySelectorAll("#nav button").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-view") === v); });
     if (v === "usuarios") carregarUsuarios();
+    if (v === "base" && !baseCarregada) carregarBaseDados();
     renderTudo();
     window.scrollTo(0, 0);
   }
@@ -556,7 +559,7 @@
 
   var pendentes = [];
   function normHeader(h) { return String(h || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim(); }
-  var HEADER_TOKENS = ["ra", "codigo", "matricula", "nome", "nome do aluno", "nome completo", "aluno", "turma", "responsavel", "responsavel financeiro", "responsavel(a)", "telefone", "tel", "celular", "e-mail", "email", "valor", "valor em aberto", "valor devido", "total devido", "vencimento", "data de vencimento", "dt vencimento", "venc", "valor (r$)", "mentor", "serasa", "cpf", "tipo", "data inclusao", "resp. inclusao", "realizado", "periodo"];
+  var HEADER_TOKENS = ["ra", "codigo", "matricula", "nome", "nome do aluno", "nome completo", "aluno", "turma", "responsavel", "responsavel financeiro", "responsavel(a)", "telefone", "tel", "celular", "e-mail", "email", "valor", "valor em aberto", "valor devido", "total devido", "vencimento", "data de vencimento", "dt vencimento", "venc", "valor (r$)", "mentor", "serasa", "cpf", "tipo", "data inclusao", "resp. inclusao", "realizado", "periodo", "situacao", "serie", "data de nascimento", "endereco", "cpf do responsavel", "celular do responsavel"];
   // Lê o CSV caractere a caractere: uma quebra de linha só termina a linha fora de aspas
   // (o Excel exporta células com várias linhas entre aspas).
   function tokenizeCSV(text, delim) {
@@ -639,6 +642,7 @@
     var p = parseCSV(text), h = p.headers;
     confirmouPeriodo = false;
     if (modoImport === "serasa") return processarCSVSerasa(p);
+    if (modoImport === "base") return processarCSVBase(p);
     var ix = {
       ra: colIndex(h, ["ra", "codigo", "matricula"]), nome: colIndex(h, ["nome", "nome do aluno", "nome completo", "aluno"]),
       turma: colIndex(h, ["turma"]), resp: colIndex(h, ["responsavel financeiro", "responsavel", "responsavel(a)"]),
@@ -744,6 +748,10 @@
     confirmouPeriodo = false;
     if (modoImport === "serasa") {
       out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Na aba Serasa a importação é pelo CSV da planilha. O PDF é aceito no Painel e no Contraturno.</div>';
+    if (modoImport === "base") {
+      out.innerHTML = '<div class="import-summary" style="color:var(--danger)">A Base de dados importa o relatório de alunos em CSV. No sistema, exporte o relatório em Excel e salve como CSV (Arquivo → Salvar como → CSV UTF-8).</div>';
+      $("btnConfirmImport").disabled = true; return;
+    }
       $("btnConfirmImport").disabled = true; return;
     }
     out.innerHTML = '<div class="import-summary">Lendo o PDF…</div>';
@@ -769,9 +777,11 @@
     modoImport = modo; confirmouPeriodo = false;
     pendentes = []; $("importResult").innerHTML = ""; $("pasteArea").value = ""; $("fileInput").value = "";
     var b = $("btnConfirmImport");
-    b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : "Importar alunos";
-    $("mImpT").textContent = modo === "serasa" ? "Importar planilha — Serasa" : carteira === "contraturno" ? "Importar planilha — Contraturno" : "Importar planilha";
-    $("mImpSub").textContent = modo === "serasa"
+    b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : modo === "base" ? "Importar para a base" : "Importar alunos";
+    $("mImpT").textContent = modo === "serasa" ? "Importar planilha — Serasa" : modo === "base" ? "Importar relatório de alunos — Base de dados" : carteira === "contraturno" ? "Importar planilha — Contraturno" : "Importar planilha";
+    $("mImpSub").textContent = modo === "base"
+      ? "Envie o CSV do relatório total de alunos do sistema, com os dados cadastrais (RA, Aluno, Turma, Responsável financeiro, CPF, Telefone, E-mail…). Todas as colunas do arquivo ficam guardadas."
+      : modo === "serasa"
       ? "Envie o CSV de uma aba da planilha (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
       : "Envie um CSV exportado do relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento) ou o PDF do relatório de Inadimplência do sistema.";
     $("impPeriodoWrap").hidden = modo !== "serasa";
@@ -805,6 +815,7 @@
   $("btnConfirmImport").addEventListener("click", function () {
     if (!pendentes.length) return;
     var btn = this; btn.disabled = true; btn.textContent = "Importando…";
+    if (modoImport === "base") return importarBaseEmPartes(btn).catch(function (x) { btn.disabled = false; btn.textContent = "Importar para a base"; toast(x.message); });
     if (modoImport === "serasa") {
       var destino = $("impPeriodo").value;
       var temColunaPeriodo = pendentes.some(function (l) { return l.periodo; });
@@ -864,6 +875,7 @@
   });
   function mostrarConciliacao(d) {
     var html = '<div class="import-summary" style="color:var(--ink)"><b>' + d.criados + "</b> aluno(s) novo(s) cadastrado(s) · <b>" + d.atualizados + "</b> já existiam e foram atualizados.</div>";
+    if (d.daBase) html += '<div class="import-summary">' + d.daBase + " aluno(s) completados com os dados da <b>Base de dados</b> (nome completo, turma, responsável e contato).</div>";
     var fora = d.foraDaPlanilha || [];
     if (fora.length) {
       html += '<div class="sec" style="border:none;padding-top:10px">Não apareceram neste relatório (' + fora.length + ")</div>" +
@@ -1016,6 +1028,192 @@
     barras("faixaVencList", rows, total, money);
   }
   ["anoEvolSel", "mensEvolAnoSel", "ctrlMesSel"].forEach(function (id) { $(id).addEventListener("change", renderEvolucao); });
+
+  // ---------------------------------------------------------------- Base de dados
+  // Cadastro completo dos alunos (relatório total do sistema). O servidor usa esta base para
+  // completar os dados do Painel, do Contraturno e do Serasa a cada importação.
+  var baseAlunos = [], baseUltima = null, baseCarregada = false, baseLimite = 300, baseFiltrada = [];
+  function carregarBaseDados() {
+    return api("GET", "/api/base").then(function (d) {
+      baseAlunos = d.alunos; baseUltima = d.ultimaImportacao; baseCarregada = true;
+      if (view === "base") renderBase();
+    }).catch(function (x) { if (x.status !== 401 && x.status !== 403) toast(x.message); });
+  }
+  // Em quais abas o aluno aparece (pelo RA; sem RA, pelo nome)
+  function indiceAbas() {
+    var ix = { ra: {}, nome: {} };
+    function marca(ra, nome, aba) {
+      if (ra) (ix.ra[String(ra).trim().toLowerCase()] = ix.ra[String(ra).trim().toLowerCase()] || {})[aba] = 1;
+      var n = normNome(nome); if (n) (ix.nome[n] = ix.nome[n] || {})[aba] = 1;
+    }
+    Object.keys(alunos).forEach(function (id) { var a = alunos[id]; if (!a.arquivado) marca(a.ra, a.nome, carteiraDe(a)); });
+    parcelas.forEach(function (x) { marca(x.ra, x.nome, "serasa"); });
+    return function (b) {
+      var out = {}, a = b.ra ? ix.ra[b.ra.trim().toLowerCase()] : null, n = ix.nome[normNome(b.nome)];
+      [a, n].forEach(function (o) { if (o) Object.keys(o).forEach(function (k) { out[k] = 1; }); });
+      return out;
+    };
+  }
+  var ABAS_NOME = { regular: "Painel", contraturno: "Contraturno", serasa: "Serasa" };
+  function tagsAbas(abas) {
+    var t = ["regular", "contraturno", "serasa"].filter(function (k) { return abas[k]; });
+    return t.length ? t.map(function (k) { return '<span class="tag">' + ABAS_NOME[k] + "</span>"; }).join(" ") : '<span class="muted">—</span>';
+  }
+  function renderBase() {
+    if (!baseCarregada) { $("baseTbody").innerHTML = '<tr><td colspan="7" class="empty">Carregando…</td></tr>'; return; }
+    var b = baseAlunos, n = b.length;
+    function conta(f) { return b.filter(function (x) { return x[f]; }).length; }
+    $("baseKpis").innerHTML = [
+      { n: n, l: "Alunos na base", cls: "lead" },
+      { n: conta("responsavel"), l: "Com responsável financeiro" },
+      { n: conta("telefone"), l: "Com telefone" },
+      { n: conta("email"), l: "Com e-mail" }
+    ].map(function (t) { return '<div class="kpi ' + (t.cls || "") + '"><div class="num tabular">' + t.n + '</div><div class="lbl">' + t.l + "</div></div>"; }).join("");
+    $("baseSub").textContent = baseUltima
+      ? "Última importação em " + br(baseUltima.em) + " às " + new Date(baseUltima.em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + " por " + baseUltima.por + " · completa automaticamente o Painel, o Contraturno e o Serasa"
+      : "Cadastro completo dos alunos — completa automaticamente o Painel, o Contraturno e o Serasa";
+    var turmas = {}, sits = {};
+    b.forEach(function (x) { if (x.turma) turmas[x.turma] = 1; if (x.situacao) sits[x.situacao] = 1; });
+    prepararSelect($("bTurma"), [{ v: "", l: "Todas as turmas" }].concat(Object.keys(turmas).sort().map(function (t) { return { v: esc(t), l: esc(t) }; })), "");
+    prepararSelect($("bSituacao"), [{ v: "", l: "Todas as situações" }].concat(Object.keys(sits).sort().map(function (t) { return { v: esc(t), l: esc(t) }; })), "");
+    var q = $("bBusca").value.trim().toLowerCase(), qDig = q.replace(/\D/g, ""), ft = $("bTurma").value, fs = $("bSituacao").value, fa = $("bAba").value;
+    var abasDe = indiceAbas();
+    baseFiltrada = b.filter(function (x) {
+      if (ft && x.turma !== ft) return false;
+      if (fs && x.situacao !== fs) return false;
+      if (fa) { var ab = abasDe(x); if (fa === "nenhuma" ? Object.keys(ab).length : !ab[fa]) return false; }
+      if (q) {
+        var hay = [x.ra, x.nome, x.responsavel, x.email, x.turma].join(" ").toLowerCase();
+        var digOk = qDig.length >= 4 && ((x.cpf || "").replace(/\D/g, "").indexOf(qDig) !== -1 || (x.telefone || "").replace(/\D/g, "").indexOf(qDig) !== -1);
+        if (hay.indexOf(q) === -1 && !digOk) return false;
+      }
+      return true;
+    });
+    $("baseCount").textContent = baseFiltrada.length + (baseFiltrada.length === 1 ? " aluno" : " alunos");
+    var tb = $("baseTbody");
+    if (!baseFiltrada.length) {
+      tb.innerHTML = '<tr><td colspan="7" class="empty"><b>' + (n ? "Nenhum aluno com estes filtros" : "A base ainda está vazia") + '</b><div class="muted">' +
+        (n ? "Ajuste a busca ou os filtros acima." : "Importe o relatório total de alunos do sistema em “Importar relatório de alunos”.") + "</div></td></tr>";
+    } else {
+      tb.innerHTML = baseFiltrada.slice(0, baseLimite).map(function (x) {
+        return '<tr class="click" data-id="' + esc(x.id) + '"><td class="tabular">' + (esc(x.ra) || '<span class="muted">—</span>') + '</td><td><div class="nome">' + esc(x.nome) + "</div>" +
+          (x.situacao ? '<div class="meta">' + esc(x.situacao) + "</div>" : "") + "</td><td>" + (esc(x.turma) || '<span class="muted">—</span>') + "</td>" +
+          "<td>" + (esc(x.responsavel) || '<span class="muted">—</span>') + '</td><td class="tabular">' + (esc(x.cpf) || '<span class="muted">—</span>') + "</td>" +
+          "<td>" + (x.telefone ? '<div class="tabular">' + esc(x.telefone) + "</div>" : "") + (x.email ? '<div class="meta">' + esc(x.email) + "</div>" : "") + (!x.telefone && !x.email ? '<span class="muted">—</span>' : "") + "</td>" +
+          "<td>" + tagsAbas(abasDe(x)) + "</td></tr>";
+      }).join("");
+    }
+    $("baseMais").hidden = baseFiltrada.length <= baseLimite;
+    $("baseMais").textContent = "Mostrar mais (" + (baseFiltrada.length - baseLimite) + " restantes)";
+  }
+  ["bBusca", "bTurma", "bSituacao", "bAba"].forEach(function (id) { $(id).addEventListener("input", function () { baseLimite = 300; renderBase(); }); });
+  $("baseMais").addEventListener("click", function () { baseLimite += 300; renderBase(); });
+  $("baseTbody").addEventListener("click", function (e) {
+    var tr = e.target.closest("tr[data-id]"); if (!tr) return;
+    var x = null; baseAlunos.forEach(function (y) { if (y.id === tr.getAttribute("data-id")) x = y; });
+    if (!x) return;
+    $("bsTitulo").textContent = x.nome;
+    $("bsSub").textContent = [x.ra ? "RA " + x.ra : "", x.turma, x.situacao].filter(Boolean).join(" · ");
+    var abas = indiceAbas()(x);
+    $("bsAbas").innerHTML = "Aparece em: " + tagsAbas(abas);
+    var campos = [["RA", x.ra], ["Aluno", x.nome], ["Turma", x.turma], ["Situação", x.situacao], ["Responsável financeiro", x.responsavel], ["CPF", x.cpf], ["Telefone", x.telefone], ["E-mail", x.email]];
+    Object.keys(x.extras || {}).forEach(function (k) { campos.push([k, x.extras[k]]); });
+    $("bsDados").innerHTML = campos.filter(function (c) { return c[1]; }).map(function (c) { return "<dt>" + esc(c[0]) + "</dt><dd>" + esc(c[1]) + "</dd>"; }).join("");
+    $("bsAtualizado").textContent = x.atualizadoEm ? "Atualizado em " + br(x.atualizadoEm) + (x.atualizadoPor ? " por " + x.atualizadoPor : "") + " (importação do relatório)" : "";
+    abrir("mBase");
+  });
+  $("btnBaseImportar").addEventListener("click", function () { abrirImportacao("base"); });
+  $("btnBaseExportar").addEventListener("click", function () {
+    var chaves = {}, lista = baseFiltrada.length ? baseFiltrada : baseAlunos;
+    lista.forEach(function (x) { Object.keys(x.extras || {}).forEach(function (k) { chaves[k] = 1; }); });
+    var ex = Object.keys(chaves);
+    var cab = ["RA", "ALUNO", "TURMA", "SITUAÇÃO", "RESPONSÁVEL FINANCEIRO", "CPF", "TELEFONE", "E-MAIL"].concat(ex);
+    var linhas = lista.map(function (x) {
+      return [x.ra, x.nome, x.turma, x.situacao, x.responsavel, x.cpf, x.telefone, x.email].concat(ex.map(function (k) { return (x.extras || {})[k] || ""; })).map(csvCampo).join(";");
+    });
+    baixar("base_alunos_" + hoje() + ".csv", cab.map(csvCampo).join(";") + "\n" + linhas.join("\n"));
+    toast("Base exportada (" + linhas.length + " alunos).");
+  });
+
+  // Colunas do relatório de alunos. Escolhe a coluna pelo nome do cabeçalho: primeiro o nome
+  // exato, depois "contém", evitando colunas de outro assunto (ex.: "CPF do aluno" para o responsável).
+  function colunaBase(h, exatos, contem, evitar) {
+    evitar = evitar || [];
+    function ok(c) { return c && !evitar.some(function (e) { return c.indexOf(e) !== -1; }); }
+    for (var i = 0; i < exatos.length; i++) { var j = h.indexOf(exatos[i]); if (j !== -1) return j; }
+    for (var m = 0; m < contem.length; m++) for (var k = 0; k < h.length; k++) if (ok(h[k]) && h[k].indexOf(contem[m]) !== -1) return k;
+    return -1;
+  }
+  function colunasBase(h, contem, evitar) {
+    var out = [];
+    h.forEach(function (c, i) { if (c && contem.some(function (t) { return c.indexOf(t) !== -1; }) && !(evitar || []).some(function (e) { return c.indexOf(e) !== -1; })) out.push(i); });
+    return out;
+  }
+  function processarCSVBase(p) {
+    var h = p.headers, out = $("importResult");
+    var ix = {
+      ra: colunaBase(h, ["ra", "codigo", "cod", "cod.", "matricula", "codigo do aluno", "cod. aluno", "registro academico"], ["matricula", "codigo do aluno", "cod. aluno", "codigo"], ["resp", "turma", "curso"]),
+      nome: colunaBase(h, ["nome do aluno", "aluno", "nome", "nome completo", "nome aluno", "nome completo do aluno"], ["nome do aluno", "aluno", "nome"], ["resp", "mae", "pai", "social", "cpf", "codigo"]),
+      turma: colunaBase(h, ["turma"], ["turma", "classe"]),
+      situacao: colunaBase(h, ["situacao", "situacao academica", "situacao da matricula", "status"], ["situacao", "status"], ["financ"]),
+      responsavel: colunaBase(h, ["responsavel financeiro", "resp. financeiro", "resp financeiro", "nome do responsavel financeiro", "responsavel", "nome do responsavel"], ["responsavel financeiro", "resp. financeiro", "resp financeiro", "responsavel"], ["cpf", "tel", "cel", "fone", "mail", "rg", "cod", "endereco"]),
+      cpf: colunaBase(h, ["cpf do responsavel financeiro", "cpf responsavel financeiro", "cpf resp. financeiro", "cpf do responsavel", "cpf responsavel", "cpf"], ["cpf resp", "cpf do resp", "cpf"], ["aluno"])
+    };
+    var tels = colunasBase(h, ["celular", "telefone", "fone", "whats"]), mails = colunasBase(h, ["e-mail", "email"]);
+    if (ix.nome === -1) {
+      out.innerHTML = '<div class="import-summary" style="color:var(--danger)">Não encontrei a coluna com o nome do aluno. Colunas identificadas: ' + esc((p.raw || []).filter(Boolean).join(", ") || "nenhuma") + ".</div>";
+      $("btnConfirmImport").disabled = true; return;
+    }
+    function c(r, i) { return i !== -1 ? (r[i] || "").trim() : ""; }
+    function juntar(r, lista) { var v = []; lista.forEach(function (i) { var s = c(r, i); if (s && v.indexOf(s) === -1) v.push(s); }); return v.join(" / "); }
+    pendentes = p.rows.map(function (r) {
+      var extras = {};
+      (p.raw || []).forEach(function (nomeCol, i) { var s = c(r, i); if (nomeCol && s) extras[nomeCol.trim()] = s; });
+      return { ra: c(r, ix.ra), nome: c(r, ix.nome), turma: c(r, ix.turma), situacao: c(r, ix.situacao), responsavel: c(r, ix.responsavel), cpf: c(r, ix.cpf), telefone: juntar(r, tels), email: juntar(r, mails), extras: extras };
+    }).filter(function (r) { var n = r.nome.toUpperCase(); return n && n !== "NOME" && n !== "ALUNO" && n.length <= 150; });
+    // as colunas principais já têm campo próprio; nos "extras" ficam só as demais
+    var principais = [ix.ra, ix.nome, ix.turma, ix.situacao, ix.responsavel, ix.cpf].concat(tels, mails).filter(function (i) { return i !== -1; }).map(function (i) { return (p.raw[i] || "").trim(); });
+    pendentes.forEach(function (r) { principais.forEach(function (k) { delete r.extras[k]; }); });
+    var mapa = [["RA", ix.ra], ["Aluno", ix.nome], ["Turma", ix.turma], ["Situação", ix.situacao], ["Responsável financeiro", ix.responsavel], ["CPF", ix.cpf]].map(function (m) {
+      return '<span class="tag">' + m[0] + " ← " + (m[1] !== -1 ? esc(p.raw[m[1]]) : '<i class="muted">não encontrada</i>') + "</span>";
+    }).concat(['<span class="tag">Telefone ← ' + (tels.length ? esc(tels.map(function (i) { return p.raw[i]; }).join(" + ")) : '<i class="muted">não encontrada</i>') + "</span>",
+      '<span class="tag">E-mail ← ' + (mails.length ? esc(mails.map(function (i) { return p.raw[i]; }).join(" + ")) : '<i class="muted">não encontrada</i>') + "</span>"]).join(" ");
+    var outras = (p.raw || []).filter(function (x) { return x && principais.indexOf(x.trim()) === -1; }).length;
+    out.innerHTML = '<div class="base-mapa">' + mapa + "</div>" +
+      '<div class="import-preview"><table><thead><tr><th>RA</th><th>Aluno</th><th>Turma</th><th>Responsável</th><th>CPF</th><th>Telefone</th></tr></thead><tbody>' +
+      pendentes.slice(0, 8).map(function (r) {
+        return "<tr><td>" + esc(r.ra) + "</td><td>" + esc(r.nome) + "</td><td>" + esc(r.turma) + "</td><td>" + esc(r.responsavel) + "</td><td>" + esc(r.cpf) + "</td><td>" + esc(r.telefone) + "</td></tr>";
+      }).join("") + "</tbody></table></div>" +
+      '<div class="import-summary"><b>' + pendentes.length + " aluno(s)</b> no arquivo" + (pendentes.length > 8 ? " (mostrando os 8 primeiros)" : "") + "." +
+      (outras ? " As outras " + outras + " coluna(s) também ficam guardadas na ficha do aluno." : "") +
+      " Quem já está na base é atualizado (pelo RA); campos vazios no arquivo não apagam o que já existe. Ao terminar, os alunos do Painel, do Contraturno e do Serasa são completados com estes dados.</div>";
+    $("btnConfirmImport").disabled = !pendentes.length;
+  }
+  function importarBaseEmPartes(btn) {
+    var partes = [], TAM = 700;
+    for (var i = 0; i < pendentes.length; i += TAM) partes.push(pendentes.slice(i, i + TAM));
+    var tot = { criados: 0, atualizados: 0, iguais: 0, incompletas: 0, sincronizados: null }, feitas = 0;
+    var cadeia = Promise.resolve();
+    partes.forEach(function (lote, k) {
+      cadeia = cadeia.then(function () {
+        btn.textContent = "Importando… " + Math.round(feitas / pendentes.length * 100) + "%";
+        return api("POST", "/api/base/importar", { linhas: lote, ultimaParte: k === partes.length - 1 }).then(function (d) {
+          feitas += lote.length;
+          ["criados", "atualizados", "iguais", "incompletas"].forEach(function (c) { tot[c] += d[c] || 0; });
+          if (d.sincronizados) tot.sincronizados = d.sincronizados;
+        });
+      });
+    });
+    return cadeia.then(function () {
+      btn.hidden = true;
+      var s = tot.sincronizados || { alunos: 0, serasa: 0 };
+      $("importResult").innerHTML = '<div class="import-summary" style="color:var(--ink)"><b>' + tot.criados + "</b> aluno(s) novo(s) na base · <b>" + tot.atualizados + "</b> atualizado(s)" +
+        (tot.iguais ? " · " + tot.iguais + " já estavam iguais" : "") + (tot.incompletas ? " · " + tot.incompletas + " sem nome (não importados)" : "") + ".</div>" +
+        '<div class="import-summary">Completados com a base: <b>' + s.alunos + "</b> aluno(s) no Painel/Contraturno e <b>" + s.serasa + "</b> parcela(s) no Serasa.</div>";
+      toast("Base de dados importada.");
+      return Promise.all([carregar(), carregarBaseDados()]);
+    });
+  }
 
   // ---------------------------------------------------------------- Serasa
   // Situação da parcela no Mentor e no Serasa. "" = ainda não incluída (pendente).

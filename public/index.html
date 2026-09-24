@@ -81,6 +81,7 @@
       <button type="button" data-view="evolucao"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 20h18"/><path d="M6 16v-5M11 16V7M16 16v-8M21 16V4"/></svg>Evolução</button>
       <button type="button" data-view="contraturno"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Contraturno<span class="badge" id="navBadgeCt" hidden></span></button>
       <button type="button" data-view="serasa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>Serasa</button>
+      <button type="button" data-view="base"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>Base de dados</button>
       <div class="nav-lbl" data-admin>Administração</div>
       <button type="button" data-view="usuarios" data-admin><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.7 3 2.4 3.5 5.2"/></svg>Usuários e acessos</button>
     </nav>
@@ -210,6 +211,38 @@
       <div class="row-end" style="justify-content:center;margin-top:12px"><button type="button" class="btn ghost small" id="serMais" hidden>Mostrar mais</button></div>
     </div>
 
+    <!-- BASE DE DADOS -->
+    <div id="v-base" class="view" hidden>
+      <div class="page-head">
+        <div><h1>Base de dados</h1><div class="sub" id="baseSub">Cadastro completo dos alunos — completa automaticamente o Painel, o Contraturno e o Serasa</div></div>
+        <div class="actions">
+          <button type="button" class="btn ghost small" id="btnBaseExportar">Exportar</button>
+          <button type="button" class="btn primary small" id="btnBaseImportar">Importar relatório de alunos</button>
+        </div>
+      </div>
+      <div class="kpis k4" id="baseKpis"></div>
+      <div class="filters">
+        <input type="search" id="bBusca" placeholder="Buscar aluno, RA, responsável, CPF, telefone ou e-mail…" aria-label="Buscar">
+        <select id="bTurma" aria-label="Turma"></select>
+        <select id="bSituacao" aria-label="Situação"></select>
+        <select id="bAba" aria-label="Aparece nas abas">
+          <option value="">Todas as abas</option>
+          <option value="regular">No Painel</option>
+          <option value="contraturno">No Contraturno</option>
+          <option value="serasa">No Serasa</option>
+          <option value="nenhuma">Em nenhuma aba</option>
+        </select>
+      </div>
+      <div class="count" id="baseCount"></div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>RA</th><th>Aluno</th><th>Turma</th><th>Responsável financeiro</th><th>CPF</th><th>Contato</th><th>Nas abas</th></tr></thead>
+          <tbody id="baseTbody"></tbody>
+        </table>
+      </div>
+      <div class="row-end" style="justify-content:center;margin-top:12px"><button type="button" class="btn ghost small" id="baseMais" hidden>Mostrar mais</button></div>
+    </div>
+
     <!-- USUÁRIOS -->
     <div id="v-usuarios" class="view" hidden>
       <div class="page-head">
@@ -332,6 +365,18 @@
       </div>
       <div id="importResult"></div>
       <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="btnConfirmImport" disabled>Importar alunos</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="mBase" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="bsTitulo">
+    <div class="m-head"><div><h2 id="bsTitulo">Aluno</h2><div class="sub" id="bsSub"></div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div class="base-abas" id="bsAbas"></div>
+      <dl class="base-dl" id="bsDados"></dl>
+      <div class="meta" id="bsAtualizado"></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button></div>
     </div>
   </div>
 </div>

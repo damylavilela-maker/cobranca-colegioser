@@ -327,3 +327,15 @@ label.sim,label.sim-todas{display:inline-flex;align-items:center;gap:6px;cursor:
 label.sim input,label.sim-todas input{width:auto;cursor:pointer}
 label.sim-todas{text-transform:uppercase;letter-spacing:.06em;font-size:12px}
 table.data.as-tab td.mudou{background:var(--warn-soft)}
+
+/* Base de dados */
+.kpis.k4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:1700px){.kpis.k4{grid-template-columns:repeat(4,minmax(0,1fr))}.kpis.k4 .kpi,.kpis.k4 .kpi:nth-child(n+5){grid-column:auto}}
+@media (max-width:700px){.kpis.k4{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis.k4 .kpi:last-child{grid-column:auto}}
+.base-mapa{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.base-abas{font-size:14px}
+.base-dl{display:grid;grid-template-columns:minmax(140px,220px) 1fr;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0}
+.base-dl dt,.base-dl dd{padding:8px 12px;border-bottom:1px solid var(--line);margin:0;min-width:0;overflow-wrap:anywhere}
+.base-dl dt{background:var(--surface-2);color:var(--muted);font-weight:700;font-size:13px}
+.base-dl dt:last-of-type,.base-dl dd:last-of-type{border-bottom:none}
+@media (max-width:520px){.base-dl{grid-template-columns:1fr}.base-dl dt{border-bottom:none;padding-bottom:2px}}
