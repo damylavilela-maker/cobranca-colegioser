@@ -197,6 +197,9 @@ export default {
         // Uma vez: nomes da Serasa que vieram cortados de PDF voltam a ser o nome completo da base (pelo RA).
         const nomes = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('serasa_nomes_da_base', ?)").bind(agora).run();
         if (!nomes.meta || nomes.meta.changes > 0) await sincronizarComBase(env);
+        // Uma vez: separa RA e nome que ficaram grudados na importação de PDF com título centralizado.
+        const ras = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('ra_com_nome_consertado', ?)").bind(agora).run();
+        if (!ras.meta || ras.meta.changes > 0) await consertarRasSalvos(env);
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -710,8 +713,8 @@ async function importarPlanilha(req, env) {
   for (const r0 of linhas) {
     if (!texto(r0.nome, 150)) continue;
     // completa com a Base de dados (nome inteiro, turma, responsável, contato)
-    const bx = acharNaBase(base, r0);
-    const r = bx ? completarComBase(r0, bx) : r0;
+    const r1 = consertarRa(r0), bx = acharNaBase(base, r1);
+    const r = bx ? completarComBase(r1, bx) : r1;
     if (bx) daBase++;
     const nome = texto(r.nome, 150);
     const ra = texto(r.ra, 30);
@@ -1006,7 +1009,7 @@ async function importarSerasa(req, env, eu) {
   const comparavel = (o, id) => { const v = serasaValores(o, id, null); return JSON.stringify(v.slice(0, 13).concat(v.slice(16))); };
   const base = await carregarBase(env);
   for (const l0 of linhas) {
-    const l = completarSerasaComBase(l0, base);
+    const l = completarSerasaComBase(consertarRa(l0), base);
     if ((!texto(l.nome) && !texto(l.responsavel)) || !dataISO(l.vencimento)) { incompletas++; continue; }
     const pid = texto(l.periodo) ? porNome[texto(l.periodo, 60).toLowerCase()] : padrao;
     const k = chaveSerasa(l), kp = pid + "#" + k;
@@ -1097,6 +1100,15 @@ const BASE_CAMPOS = ["ra", "nome", "turma", "responsavel", "telefone", "email"];
 
 function normNome(s) { return String(s || "").trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " "); }
 
+// RA que veio com o começo do nome grudado (ex.: "4324 JULIA RAMOS", de um PDF com título
+// centralizado): o número fica no RA e o texto volta para o começo do nome.
+function consertarRa(o) {
+  const m = texto(o.ra, 200).match(/^(\d{1,12})\s+(\D.*)$/);
+  if (!m) return o;
+  const nome = texto(o.nome, 150), resto = m[2].trim();
+  return { ...o, ra: m[1], nome: nome.toUpperCase().startsWith(resto.toUpperCase()) ? nome : (resto + " " + nome).trim() };
+}
+
 function baseSaida(r) {
   return {
     id: r.id, ra: r.ra, nome: r.nome, turma: r.turma, responsavel: r.responsavel,
@@ -1166,7 +1178,8 @@ async function importarBase(req, env, eu) {
   const agora = agoraISO(), stmts = [], vistos = new Set();
   let criados = 0, atualizados = 0, iguais = 0, incompletas = 0;
   const cols = ["id", ...BASE_CAMPOS, "atualizado_em", "atualizado_por"];
-  for (const l of linhas) {
+  for (const l0 of linhas) {
+    const l = consertarRa(l0);
     const o = {
       ra: texto(l.ra, 30), nome: texto(l.nome, 150), turma: texto(l.turma, 80), responsavel: texto(l.responsavel, 150),
       telefone: texto(l.telefone, 80), email: texto(l.email, 150)
@@ -1222,4 +1235,17 @@ async function sincronizarComBase(env) {
   }
   await executarEmLotes(env, stmts);
   return { alunos: nAlunos, serasa: nSerasa };
+}
+
+async function consertarRasSalvos(env) {
+  const stmts = [];
+  for (const tabela of ["serasa", "alunos", "base_alunos"]) {
+    const r = (await env.DB.prepare(`SELECT id, ra, nome FROM ${tabela} WHERE ra LIKE '% %'`).all()).results;
+    for (const x of r) {
+      const o = consertarRa(x);
+      if (o.ra !== x.ra) stmts.push(env.DB.prepare(`UPDATE ${tabela} SET ra = ?, nome = ? WHERE id = ?`).bind(o.ra, o.nome, x.id));
+    }
+  }
+  await executarEmLotes(env, stmts);
+  if (stmts.length) await sincronizarComBase(env);
 }

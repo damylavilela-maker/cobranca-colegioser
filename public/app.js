@@ -898,10 +898,16 @@
         });
         return { cab: cab, ate: Math.max.apply(null, usadas) };
       }
-      function colunaDoTexto(x) { var k = 0; for (var i = 0; i < cols.length; i++) if (x >= cols[i].x - 4) k = i; return k; }
-      function colunaDoNumero(fim) {
-        var k = 0, d = Infinity;
-        cols.forEach(function (c, i) { var dd = Math.abs(c.fim - fim); if (dd < d) { d = dd; k = i; } });
+      // Coluna de um pedaço de texto: a do título que fica em cima dele (maior sobreposição
+      // horizontal — vale para título alinhado à esquerda, centralizado ou à direita). Sem
+      // sobreposição: número vai para o título que termina mais perto; texto, para o centro mais perto.
+      function sobrepoe(a0, a1, c) { return Math.max(0, Math.min(a1, c.fim) - Math.max(a0, c.x)); }
+      function colunasSob(x0, x1) { return cols.map(function (c, i) { return { i: i, s: sobrepoe(x0, x1, c) }; }).filter(function (o) { return o.s > 0; }); }
+      function colunaDaCelula(x0, x1, numero) {
+        var sob = colunasSob(x0, x1);
+        if (sob.length) return sob.sort(function (a, b) { return b.s - a.s; })[0].i;
+        var k = 0, d = Infinity, meio = (x0 + x1) / 2;
+        cols.forEach(function (c, i) { var dd = numero ? Math.abs(c.fim - x1) : Math.abs((c.x + c.fim) / 2 - meio); if (dd < d) { d = dd; k = i; } });
         return k;
       }
       paginas.forEach(function (linhas) {
@@ -912,13 +918,21 @@
         for (var i = inicio; i < linhas.length; i++) {
           var l = linhas[i], vals = cols.map(function () { return []; });
           l.cels.forEach(function (c) {
-            if (ehNumero(c.s)) { vals[colunaDoNumero(c.x + c.w)].push(c.s); return; }
-            var k = colunaDoTexto(c.x), prox = cols[k + 1];
-            if (prox && c.x + c.w > prox.x + 4 && c.s.indexOf(" ") !== -1) {
-              // texto que atravessa colunas: separa as palavras pela posição estimada
-              var larg = c.w / c.s.length, pos = 0;
-              c.s.split(" ").forEach(function (p) { if (p) vals[colunaDoTexto(c.x + pos * larg)].push(p); pos += p.length + 1; });
-            } else vals[k].push(c.s);
+            var x1 = c.x + c.w;
+            if (ehNumero(c.s)) { vals[colunaDaCelula(c.x, x1, true)].push(c.s); return; }
+            if (colunasSob(c.x, x1).length >= 2 && c.s.indexOf(" ") !== -1) {
+              // um pedaço que fica embaixo de dois títulos (ex.: "14881 NOME DO ALUNO"): separa as
+              // palavras pela posição estimada; palavra que não fica sob título nenhum segue a anterior
+              var larg = c.w / c.s.length, pos = 0, atual = null;
+              c.s.split(" ").forEach(function (p) {
+                if (p) {
+                  var p0 = c.x + pos * larg, p1 = p0 + p.length * larg, sob = colunasSob(p0, p1);
+                  atual = sob.length ? sob.sort(function (a, b) { return b.s - a.s; })[0].i : (atual != null ? atual : colunaDaCelula(p0, p1, false));
+                  vals[atual].push(p);
+                }
+                pos += p.length + 1;
+              });
+            } else vals[colunaDaCelula(c.x, x1, false)].push(c.s);
           });
           var row = vals.map(function (v) { return v.join(" "); });
           var cheias = row.filter(Boolean).length;
