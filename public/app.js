@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "25/09 · v5";
+  var VERSAO = "25/09 · v6";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1602,7 +1602,8 @@
     var neg = 0, pend = 0, pagas = 0, jur = 0, alunosSet = {}, negAlunos = {};
     p.forEach(function (x) {
       alunosSet[chaveDe(x)] = 1;
-      if (x.serasa === "ok") { neg++; negAlunos[chaveDe(x)] = 1; }
+      // com a contagem zerada, só conta quem foi incluído no Serasa a partir da data do zeramento
+      if (x.serasa === "ok" && (!negInicio || (x.dataInclusao && x.dataInclusao >= negInicio))) { neg++; negAlunos[chaveDe(x)] = 1; }
       if (!x.serasa && ["", "ok", "negociado"].indexOf(x.mentor || "") !== -1) pend++;
       if (x.mentor === "pago" || x.serasa === "pago") pagas++;
       if (x.mentor === "juridico" || x.serasa === "juridico") jur++;
@@ -1610,7 +1611,7 @@
     var tiles = [
       { n: Object.keys(alunosSet).length, l: "Alunos", cls: "lead" },
       { n: p.length, l: "Parcelas" },
-      { n: neg, l: "Parcelas negativadas · " + Object.keys(negAlunos).length + " alunos", c: "success" },
+      { n: neg, l: "Parcelas negativadas" + (negInicio ? " desde " + br(negInicio).slice(0, 5) : "") + " · " + Object.keys(negAlunos).length + " alunos", c: "success" },
       { n: pend, l: "Aguardando inclusão", c: "warn" },
       { n: pagas, l: "Pagas", c: "info" },
       { n: jur, l: "No jurídico", c: "danger" }
