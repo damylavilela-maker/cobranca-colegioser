@@ -295,6 +295,7 @@ async function rotear(req, env, url) {
     if (partes.length === 1 && m === "POST") return criarSerasa(req, env, eu);
     if (partes[1] === "importar" && m === "POST") return importarSerasa(req, env, eu);
     if (partes[1] === "lote" && m === "POST") return loteSerasa(req, env, eu);
+    if (partes[1] === "inicio-negativacoes" && m === "POST") { exigirAdmin(eu); return definirInicioNegativacoes(req, env); }
     if (partes[1] === "duplicadas" && m === "GET") { exigirAdmin(eu); return duplicadasSerasa(env, eu, false); }
     if (partes[1] === "duplicadas" && m === "POST") { exigirAdmin(eu); return duplicadasSerasa(env, eu, true); }
     if (partes.length === 2 && m === "PATCH") return alterarSerasa(req, env, eu, partes[1]);
@@ -936,7 +937,18 @@ async function buscarSerasa(env, id) {
 
 async function listarSerasa(env) {
   const r = await env.DB.prepare("SELECT * FROM serasa ORDER BY vencimento DESC, nome").all();
-  return json({ parcelas: r.results.map(serasaSaida) });
+  const ini = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'serasa_neg_inicio'").first();
+  return json({ parcelas: r.results.map(serasaSaida), negInicio: ini ? ini.valor : "" });
+}
+
+// "Zerar" a tabela de negativações por mês: ela passa a contar só inclusões a partir desta data.
+// Nada é apagado; data vazia volta a contar tudo.
+async function definirInicioNegativacoes(req, env) {
+  const b = await corpo(req);
+  const data = dataISO(b.data);
+  if (data) await env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('serasa_neg_inicio', ?)").bind(data).run();
+  else await env.DB.prepare("DELETE FROM meta WHERE chave = 'serasa_neg_inicio'").run();
+  return json({ negInicio: data });
 }
 
 async function criarSerasa(req, env, eu) {
