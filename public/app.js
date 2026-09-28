@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v14";
+  var VERSAO = "28/09 · v15";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1024,7 +1024,48 @@
     });
   }
   function ehPDF(f) { return /\.pdf$/i.test(f.name || "") || f.type === "application/pdf"; }
+  // Excel (.xlsx/.xls): cada aba vira uma tabela como a do CSV. Com mais de uma aba, a pessoa
+  // escolhe qual importar (já vem marcada a que mais parece ter o cabeçalho certo).
+  function ehExcel(f) { return /\.(xlsx|xlsm|xls|ods)$/i.test(f.name || ""); }
+  function celulaTexto(v) {
+    if (v == null) return "";
+    if (v instanceof Date) { var d = new Date(v.getTime() + 12 * 3600000); return pad2(d.getDate()) + "/" + pad2(d.getMonth() + 1) + "/" + d.getFullYear(); }
+    return String(v).trim();
+  }
+  function abasDoExcel(buf) {
+    return carregarXLSX().then(function (X) {
+      var wb = X.read(buf, { type: "array", cellDates: true });
+      return wb.SheetNames.map(function (nome) {
+        var aoa = X.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: "", raw: true, blankrows: false }).map(function (r) { return r.map(celulaTexto); });
+        var best = { line: 0, score: -1, cells: [] };
+        for (var i = 0; i < Math.min(aoa.length, 10); i++) {
+          var sc = scoreHeader(aoa[i]);
+          if (sc > best.score) best = { line: i, score: sc, cells: aoa[i] };
+        }
+        var rows = aoa.slice(best.line + 1).filter(function (r) { return r.some(function (c) { return c !== ""; }); });
+        return { nome: nome, score: best.score, tabela: { headers: best.cells.map(normHeader), raw: best.cells, rows: rows } };
+      }).filter(function (a) { return a.tabela.rows.length; });
+    });
+  }
+  function receberExcelImport(f) {
+    var r = new FileReader();
+    r.onload = function () {
+      $("importResult").innerHTML = '<div class="meta">Lendo ' + esc(f.name) + "…</div>";
+      abasDoExcel(new Uint8Array(r.result)).then(function (abas) {
+        if (!abas.length) throw new Error("A planilha está vazia.");
+        var melhor = abas.slice().sort(function (a, b) { return b.score - a.score; })[0];
+        var wrap = $("impAbaWrap"), sel = $("impAba");
+        wrap.hidden = abas.length < 2;
+        sel.innerHTML = abas.map(function (a, i) { return '<option value="' + i + '"' + (a === melhor ? " selected" : "") + ">" + esc(a.nome) + " (" + a.tabela.rows.length + " linhas)</option>"; }).join("");
+        sel.onchange = function () { processarTabela(abas[+sel.value].tabela); };
+        processarTabela(melhor.tabela);
+      }).catch(function (x) { $("importResult").innerHTML = ""; mostrarErroImport(x.message); });
+    };
+    r.readAsArrayBuffer(f);
+  }
   function receberArquivoImport(f) {
+    $("impAbaWrap").hidden = true;
+    if (ehExcel(f)) return receberExcelImport(f);
     if (!ehPDF(f)) return lerArquivo(f, processarCSV);
     var r = new FileReader(); r.onload = function () { processarPDF(new Uint8Array(r.result)); }; r.readAsArrayBuffer(f);
   }
@@ -1034,17 +1075,17 @@
     $("importResult").prepend(el);
   }
   function abrirImportacao(modo) {
-    modoImport = modo; confirmouPeriodo = false; simulado = false;
+    modoImport = modo; confirmouPeriodo = false; simulado = false; $("impAbaWrap").hidden = true;
     $("impEspelhar").checked = true; // sempre começa marcado: o período fica igual ao arquivo
     pendentes = []; $("importResult").innerHTML = ""; $("pasteArea").value = ""; $("fileInput").value = "";
     var b = $("btnConfirmImport");
     b.disabled = true; b.hidden = false; b.textContent = modo === "serasa" ? "Importar parcelas" : modo === "base" ? "Importar para a base" : "Importar alunos";
     $("mImpT").textContent = modo === "serasa" ? "Importar planilha — Serasa" : modo === "base" ? "Importar relatório de alunos — Base de dados" : carteira === "contraturno" ? "Importar planilha — Contraturno" : "Importar planilha";
     $("mImpSub").textContent = modo === "base"
-      ? "Envie o relatório total de alunos em CSV ou PDF. Só são importados: aluno, matrícula, descrição da turma e nome, e-mail e telefone do responsável financeiro. As demais colunas (dados sensíveis) são ignoradas e não saem do seu computador."
+      ? "Envie o relatório total de alunos em Excel (.xlsx/.xls), CSV ou PDF. Só são importados: aluno, matrícula, descrição da turma e nome, e-mail e telefone do responsável financeiro. As demais colunas (dados sensíveis) são ignoradas e não saem do seu computador."
       : modo === "serasa"
-      ? "Envie uma aba da planilha em CSV ou PDF (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
-      : "Envie o relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " em CSV ou PDF (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento). O PDF do relatório de Inadimplência do sistema também é aceito.";
+      ? "Envie uma aba da planilha em Excel (.xlsx/.xls), CSV ou PDF (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
+      : "Envie o relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " em Excel (.xlsx/.xls), CSV ou PDF (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento). O PDF do relatório de Inadimplência do sistema também é aceito.";
     $("impPeriodoWrap").hidden = modo !== "serasa";
     $("impPeriodo").disabled = false;
     $("impPeriodoHint").textContent = "Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.";

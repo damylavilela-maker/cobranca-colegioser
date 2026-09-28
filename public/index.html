@@ -450,7 +450,8 @@
         <span class="hint" id="impPeriodoHint">Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.</span>
         <label class="check-linha"><input type="checkbox" id="impEspelhar" checked> <span><b>Deixar o período igual ao arquivo</b> — o que está no período e não está no arquivo sai dele (cópias são apagadas; o resto vai para “Sem período”). Antes de gravar, o site mostra o que vai mudar.</span></label>
       </div>
-      <div class="dropzone" id="dropzone">Arraste o arquivo .csv ou o relatório em .pdf aqui, ou clique para selecionar<input type="file" id="fileInput" accept=".csv,.txt,.pdf,text/csv,text/plain,application/vnd.ms-excel,application/pdf" hidden></div>
+      <div class="dropzone" id="dropzone">Arraste a planilha (.xlsx, .xls ou .csv) ou o relatório em .pdf aqui, ou clique para selecionar<input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm,.ods,.csv,.txt,.pdf,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf" hidden></div>
+      <div class="field" id="impAbaWrap" hidden><label for="impAba">Aba da planilha</label><select id="impAba"></select><span class="hint">A planilha tem mais de uma aba: escolha qual importar.</span></div>
       <div class="field">
         <label for="pasteArea">Não conseguiu anexar o arquivo? Cole o conteúdo do CSV aqui</label>
         <textarea id="pasteArea" rows="4"></textarea>
@@ -561,7 +562,7 @@
   <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="jiTitulo">
     <div class="m-head"><div><h2 id="jiTitulo">Importar planilha — Painel jurídico</h2><div class="sub">Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
     <div class="m-body">
-      <div class="dropzone" id="jurDrop">Arraste um arquivo .xlsx, .csv ou .pdf aqui, ou clique para escolher<input type="file" id="jurFile" accept=".xlsx,.xls,.csv,.txt,.pdf" hidden></div>
+      <div class="dropzone" id="jurDrop">Arraste um arquivo .xlsx, .xls, .csv ou .pdf aqui, ou clique para escolher<input type="file" id="jurFile" accept=".xlsx,.xls,.csv,.txt,.pdf" hidden></div>
       <div id="jurImpRes"></div>
       <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="jurImpOk" disabled>Importar casos</button></div>
     </div>
