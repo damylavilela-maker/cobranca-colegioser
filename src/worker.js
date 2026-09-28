@@ -1763,22 +1763,28 @@ async function desfazerRecebimentos(req, env, eu) {
   (await env.DB.prepare("SELECT * FROM jur_receb_antes").all()).results.forEach((r) => { antes[r.caso_id] = r; });
   const rotuloParaChave = {};
   Object.keys(JUR_ST_ROTULO).forEach((k) => { rotuloParaChave[JUR_ST_ROTULO[k]] = k; });
+  // poucas consultas no total (o Workers limita quantas cabem numa chamada): tudo de uma vez
+  const casosPorId = {};
+  (await env.DB.prepare("SELECT * FROM jur_casos").all()).results.forEach((c) => { casosPorId[c.id] = c; });
+  const primeiroStatus = {}, ultimaInad = {};
+  (await env.DB.prepare("SELECT caso_id, texto FROM jur_obs WHERE texto LIKE 'Status % pelo relatório de recebimento%' ORDER BY data ASC").all()).results
+    .forEach((o) => { if (!primeiroStatus[o.caso_id]) primeiroStatus[o.caso_id] = o.texto; });
+  (await env.DB.prepare("SELECT caso_id, texto FROM jur_obs WHERE texto LIKE 'Relatório de inadimplência de %valor em aberto R$ %' ORDER BY data DESC").all()).results
+    .forEach((o) => { if (!ultimaInad[o.caso_id]) ultimaInad[o.caso_id] = o.texto; });
   const mudancas = [];
   for (const p of pagos) {
-    const c = await env.DB.prepare("SELECT * FROM jur_casos WHERE id = ?").bind(p.caso_id).first();
+    const c = casosPorId[p.caso_id];
     if (!c) continue;
     let status = c.status, valor = c.valor_aberto;
     const a = antes[c.id];
     if (a) { status = a.status; valor = a.valor_aberto; }
     else {
-      const st = await env.DB.prepare("SELECT texto FROM jur_obs WHERE caso_id = ? AND texto LIKE 'Status % pelo relatório de recebimento%' ORDER BY data ASC LIMIT 1").bind(c.id).first();
-      const m = st && /^Status (.+?) → /.exec(st.texto);
+      const m = primeiroStatus[c.id] && /^Status (.+?) → /.exec(primeiroStatus[c.id]);
       if (m && rotuloParaChave[m[1]]) status = rotuloParaChave[m[1]];
       if (valor != null) {
         valor = Math.round((Number(valor) + Number(p.total)) * 100) / 100;
         if (Number(c.valor_aberto) === 0) {
-          const inad = await env.DB.prepare("SELECT texto FROM jur_obs WHERE caso_id = ? AND texto LIKE 'Relatório de inadimplência de %valor em aberto R$ %' ORDER BY data DESC LIMIT 1").bind(c.id).first();
-          const mv = inad && /valor em aberto R\$ ([\d.]+,\d{2})/.exec(inad.texto);
+          const mv = ultimaInad[c.id] && /valor em aberto R\$ ([\d.]+,\d{2})/.exec(ultimaInad[c.id]);
           if (mv) valor = Math.min(valor, Number(mv[1].replace(/\./g, "").replace(",", ".")));
         }
       }
