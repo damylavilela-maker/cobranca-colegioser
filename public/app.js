@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v16";
+  var VERSAO = "28/09 · v17";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -338,8 +338,11 @@
         fx.l + ": <b>" + x.n + "</b></span>";
     }).join("") + "</div>";
   }
-  var mesRecup = "";
-  $("kpis").addEventListener("change", function (e) { if (e.target.id === "kpiMesRecup") { mesRecup = e.target.value; renderPainel(); } });
+  var mesRecup = "", mesAberto = "";
+  $("kpis").addEventListener("change", function (e) {
+    if (e.target.id === "kpiMesRecup") { mesRecup = e.target.value; renderPainel(); }
+    if (e.target.id === "kpiMesAberto") { mesAberto = e.target.value; renderPainel(); }
+  });
   function renderKpis(vis) {
     var tot = 0, c = {};
     vis.forEach(function (a) { tot += Number(a.valorAberto) || 0; var k = a.status || "sem_contato"; c[k] = (c[k] || 0) + 1; });
@@ -350,9 +353,27 @@
     var selMes = '<select class="kpi-mes" id="kpiMesRecup" aria-label="Mês do valor recuperado">' + meses.map(function (m) {
       return '<option value="' + m.v + '"' + (m.v === mesRecup ? " selected" : "") + ">" + m.l + "</option>";
     }).join("") + "</select>";
+    // "Valor em aberto": o ano todo ou só as parcelas que vencem no mês escolhido. Aluno sem o
+    // detalhe das parcelas (importado antes) entra pelo vencimento dele só quando tem 1 parcela.
+    if (mesAberto && !meses.some(function (m) { return m.v === mesAberto; })) mesAberto = "";
+    var abertoMes = tot, semDetalhe = 0;
+    if (mesAberto) {
+      abertoMes = 0;
+      vis.forEach(function (a) {
+        if (!(Number(a.valorAberto) > 0)) return;
+        var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc : [];
+        if (pv.length) pv.forEach(function (p) { if (String(p[0] || "").slice(0, 7) === mesAberto) abertoMes += Number(p[1]) || 0; });
+        else if ((a.parcelasAberto || 1) <= 1) { if ((a.vencimento || "").slice(0, 7) === mesAberto) abertoMes += Number(a.valorAberto) || 0; }
+        else semDetalhe++;
+      });
+    }
+    var selAberto = '<select class="kpi-mes" id="kpiMesAberto" aria-label="Mês de vencimento do valor em aberto"><option value="">' + anoR + " (todos os meses)</option>" + meses.map(function (m) {
+      return '<option value="' + m.v + '"' + (m.v === mesAberto ? " selected" : "") + ">" + m.l + " de " + anoR + "</option>";
+    }).join("") + "</select>";
     var tiles = [
       { n: vis.length, l: "Alunos em acompanhamento" },
-      { n: money(tot), l: "Valor em aberto " + new Date().getFullYear(), cls: "lead" },
+      { n: money(abertoMes), l: "Valor em aberto " + selAberto, cls: "lead",
+        sub: mesAberto && semDetalhe ? semDetalhe + " aluno(s) sem o vencimento de cada parcela ficaram de fora: importe o relatório de novo" : "" },
       { n: money(recuperadoNoMes(mesRecup, carteira)), l: "Recuperado em " + selMes, c: "success" },
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
       { n: c.em_negociacao || 0, l: "Em negociação", c: "info" },
@@ -360,7 +381,7 @@
       { n: c.regularizado || 0, l: "Regularizados", c: "success" }
     ];
     $("kpis").innerHTML = tiles.map(function (t) {
-      return '<div class="kpi ' + (t.cls || "") + '"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ' title="' + esc(t.n) + '">' + t.n + '</div><div class="lbl">' + t.l + "</div></div>";
+      return '<div class="kpi ' + (t.cls || "") + '"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ' title="' + esc(t.n) + '">' + t.n + '</div><div class="lbl">' + t.l + "</div>" + (t.sub ? '<div class="kpi-sub">' + esc(t.sub) + "</div>" : "") + "</div>";
     }).join("");
   }
 
