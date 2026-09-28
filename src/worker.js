@@ -250,7 +250,9 @@ export default {
     } catch (e) {
       if (e instanceof HttpError) return json({ erro: e.message, codigo: e.code || null }, e.status);
       console.error(e && e.stack || e);
-      return json({ erro: "Erro interno no servidor. Tente de novo em instantes." }, 500);
+      // o motivo vai junto (curto) para dar para saber o que houve sem acesso aos logs
+      const motivo = String((e && e.message) || e || "").replace(/\s+/g, " ").slice(0, 160);
+      return json({ erro: "Erro interno no servidor. Tente de novo em instantes." + (motivo ? " (Detalhe: " + motivo + ")" : "") }, 500);
     }
   }
 };
