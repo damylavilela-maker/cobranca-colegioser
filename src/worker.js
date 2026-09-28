@@ -163,6 +163,7 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS idx_jur_obs_caso ON jur_obs(caso_id)`,
   `CREATE TABLE IF NOT EXISTS jur_kpi (data TEXT PRIMARY KEY, dados TEXT NOT NULL)`,
   // pagamentos do relatório de recebimento já abatidos (não abate duas vezes o mesmo)
+  `CREATE TABLE IF NOT EXISTS jur_receb_antes (caso_id TEXT PRIMARY KEY, status TEXT NOT NULL, valor_aberto REAL, criado_em TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS jur_pagamentos (chave TEXT PRIMARY KEY, caso_id TEXT NOT NULL, data TEXT NOT NULL DEFAULT '', valor REAL NOT NULL DEFAULT 0, criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`
 ];
 
@@ -357,6 +358,7 @@ async function rotear(req, env, url) {
     if (partes[1] === "evolucao" && m === "GET") return evolucaoJuridico(env);
     if (partes[1] === "limpar" && m === "POST") { exigirAdmin(eu); return limparJuridico(req, env); }
     if (partes[1] === "inadimplencia" && m === "POST") return inadimplenciaJuridico(req, env, eu);
+    if (partes[1] === "recebimento" && partes[2] === "desfazer" && m === "POST") { exigirAdmin(eu); return desfazerRecebimentos(req, env, eu); }
     if (partes[1] === "recebimento" && m === "POST") return recebimentoJuridico(req, env, eu);
     if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
     if (partes.length === 3 && partes[2] === "obs" && m === "POST") return novaObsJur(req, env, eu, partes[1]);
@@ -1601,7 +1603,7 @@ async function limparJuridico(req, env) {
   const b = await corpo(req);
   if (b.confirmar !== "APAGAR") throw new HttpError(400, "Confirmação ausente.");
   const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM jur_casos").first();
-  await env.DB.batch(["DELETE FROM jur_obs", "DELETE FROM jur_casos", "DELETE FROM jur_kpi", "DELETE FROM jur_pagamentos"].map((s) => env.DB.prepare(s)));
+  await env.DB.batch(["DELETE FROM jur_obs", "DELETE FROM jur_casos", "DELETE FROM jur_kpi", "DELETE FROM jur_pagamentos", "DELETE FROM jur_receb_antes"].map((s) => env.DB.prepare(s)));
   return json({ apagados: n ? n.n : 0 });
 }
 
@@ -1734,6 +1736,8 @@ async function recebimentoJuridico(req, env, eu) {
   if (!b.simular && mudancas.length) {
     const agora = agoraISO(), stmts = [];
     mudancas.forEach((m) => {
+      // como o caso estava antes do primeiro recebimento (para "Desfazer recebimentos")
+      stmts.push(env.DB.prepare("INSERT OR IGNORE INTO jur_receb_antes (caso_id, status, valor_aberto, criado_em) VALUES (?,?,?,?)").bind(m.id, m.statusAntes, m.valorAntes ?? null, agora));
       stmts.push(env.DB.prepare("UPDATE jur_casos SET status = ?, valor_aberto = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?")
         .bind(m.statusDepois, m.valorDepois, agora, eu.nome, m.id));
       m.pagamentos.forEach((pg) => {
@@ -1745,4 +1749,50 @@ async function recebimentoJuridico(req, env, eu) {
     await executarEmLotes(env, stmts);
   }
   return json({ mudancas, foraDoPainel, repetidos, gravado: !b.simular });
+}
+
+// Desfaz tudo o que veio do relatório de recebimento: apaga os pagamentos lançados e as
+// tratativas que eles criaram, e volta status e valor em aberto de cada caso para como estavam
+// antes do primeiro recebimento. Recebimentos aplicados antes desta função existir não têm a
+// "foto" do antes: o status volta pela tratativa "Status X → Y" e o valor soma de volta o que foi
+// abatido (se tinha zerado, usa o valor do último relatório de inadimplência).
+async function desfazerRecebimentos(req, env, eu) {
+  const b = await corpo(req);
+  const pagos = (await env.DB.prepare("SELECT caso_id, SUM(valor) AS total, COUNT(*) AS n FROM jur_pagamentos GROUP BY caso_id").all()).results;
+  const antes = {};
+  (await env.DB.prepare("SELECT * FROM jur_receb_antes").all()).results.forEach((r) => { antes[r.caso_id] = r; });
+  const rotuloParaChave = {};
+  Object.keys(JUR_ST_ROTULO).forEach((k) => { rotuloParaChave[JUR_ST_ROTULO[k]] = k; });
+  const mudancas = [];
+  for (const p of pagos) {
+    const c = await env.DB.prepare("SELECT * FROM jur_casos WHERE id = ?").bind(p.caso_id).first();
+    if (!c) continue;
+    let status = c.status, valor = c.valor_aberto;
+    const a = antes[c.id];
+    if (a) { status = a.status; valor = a.valor_aberto; }
+    else {
+      const st = await env.DB.prepare("SELECT texto FROM jur_obs WHERE caso_id = ? AND texto LIKE 'Status % pelo relatório de recebimento%' ORDER BY data ASC LIMIT 1").bind(c.id).first();
+      const m = st && /^Status (.+?) → /.exec(st.texto);
+      if (m && rotuloParaChave[m[1]]) status = rotuloParaChave[m[1]];
+      if (valor != null) {
+        valor = Math.round((Number(valor) + Number(p.total)) * 100) / 100;
+        if (Number(c.valor_aberto) === 0) {
+          const inad = await env.DB.prepare("SELECT texto FROM jur_obs WHERE caso_id = ? AND texto LIKE 'Relatório de inadimplência de %valor em aberto R$ %' ORDER BY data DESC LIMIT 1").bind(c.id).first();
+          const mv = inad && /valor em aberto R\$ ([\d.]+,\d{2})/.exec(inad.texto);
+          if (mv) valor = Math.min(valor, Number(mv[1].replace(/\./g, "").replace(",", ".")));
+        }
+      }
+    }
+    mudancas.push({ id: c.id, ra: c.ra, aluno: c.aluno, carteira: c.carteira, statusAntes: c.status, statusDepois: status, valorAntes: c.valor_aberto, valorDepois: valor, pagamentos: p.n, totalPago: Math.round(p.total * 100) / 100 });
+  }
+  const obs = await env.DB.prepare("SELECT COUNT(*) AS n FROM jur_obs WHERE texto LIKE 'Pagamento recebido%(relatório de recebimento).' OR texto LIKE 'Status % pelo relatório de recebimento%'").first();
+  if (!b.simular) {
+    const agora = agoraISO(), stmts = mudancas.map((m) => env.DB.prepare("UPDATE jur_casos SET status = ?, valor_aberto = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(m.statusDepois, m.valorDepois, agora, eu.nome, m.id));
+    stmts.push(env.DB.prepare("DELETE FROM jur_obs WHERE texto LIKE 'Pagamento recebido%(relatório de recebimento).' OR texto LIKE 'Status % pelo relatório de recebimento%'"));
+    stmts.push(env.DB.prepare("DELETE FROM jur_pagamentos"));
+    stmts.push(env.DB.prepare("DELETE FROM jur_receb_antes"));
+    await executarEmLotes(env, stmts);
+  }
+  const np = pagos.reduce((t, p) => t + p.n, 0);
+  return json({ mudancas, pagamentos: np, tratativas: obs ? obs.n : 0, gravado: !b.simular });
 }

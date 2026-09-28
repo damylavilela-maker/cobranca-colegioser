@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v23";
+  var VERSAO = "28/09 · v24";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2781,18 +2781,44 @@
   var JUR_MODOS = {
     cadastro: { t: "Importar cadastro — Painel jurídico", s: "Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.", b: "Importar casos" },
     inadimplencia: { t: "Importar relatório de inadimplência", s: "Envie o relatório geral de inadimplência (Excel, CSV ou o PDF do sistema), com todas as contas financeiras. Só os alunos que já estão no Painel jurídico são atualizados; os outros são ignorados e nenhum caso novo é criado. Quem está no relatório tem o valor em aberto e as parcelas atualizados (Quitado ou Em dia volta para Em aberto). Quem tinha valor em aberto e não está no relatório fica Quitado. Nada é gravado antes de você confirmar.", b: "Aplicar mudanças" },
+    desfazer: { t: "Desfazer recebimentos importados", s: "Apaga todos os pagamentos que vieram do relatório de recebimento e as tratativas que eles criaram. Cada caso volta com o status e o valor em aberto de antes. Nada é apagado antes de você confirmar.", b: "Desfazer" },
     recebimento: { t: "Importar relatório de recebimento", s: "Envie o relatório de recebimento (Excel, CSV ou PDF) com aluno ou RA, data e valor pago. Cada pagamento é abatido do valor em aberto e registrado nas tratativas. Caso com acordo fica Em dia; sem acordo: zerou é Quitado, sobrou é Parcialmente pago. Um pagamento já lançado não é abatido de novo.", b: "Aplicar mudanças" }
   };
   function abrirJurImp(modo) {
+    $("jurDrop").hidden = modo === "desfazer";
     jurModo = modo; jurPendentes = []; jurRelatorio = null;
     $("jurImpRes").innerHTML = ""; $("jurFile").value = ""; $("jurRelFiltros").innerHTML = "";
     $("jiTitulo").textContent = JUR_MODOS[modo].t; $("jiSub").textContent = JUR_MODOS[modo].s;
-    var b = $("jurImpOk"); b.disabled = true; b.hidden = false; b.textContent = JUR_MODOS[modo].b;
+    var b = $("jurImpOk"); b.disabled = true; b.hidden = false; b.textContent = JUR_MODOS[modo].b; b.classList.remove("danger");
     abrir("mJurImp");
   }
   $("btnJurImportar").addEventListener("click", function () { abrirJurImp("cadastro"); });
   $("btnJurInadimp").addEventListener("click", function () { abrirJurImp("inadimplencia"); });
   $("btnJurReceb").addEventListener("click", function () { abrirJurImp("recebimento"); });
+  // Desfazer recebimentos (só administradores): mostra o que volta e só apaga ao confirmar
+  $("btnJurDesfazer").addEventListener("click", function () {
+    abrirJurImp("desfazer");
+    $("jurImpRes").innerHTML = '<div class="meta">Conferindo o que foi importado…</div>';
+    api("POST", "/api/juridico/recebimento/desfazer", { simular: true }).then(function (d) {
+      var ms = d.mudancas || [];
+      if (!d.pagamentos && !d.tratativas) { $("jurImpRes").innerHTML = '<div class="meta">Nenhum recebimento importado: não há nada para desfazer.</div>'; $("jurImpOk").textContent = "Nada para desfazer"; return; }
+      $("jurImpRes").innerHTML = "<p><b>" + d.pagamentos + "</b> pagamento(s) lançado(s) em <b>" + ms.length + "</b> caso(s) e <b>" + d.tratativas + "</b> tratativa(s) do relatório de recebimento serão apagados. Os casos voltam como estavam antes:</p>" +
+        '<div class="table-wrap" style="max-height:340px;overflow:auto"><table class="data"><thead><tr><th>Aluno</th><th>Status</th><th class="right">Valor em aberto</th><th class="right">Pagamentos apagados</th></tr></thead><tbody>' +
+        ms.map(function (m) {
+          return "<tr><td><b>" + esc(m.aluno || "—") + '</b><div class="meta">' + (m.ra ? "RA " + esc(m.ra) + " · " : "") + esc(m.carteira || "—") + "</div></td><td>" +
+            (m.statusAntes === m.statusDepois ? jpill(m.statusDepois) : jpill(m.statusAntes) + " → " + jpill(m.statusDepois)) + '</td><td class="tabular right">' + moneyOu(m.valorAntes) + " → <b>" + moneyOu(m.valorDepois) + '</b></td><td class="tabular right">' + m.pagamentos + " · " + money(m.totalPago) + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+      var b = $("jurImpOk"); b.disabled = false; b.textContent = "Desfazer " + d.pagamentos + " pagamento(s)"; b.classList.add("danger");
+    }).catch(function (x) { $("jurImpRes").innerHTML = '<div class="form-err">' + esc(x.message) + "</div>"; });
+  });
+  function aplicarDesfazerJur(btn) {
+    btn.disabled = true; btn.textContent = "Desfazendo…";
+    api("POST", "/api/juridico/recebimento/desfazer", { simular: false }).then(function (d) {
+      btn.textContent = "Desfeito"; btn.classList.remove("danger");
+      $("jurImpRes").innerHTML = '<p><b style="color:var(--success)">Pronto:</b> ' + d.pagamentos + " pagamento(s) e " + d.tratativas + " tratativa(s) do relatório de recebimento apagados; " + (d.mudancas || []).length + " caso(s) voltaram como estavam.</p>";
+      toast("Recebimentos desfeitos."); return carregarJuridico();
+    }).catch(function (x) { btn.disabled = false; btn.textContent = "Tentar de novo"; toast(x.message); });
+  }
 
   var REL_COLUNAS = {
     ra: ["ra", "codigo", "matricula", "cod", "cod. aluno", "codigo do aluno", "cod aluno"],
@@ -2993,7 +3019,7 @@
     });
   }
   ligarDropzone($("jurDrop"), $("jurFile"), null, receberArquivoJur);
-  $("jurImpOk").addEventListener("click", function () { if (jurModo !== "cadastro") return aplicarRelatorioJur(this);
+  $("jurImpOk").addEventListener("click", function () { if (jurModo === "desfazer") return aplicarDesfazerJur(this); if (jurModo !== "cadastro") return aplicarRelatorioJur(this);
     if (!jurPendentes.length) return;
     var btn = this, partes = [], tot = { criados: 0, atualizados: 0, ignorados: 0 };
     for (var i = 0; i < jurPendentes.length; i += 400) partes.push(jurPendentes.slice(i, i + 400));
