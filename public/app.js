@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v13";
+  var VERSAO = "28/09 · v14";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -310,14 +310,50 @@
   fill($("aCanal"), CANAIS); fill($("aSetor"), SETORES); fill($("aMotivo"), MOTIVOS);
   fill($("aStatus"), STATUS.map(function (s) { return { v: s.k, l: s.l }; }));
 
+  // Faixa de atraso: quantas parcelas em aberto estão em cada faixa, contando os dias desde o
+  // vencimento de cada parcela até hoje. Sem o detalhe das parcelas (importação antiga), usa o
+  // vencimento mais antigo do aluno.
+  var FAIXAS_ATRASO = [
+    { k: "90", l: "+90 dias", c: "danger", min: 91 },
+    { k: "61", l: "61–90 dias", c: "warn", min: 61 },
+    { k: "31", l: "31–60 dias", c: "gold", min: 31 },
+    { k: "1", l: "até 30 dias", c: "info", min: 1 },
+    { k: "0", l: "a vencer", c: "gray", min: -Infinity }
+  ];
+  function faixaDeDias(dias) { for (var i = 0; i < FAIXAS_ATRASO.length; i++) if (dias >= FAIXAS_ATRASO[i].min) return FAIXAS_ATRASO[i]; return FAIXAS_ATRASO[FAIXAS_ATRASO.length - 1]; }
+  function diasDesde(venc, h) { return Math.round((new Date(h + "T00:00:00") - new Date(venc + "T00:00:00")) / 86400000); }
+  function faixasAtraso(a, h) {
+    if (!(Number(a.valorAberto) > 0)) return '<span class="muted">—</span>';
+    var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc.filter(function (p) { return p && p[0]; }) : [];
+    if (!pv.length) {
+      if (!a.vencimento) return '<span class="muted">—</span>';
+      var fx = faixaDeDias(diasDesde(a.vencimento, h));
+      return '<span class="fx" style="color:var(--' + fx.c + ');background:var(--' + fx.c + '-soft)">' + fx.l + '</span><div class="meta">parcela mais antiga: ' + br(a.vencimento) + "</div>";
+    }
+    var g = {};
+    pv.forEach(function (p) { var fx = faixaDeDias(diasDesde(p[0], h)); var x = g[fx.k] || (g[fx.k] = { n: 0, v: 0 }); x.n++; x.v += Number(p[1]) || 0; });
+    return '<div class="fx-lista">' + FAIXAS_ATRASO.filter(function (fx) { return g[fx.k]; }).map(function (fx) {
+      var x = g[fx.k];
+      return '<span class="fx" style="color:var(--' + fx.c + ');background:var(--' + fx.c + '-soft)" title="' + x.n + (x.n === 1 ? " parcela" : " parcelas") + " · " + money(x.v) + '">' +
+        fx.l + ": <b>" + x.n + "</b></span>";
+    }).join("") + "</div>";
+  }
+  var mesRecup = "";
+  $("kpis").addEventListener("change", function (e) { if (e.target.id === "kpiMesRecup") { mesRecup = e.target.value; renderPainel(); } });
   function renderKpis(vis) {
     var tot = 0, c = {};
     vis.forEach(function (a) { tot += Number(a.valorAberto) || 0; var k = a.status || "sem_contato"; c[k] = (c[k] || 0) + 1; });
-    var mesLbl = MESES[new Date().getMonth()];
+    // "Recuperado em": o mês é escolhido na própria caixa (últimos 12 meses)
+    var meses = [], d0 = new Date(); d0.setDate(1);
+    for (var i = 0; i < 12; i++) { var dm = new Date(d0.getFullYear(), d0.getMonth() - i, 1); meses.push({ v: dm.getFullYear() + "-" + pad2(dm.getMonth() + 1), l: MESES[dm.getMonth()] + (dm.getFullYear() !== d0.getFullYear() ? " de " + dm.getFullYear() : "") }); }
+    if (!mesRecup || !meses.some(function (m) { return m.v === mesRecup; })) mesRecup = meses[0].v;
+    var selMes = '<select class="kpi-mes" id="kpiMesRecup" aria-label="Mês do valor recuperado">' + meses.map(function (m) {
+      return '<option value="' + m.v + '"' + (m.v === mesRecup ? " selected" : "") + ">" + m.l + "</option>";
+    }).join("") + "</select>";
     var tiles = [
       { n: vis.length, l: "Alunos em acompanhamento" },
-      { n: money(tot), l: "Valor em aberto", cls: "lead" },
-      { n: money(recuperadoNoMes(mesAtual(), carteira)), l: "Recuperado em " + mesLbl, c: "success" },
+      { n: money(tot), l: "Valor em aberto " + new Date().getFullYear(), cls: "lead" },
+      { n: money(recuperadoNoMes(mesRecup, carteira)), l: "Recuperado em " + selMes, c: "success" },
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
       { n: c.em_negociacao || 0, l: "Em negociação", c: "info" },
       { n: c.aguardando_retorno || 0, l: "Aguardando retorno", c: "warn" },
@@ -360,7 +396,7 @@
     var tb = $("tbody");
     if (!f.length) {
       var vazio = !todos.length;
-      tb.innerHTML = '<tr><td colspan="7" class="empty"><b>' + (vazio ? "Nenhum aluno cadastrado ainda" : "Nenhum resultado para estes filtros") + '</b><div class="muted">' +
+      tb.innerHTML = '<tr><td colspan="8" class="empty"><b>' + (vazio ? "Nenhum aluno cadastrado ainda" : "Nenhum resultado para estes filtros") + '</b><div class="muted">' +
         (vazio ? "Importe a planilha atual ou cadastre o primeiro caso para começar." : "Ajuste a busca ou os filtros acima.") + "</div></td></tr>";
       return;
     }
@@ -373,6 +409,7 @@
       return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + '</div><div class="meta">' +
         esc(a.responsavel || "sem responsável informado") + (a.ra ? " · RA " + esc(a.ra) : "") + (a.turma ? " · " + esc(a.turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + (a.parcelasAberto > 1 ? '<div class="meta">' + a.parcelasAberto + " parcelas</div>" : "") + "</td>" +
+        "<td>" + faixasAtraso(a, h) + "</td>" +
         "<td>" + pill(a.status || "sem_contato") + "</td>" +
         "<td>" + (a.setor ? esc(a.setor) : '<span class="muted">—</span>') + "</td>" +
         "<td>" + (uc && uc.data ? br(uc.data) + '<div class="meta">' + esc(uc.canal || "") + "</div>" : '<span class="muted">sem contato</span>') + "</td>" +
@@ -710,9 +747,11 @@
     var map = {}, ordem = [];
     rows.forEach(function (r) {
       var k = r.ra && r.ra.trim() ? "ra:" + r.ra.trim().toLowerCase() : "nm:" + r.nome.trim().toLowerCase();
-      if (!map[k]) { map[k] = { ra: r.ra || "", nome: r.nome, turma: r.turma || "", responsavel: r.responsavel || "", telefone: r.telefone || "", email: r.email || "", valorAberto: 0, parcelas: 0, vencimento: "" }; ordem.push(k); }
+      if (!map[k]) { map[k] = { ra: r.ra || "", nome: r.nome, turma: r.turma || "", responsavel: r.responsavel || "", telefone: r.telefone || "", email: r.email || "", valorAberto: 0, parcelas: 0, vencimento: "", parcelasVenc: [] }; ordem.push(k); }
       var g = map[k];
       g.valorAberto += r.valorAberto || 0; g.parcelas++;
+      // vencimento e valor de cada parcela: é o que dá a faixa de atraso por parcela
+      if (r.vencimento) g.parcelasVenc.push([r.vencimento, Math.round((r.valorAberto || 0) * 100) / 100]);
       ["ra", "turma", "responsavel", "telefone", "email"].forEach(function (c) { if (!g[c] && r[c]) g[c] = r[c]; });
       if (r.vencimento && (!g.vencimento || r.vencimento < g.vencimento)) g.vencimento = r.vencimento;
     });

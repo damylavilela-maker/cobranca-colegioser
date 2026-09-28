@@ -207,6 +207,8 @@ export default {
         // Bancos criados antes da aba Contraturno não têm a coluna "carteira".
         const cols = (await env.DB.prepare("PRAGMA table_info(alunos)").all()).results.map((c) => c.name);
         if (!cols.includes("carteira")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN carteira TEXT NOT NULL DEFAULT 'regular'").run();
+        // vencimento e valor de cada parcela em aberto (JSON), para a faixa de atraso por parcela
+        if (!cols.includes("parcelas_venc")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN parcelas_venc TEXT NOT NULL DEFAULT '[]'").run();
         // Cada parcela da Serasa pertence a um período (como uma linha pertence a uma aba da planilha).
         const colsSer = (await env.DB.prepare("PRAGMA table_info(serasa)").all()).results.map((c) => c.name);
         if (!colsSer.includes("periodo_id")) await env.DB.prepare("ALTER TABLE serasa ADD COLUMN periodo_id TEXT NOT NULL DEFAULT ''").run();
@@ -669,8 +671,15 @@ function alunoSaida(r) {
     ultimoContato: r.ultimo_contato_data ? { data: r.ultimo_contato_data, canal: r.ultimo_contato_canal || "" } : null,
     proximoRetorno: r.proximo_retorno || null, arquivado: !!r.arquivado,
     ultimaAtualizacaoFinanceira: r.ultima_atualizacao_financeira || null,
-    createdAt: r.criado_em, updatedAt: r.atualizado_em, carteira: r.carteira || "regular"
+    createdAt: r.criado_em, updatedAt: r.atualizado_em, carteira: r.carteira || "regular", parcelasVenc: lerParcelasVenc(r.parcelas_venc)
   };
+}
+
+// Parcelas em aberto do aluno: [[vencimento, valor], ...] (só o que o relatório importado trouxe).
+function lerParcelasVenc(t) { try { const a = JSON.parse(t || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function parcelasVencJSON(lista) {
+  const a = Array.isArray(lista) ? lista : [];
+  return JSON.stringify(a.slice(0, 200).map((p) => [dataISO(p && p[0]), numero(p && p[1])]).filter((p) => p[0]).sort((x, y) => x[0].localeCompare(y[0])));
 }
 
 // Converte um aluno no formato do painel (camelCase) para os valores das colunas.
@@ -773,8 +782,8 @@ async function importarPlanilha(req, env) {
     const achado = (ra && porRa[ra.toLowerCase()]) || porNome[nome.toLowerCase()] || porNome[texto(r0.nome, 150).toLowerCase()];
     if (achado) {
       if (tocados.has(achado.id)) continue;
-      const sets = ["valor_aberto = ?", "parcelas_aberto = ?", "ultima_atualizacao_financeira = ?", "atualizado_em = ?"];
-      const vals = [numero(r.valorAberto), parseInt(r.parcelas, 10) || 1, agora, agora];
+      const sets = ["valor_aberto = ?", "parcelas_aberto = ?", "ultima_atualizacao_financeira = ?", "atualizado_em = ?", "parcelas_venc = ?"];
+      const vals = [numero(r.valorAberto), parseInt(r.parcelas, 10) || 1, agora, agora, parcelasVencJSON(r0.parcelasVenc)];
       if (bx && bx.nome && bx.nome !== achado.nome) { sets.push("nome = ?"); vals.push(bx.nome); }
       const opc = { turma: texto(r.turma, 80), responsavel: texto(r.responsavel, 150), telefone: texto(r.telefone, 60), email: texto(r.email, 150) };
       for (const k of Object.keys(opc)) if (opc[k]) { sets.push(`${k} = ?`); vals.push(opc[k]); }
@@ -793,6 +802,7 @@ async function importarPlanilha(req, env) {
         ultimaAtualizacaoFinanceira: agora, createdAt: agora, updatedAt: agora, carteira
       };
       stmts.push(env.DB.prepare(insertSQL("alunos", ALUNO_COLS)).bind(...alunoValores(novo, id)));
+      stmts.push(env.DB.prepare("UPDATE alunos SET parcelas_venc = ? WHERE id = ?").bind(parcelasVencJSON(r0.parcelasVenc), id));
       porNome[nome.toLowerCase()] = { id, nome, ra };
       if (ra) porRa[ra.toLowerCase()] = { id, nome, ra };
       tocados.add(id);
