@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v12";
+  var VERSAO = "28/09 · v13";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2385,6 +2385,19 @@
     api("GET", "/api/juridico?arquivados=1").then(function (d) { renderArquivadosJur(d.casos); })
       .catch(function (x) { $("jurArqLista").innerHTML = '<div class="form-err">' + esc(x.message) + "</div>"; });
   });
+  // começar do zero (só administradores): dois cliques de confirmação, depois apaga tudo no servidor
+  $("btnJurZerar").addEventListener("click", function () {
+    var b = this;
+    if (!b.classList.contains("armed")) {
+      b.classList.add("armed"); b.textContent = "Confirmar: apagar os " + casosJur.length + " casos, os arquivados e as tratativas";
+      clearTimeout(b.h); b.h = setTimeout(function () { b.classList.remove("armed"); b.textContent = "Apagar tudo e começar do zero"; }, 8000);
+      return;
+    }
+    clearTimeout(b.h); b.disabled = true; b.textContent = "Apagando…";
+    api("POST", "/api/juridico/limpar", { confirmar: "APAGAR" }).then(function (r) {
+      casosJur = []; renderJuridico(); toast(r.apagados + " caso(s) apagado(s). Agora é só importar a planilha.");
+    }).catch(function (x) { toast(x.message); }).then(function () { b.disabled = false; b.classList.remove("armed"); b.textContent = "Apagar tudo e começar do zero"; });
+  });
   $("jurArqLista").addEventListener("click", function (e) {
     var b = e.target.closest("[data-restaurar]"); if (!b) return;
     b.disabled = true;
@@ -2472,7 +2485,7 @@
     parcelas: ["parcelas em aberto", "parcelas", "qtd parcelas", "qtd. parcelas", "quantidade de parcelas", "n parcelas"],
     enviadoJuridico: ["enviado ao juridico", "juridico"], dataEnvio: ["data envio juridico", "data de envio ao juridico"], motivo: ["motivo pendencia", "motivo"],
     obs: ["ultima observacao", "observacao", "ultima tratativa", "tratativa"], extrato: ["extrato (r$)", "extrato"],
-    contaFinanceira: ["conta financeira", "cf"], linkDrive: ["link drive", "link", "documentos", "link dos documentos"]
+    contaFinanceira: ["conta financeira", "cf"], linkDrive: ["link drive", "link do drive", "link", "documentos", "link dos documentos", "pasta do drive", "drive"]
   };
   // nome exato primeiro; parte do nome só para nomes longos ("ra" não pode casar com "carteira")
   function colunaJur(h, nomes) {
@@ -2504,11 +2517,15 @@
     Object.keys(JUR_COLUNAS).forEach(function (k) { ix[k] = colunaJur(headers, JUR_COLUNAS[k]); });
     if (ix.aluno === -1 && ix.ra === -1) return null;
     var stAba = t.aba ? statusDoTexto(t.aba) : null, out = [];
+    // aba "Carteira 2023" sem coluna Carteira: a carteira é o nome da aba e o ano letivo é o anterior
+    // (a planilha da GM traz "Carteira 2023 · alunos inadimplentes – ano 2022")
+    var mCart = /^carteira\s+(\d{4})$/i.exec(String(t.aba || "").trim());
+    var cartAba = ix.carteira === -1 && mCart ? "Carteira " + mCart[1] : "", anoAba = cartAba && ix.ano === -1 ? String(+mCart[1] - 1) : "";
     t.rows.forEach(function (r) {
       function cel(k) { var v = ix[k] === -1 ? "" : r[ix[k]]; return v instanceof Date ? v : String(v == null ? "" : v).trim(); }
       var l = {
         ra: cel("ra").replace(/\.0+$/, ""), aluno: cel("aluno"), responsavel: cel("responsavel"), cpf: cel("cpf"), email: cel("email"), celular: cel("celular"),
-        carteira: cel("carteira"), ano: cel("ano").replace(/\.0+$/, ""), contaFinanceira: cel("contaFinanceira"), motivo: cel("motivo"), obs: cel("obs")
+        carteira: cel("carteira") || cartAba, ano: cel("ano").replace(/\.0+$/, "") || anoAba, contaFinanceira: cel("contaFinanceira"), motivo: cel("motivo"), obs: cel("obs")
       };
       if (!l.ra && !l.aluno) return;
       // linha de total no fim da planilha não é caso

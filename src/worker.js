@@ -351,6 +351,7 @@ async function rotear(req, env, url) {
     if (partes.length === 1 && m === "POST") return criarCasoJur(req, env, eu);
     if (partes[1] === "importar" && m === "POST") return importarJuridico(req, env, eu);
     if (partes[1] === "evolucao" && m === "GET") return evolucaoJuridico(env);
+    if (partes[1] === "limpar" && m === "POST") { exigirAdmin(eu); return limparJuridico(req, env); }
     if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
     if (partes.length === 3 && partes[2] === "obs" && m === "POST") return novaObsJur(req, env, eu, partes[1]);
   }
@@ -1577,4 +1578,14 @@ async function evolucaoJuridico(env) {
   await env.DB.prepare("INSERT OR REPLACE INTO jur_kpi (data, dados) VALUES (?, ?)").bind(hojeISO(), JSON.stringify(snap)).run();
   const h = (await env.DB.prepare("SELECT * FROM jur_kpi ORDER BY data").all()).results;
   return json({ historico: h.map((x) => { let d = {}; try { d = JSON.parse(x.dados); } catch (e) { d = {}; } return { data: x.data, ...d }; }) });
+}
+
+// "Começar do zero" (só administradores): apaga todos os casos, tratativas e leituras do gráfico
+// do Painel jurídico. Não dá para desfazer; a tela pede confirmação antes.
+async function limparJuridico(req, env) {
+  const b = await corpo(req);
+  if (b.confirmar !== "APAGAR") throw new HttpError(400, "Confirmação ausente.");
+  const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM jur_casos").first();
+  await env.DB.batch(["DELETE FROM jur_obs", "DELETE FROM jur_casos", "DELETE FROM jur_kpi"].map((s) => env.DB.prepare(s)));
+  return json({ apagados: n ? n.n : 0 });
 }
