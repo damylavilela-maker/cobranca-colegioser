@@ -1486,7 +1486,8 @@ async function listarJuridico(env, url) {
     const obs = (await env.DB.prepare("SELECT o.caso_id, o.data, o.texto, o.autor FROM jur_obs o JOIN jur_casos c ON c.id = o.caso_id WHERE c.arquivado = 0 ORDER BY o.data DESC").all()).results;
     obs.forEach((o) => { (porCaso[o.caso_id] = porCaso[o.caso_id] || []).push({ data: o.data, texto: o.texto, autor: o.autor }); });
   }
-  return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])) });
+  const inad = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'jur_inad_data'").first();
+  return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])), inadData: inad ? inad.valor : "" });
 }
 
 // Dados cadastrais que faltarem vêm da Base de dados (pelo RA ou pelo nome).
@@ -1683,7 +1684,9 @@ async function inadimplenciaJuridico(req, env, eu) {
     });
     await executarEmLotes(env, stmts);
   }
-  return json({ mudancas, foraDoPainel, outrasCarteiras, noRelatorio: noRelatorio.size, casosAtivos: casos.length, gravado: !b.simular });
+  let inadData = "";
+  if (!b.simular) { inadData = dataISO(b.dataRelatorio) || hojeISO(); await env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('jur_inad_data', ?)").bind(inadData).run(); }
+  return json({ mudancas, foraDoPainel, outrasCarteiras, noRelatorio: noRelatorio.size, casosAtivos: casos.length, gravado: !b.simular, inadData });
 }
 
 // Relatório de recebimento: cada pagamento é abatido do valor em aberto do caso e registrado
@@ -1716,8 +1719,14 @@ async function recebimentoJuridico(req, env, eu) {
   const mudancas = Object.values(porCaso).map(({ c, pagamentos, total }) => {
     const antes = c.valor_aberto;
     let valor = antes == null ? null : Math.round((Number(antes) - total) * 100) / 100;
+    if (valor != null && valor < 0) valor = 0;
+    // Com acordo (valor negociado), pagar parcela deixa o caso Em dia: o acordo ainda pode ter
+    // parcelas a vencer, então não vira Quitado sozinho. Sem acordo: zerou é Quitado, sobrou é
+    // Parcialmente pago. Caso já Quitado continua Quitado.
     let status;
-    if (valor != null && valor <= 0) { valor = 0; status = "quitado"; } else status = Number(c.valor_negociado) > 0 ? "em_dia" : "parcial";
+    if (c.status === "quitado") status = "quitado";
+    else if (Number(c.valor_negociado) > 0) status = "em_dia";
+    else status = valor === 0 ? "quitado" : "parcial";
     const m = mudancaSaida(c, { status, valor_aberto: valor, parcelas: c.parcelas }, "pagamento");
     m.pagamentos = pagamentos; m.totalPago = Math.round(total * 100) / 100;
     return m;
