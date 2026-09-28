@@ -247,6 +247,9 @@ export default {
         // Uma vez: separa RA e nome que ficaram grudados na importação de PDF com título centralizado.
         const ras = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('ra_com_nome_consertado', ?)").bind(agora).run();
         if (!ras.meta || ras.meta.changes > 0) await consertarRasSalvos(env);
+        // Uma vez: todos os casos do Painel jurídico ficam como já enviados ao jurídico.
+        const envj = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('jur_todos_enviados', ?)").bind(agora).run();
+        if (!envj.meta || envj.meta.changes > 0) await env.DB.prepare("UPDATE jur_casos SET enviado_juridico = 1").run();
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -1456,7 +1459,8 @@ function casoValores(o, atual, eu) {
     tem("valorNegociado") ? valorOuNull(o.valorNegociado) : (a.valor_negociado ?? null),
     tem("valorAberto") ? valorOuNull(o.valorAberto) : (a.valor_aberto ?? null),
     tem("status") ? jurStatusValido(o.status) : a.status || "nao_classificado",
-    tem("enviadoJuridico") ? (o.enviadoJuridico ? 1 : 0) : (a.enviado_juridico || 0),
+    // a carteira jurídica inteira já foi enviada ao jurídico: caso novo entra como enviado
+    tem("enviadoJuridico") ? (o.enviadoJuridico ? 1 : 0) : (atual ? (a.enviado_juridico ? 1 : 0) : 1),
     tem("dataEnvio") ? dataISO(o.dataEnvio) : a.data_envio_juridico || "",
     tem("motivo") ? texto(o.motivo, 120) : a.motivo_pendencia || "",
     tem("flagConflito") ? (o.flagConflito ? 1 : 0) : (a.flag_conflito || 0),
@@ -1532,7 +1536,16 @@ async function criarCasoJur(req, env, eu) {
 async function alterarCasoJur(req, env, eu, id) {
   const atual = await buscarCasoJur(env, id);
   const b = await corpo(req);
-  await env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...casoValores(b, atual, eu)).run();
+  const vals = casoValores(b, atual, eu);
+  const stmts = [env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals)];
+  // mudança de valor negociado ou de status fica no histórico de tratativas
+  const iNeg = JUR_COLS.indexOf("valor_negociado"), iSt = JUR_COLS.indexOf("status");
+  const brl = (v) => v == null ? "—" : "R$ " + numero(v).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const partesTxt = [];
+  if ((atual.valor_negociado ?? null) !== (vals[iNeg] ?? null)) partesTxt.push(`valor negociado ${brl(atual.valor_negociado)} → ${brl(vals[iNeg])}`);
+  if (atual.status !== vals[iSt]) partesTxt.push(`status ${JUR_ST_ROTULO[atual.status] || atual.status} → ${JUR_ST_ROTULO[vals[iSt]] || vals[iSt]}`);
+  if (partesTxt.length) stmts.push(insertObsJur(env, id, agoraISO(), "Atualizado: " + partesTxt.join("; ") + ".", eu));
+  await env.DB.batch(stmts);
   return casoCompleto(env, id);
 }
 
@@ -1597,6 +1610,7 @@ async function importarJuridico(req, env, eu) {
     const atual = (ra && (porRa[ra.toLowerCase()] || []).find((c) => nomesCompativeis(c.aluno, nome) && mesmaCarteira(c))) ||
       (nome && [porNome[normNome(nome)]].find((c) => c && (!ra || !c.ra) && mesmaCarteira(c))) || null;
     const o = completarJurComBase(l, base);
+    delete o.enviadoJuridico; // toda a carteira jurídica já foi enviada ao jurídico
     const vals = casoValores(atual ? o : { status: "nao_classificado", ...o, aluno: o.aluno || "Sem nome" }, atual, eu);
     stmts.push(env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals));
     const obs = texto(l.obs, 4000);

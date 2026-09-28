@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v29";
+  var VERSAO = "28/09 · v30";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2508,26 +2508,47 @@
     abrir("mJurCaso");
   }
   $("jcJuridico").addEventListener("change", function () { if (this.checked && !$("jcDataEnvio").value) $("jcDataEnvio").value = hoje(); });
-  $("jcSalvar").addEventListener("click", function () {
-    if (!casoJur) return;
-    if (!$("jcAluno").value.trim()) return mostrarErro($("jcErr"), "Informe o nome do aluno.");
-    var btn = this; btn.disabled = true;
-    api("PATCH", "/api/juridico/" + encodeURIComponent(casoJur.id), {
+  // grava a ficha do caso como está na tela (usado pelo botão Salvar, pelo valor negociado e ao
+  // registrar tratativa). Mudança de valor negociado ou status fica no histórico (servidor).
+  function dadosCasoJur() {
+    return {
       aluno: $("jcAluno").value.trim(), ra: $("jcRa").value.trim(), responsavel: $("jcResp").value.trim(), cpf: $("jcCpf").value.trim(),
       email: $("jcEmail").value.trim(), celular: $("jcCelular").value.trim(), carteira: $("jcCarteira").value.trim(), ano: $("jcAno").value.trim(),
       status: $("jcStatus").value, valorNegociado: numOuNull($("jcNegociado").value), valorAberto: numOuNull($("jcAberto").value), parcelas: parseInt($("jcParcelas").value, 10) || 0,
       enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value, flagConflito: false,
       extrato: numOuNull($("jcExtrato").value), contaFinanceira: $("jcConta").value.trim(), linkDrive: $("jcLink").value.trim()
-    }).then(function (d) {
-      trocarCaso(d.caso); $("mJurCaso").hidden = true; renderJuridico(); toast("Caso atualizado.");
-    }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
+    };
+  }
+  function salvarCasoJur() {
+    if (!casoJur) return Promise.reject(new Error("Nenhum caso aberto."));
+    if (!$("jcAluno").value.trim()) return Promise.reject(new Error("Informe o nome do aluno."));
+    return api("PATCH", "/api/juridico/" + encodeURIComponent(casoJur.id), dadosCasoJur()).then(function (d) {
+      trocarCaso(d.caso); casoJur = d.caso; renderObsJur(d.caso); renderJuridico();
+      $("jcAtualizado").textContent = "Última atualização: " + dataHora(d.caso.atualizadoEm) + (d.caso.atualizadoPor ? " por " + d.caso.atualizadoPor : "");
+      return d;
+    });
+  }
+  $("jcSalvar").addEventListener("click", function () {
+    var btn = this; btn.disabled = true;
+    salvarCasoJur().then(function () { $("mJurCaso").hidden = true; toast("Caso atualizado."); })
+      .catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
   });
+  // valor negociado salva sozinho; com acordo, "Sem negociação"/"Não classificado" vira "Em dia"
+  $("jcNegociado").addEventListener("change", function () {
+    var v = numOuNull(this.value);
+    if (v > 0 && (["sem_negociacao", "nao_classificado"].indexOf($("jcStatus").value) !== -1)) $("jcStatus").value = "em_dia";
+    mostrarErro($("jcErr"), "");
+    salvarCasoJur().then(function () { toast("Valor negociado salvo."); }).catch(function (x) { mostrarErro($("jcErr"), x.message); });
+  });
+  // registrar a tratativa também grava o que foi preenchido na ficha (valor negociado, status…)
   $("jcAddObs").addEventListener("click", function () {
     var t = $("jcNovaObs").value.trim();
     if (!t) return mostrarErro($("jcErr"), "Escreva uma observação antes de adicionar.");
     var btn = this; btn.disabled = true; mostrarErro($("jcErr"), "");
-    api("POST", "/api/juridico/" + encodeURIComponent(casoJur.id) + "/obs", { texto: t }).then(function (d) {
-      trocarCaso(d.caso); casoJur = d.caso; $("jcNovaObs").value = ""; renderObsJur(d.caso); renderJuridico(); toast("Observação registrada.");
+    salvarCasoJur().then(function () {
+      return api("POST", "/api/juridico/" + encodeURIComponent(casoJur.id) + "/obs", { texto: t });
+    }).then(function (d) {
+      trocarCaso(d.caso); casoJur = d.caso; $("jcNovaObs").value = ""; renderObsJur(d.caso); renderJuridico(); toast("Atendimento registrado e caso atualizado.");
     }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
   });
   $("jcArquivar").addEventListener("click", function () {
@@ -2562,7 +2583,7 @@
 
   // novo caso
   function prepararNovoCaso() {
-    $("formJurNovo").reset(); mostrarErro($("ncErr"), "");
+    $("formJurNovo").reset(); mostrarErro($("ncErr"), ""); $("ncJuridico").checked = true; // toda a carteira já foi enviada ao jurídico
     fill($("ncStatus"), opcoesStatusJur()); $("ncStatus").value = "nao_classificado";
     fill($("ncMotivo"), JUR_MOTIVOS, "Selecionar...");
     $("ncCarteiras").innerHTML = unicos("carteira").map(function (c) { return '<option value="' + esc(c) + '"></option>'; }).join("");
@@ -2589,7 +2610,7 @@
       aluno: $("ncAluno").value.trim(), ra: ra, carteira: $("ncCarteira").value.trim(), ano: $("ncAno").value.trim(), status: $("ncStatus").value,
       responsavel: $("ncResp").value.trim(), cpf: $("ncCpf").value.trim(), celular: $("ncCelular").value.trim(), email: $("ncEmail").value.trim(),
       valorNegociado: numOuNull($("ncNegociado").value), valorAberto: numOuNull($("ncAberto").value), parcelas: parseInt($("ncParcelas").value, 10) || 0,
-      enviadoJuridico: $("ncJuridico").checked, dataEnvio: $("ncJuridico").checked ? hoje() : "", motivo: $("ncMotivo").value, obs: $("ncObs").value.trim()
+      enviadoJuridico: $("ncJuridico").checked, dataEnvio: "", motivo: $("ncMotivo").value, obs: $("ncObs").value.trim()
     }).then(function (d) {
       trocarCaso(d.caso); irJur("painel"); toast("Caso adicionado.");
     }).catch(function (x) { mostrarErro(err, x.message); }).then(function () { btn.disabled = false; });
