@@ -161,7 +161,9 @@ const SCHEMA = [
     autor TEXT NOT NULL DEFAULT ''
   )`,
   `CREATE INDEX IF NOT EXISTS idx_jur_obs_caso ON jur_obs(caso_id)`,
-  `CREATE TABLE IF NOT EXISTS jur_kpi (data TEXT PRIMARY KEY, dados TEXT NOT NULL)`
+  `CREATE TABLE IF NOT EXISTS jur_kpi (data TEXT PRIMARY KEY, dados TEXT NOT NULL)`,
+  // pagamentos do relatório de recebimento já abatidos (não abate duas vezes o mesmo)
+  `CREATE TABLE IF NOT EXISTS jur_pagamentos (chave TEXT PRIMARY KEY, caso_id TEXT NOT NULL, data TEXT NOT NULL DEFAULT '', valor REAL NOT NULL DEFAULT 0, criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`
 ];
 
 // Períodos que já existiam na planilha "SERASA - SER", criados uma única vez. O nome é o
@@ -354,6 +356,8 @@ async function rotear(req, env, url) {
     if (partes[1] === "importar" && m === "POST") return importarJuridico(req, env, eu);
     if (partes[1] === "evolucao" && m === "GET") return evolucaoJuridico(env);
     if (partes[1] === "limpar" && m === "POST") { exigirAdmin(eu); return limparJuridico(req, env); }
+    if (partes[1] === "inadimplencia" && m === "POST") return inadimplenciaJuridico(req, env, eu);
+    if (partes[1] === "recebimento" && m === "POST") return recebimentoJuridico(req, env, eu);
     if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
     if (partes.length === 3 && partes[2] === "obs" && m === "POST") return novaObsJur(req, env, eu, partes[1]);
   }
@@ -1596,6 +1600,140 @@ async function limparJuridico(req, env) {
   const b = await corpo(req);
   if (b.confirmar !== "APAGAR") throw new HttpError(400, "Confirmação ausente.");
   const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM jur_casos").first();
-  await env.DB.batch(["DELETE FROM jur_obs", "DELETE FROM jur_casos", "DELETE FROM jur_kpi"].map((s) => env.DB.prepare(s)));
+  await env.DB.batch(["DELETE FROM jur_obs", "DELETE FROM jur_casos", "DELETE FROM jur_kpi", "DELETE FROM jur_pagamentos"].map((s) => env.DB.prepare(s)));
   return json({ apagados: n ? n.n : 0 });
+}
+
+// ---------------------------------------------------------------- Painel jurídico: comparação com relatórios
+
+// Casos ativos por RA e por nome. Um aluno pode ter caso em mais de uma carteira: o relatório
+// vale para o caso da carteira mais recente (os outros aparecem na prévia para conferência).
+function indiceCasosJur(casos) {
+  const porRa = {}, porNome = {};
+  casos.forEach((c) => {
+    if (c.ra) (porRa[c.ra.toLowerCase()] = porRa[c.ra.toLowerCase()] || []).push(c);
+    const n = normNome(c.aluno); if (n) (porNome[n] = porNome[n] || []).push(c);
+  });
+  const ordem = (a, b) => normNome(b.carteira).localeCompare(normNome(a.carteira));
+  Object.values(porRa).forEach((l) => l.sort(ordem));
+  Object.values(porNome).forEach((l) => l.sort(ordem));
+  return { porRa, porNome };
+}
+function acharCasosJur(idx, ra, nome) {
+  ra = texto(ra, 30).toLowerCase();
+  if (ra && idx.porRa[ra]) { const l = idx.porRa[ra].filter((c) => nomesCompativeis(c.aluno, nome)); if (l.length) return l; }
+  const n = normNome(nome);
+  if (n && idx.porNome[n]) return idx.porNome[n].filter((c) => !ra || !c.ra || c.ra.toLowerCase() === ra);
+  // nome cortado no relatório (PDF): começo do nome, se só um aluno bater
+  if (n && n.length >= 12) {
+    const k = Object.keys(idx.porNome).filter((x) => x.startsWith(n) || n.startsWith(x));
+    if (k.length === 1) return idx.porNome[k[0]];
+  }
+  return [];
+}
+const JUR_ST_ROTULO = { sem_negociacao: "Sem negociação", nao_classificado: "Não classificado", verificar: "Verificar manualmente", em_aberto: "Em aberto", parcial: "Parcialmente pago", em_dia: "Em dia", quitado: "Quitado" };
+function mudancaSaida(c, novo, motivo) {
+  return { id: c.id, ra: c.ra, aluno: c.aluno, carteira: c.carteira, statusAntes: c.status, statusDepois: novo.status, valorAntes: c.valor_aberto, valorDepois: novo.valor_aberto, parcelasDepois: novo.parcelas, motivo };
+}
+
+// Relatório de inadimplência: quem está nele tem o valor em aberto e as parcelas atualizados
+// (se estava Quitado ou Em dia, volta para Em aberto); quem tinha valor em aberto e não está
+// no relatório fica Quitado com valor 0. Com "simular", só devolve o que vai mudar.
+async function inadimplenciaJuridico(req, env, eu) {
+  const b = await corpo(req);
+  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 5000) : [];
+  if (!linhas.length) throw new HttpError(400, "Nenhum aluno encontrado no relatório.");
+  const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0").all()).results;
+  const idx = indiceCasosJur(casos);
+  const noRelatorio = new Set(), mudancas = [], foraDoPainel = [], outrasCarteiras = [];
+  // o mesmo aluno pode vir em várias linhas (uma por parcela): soma por caso
+  const porCaso = {};
+  for (const l of linhas) {
+    const nome = texto(l.aluno || l.nome, 150), ra = texto(l.ra, 30);
+    if (!nome && !ra) continue;
+    const achados = acharCasosJur(idx, ra, nome);
+    if (!achados.length) { foraDoPainel.push({ ra, aluno: nome, valor: numero(l.valorAberto) }); continue; }
+    const c = achados[0];
+    achados.slice(1).forEach((o) => outrasCarteiras.push({ ra: o.ra, aluno: o.aluno, carteira: o.carteira, usado: c.carteira }));
+    const p = porCaso[c.id] || (porCaso[c.id] = { c, valor: 0, parcelas: 0 });
+    p.valor += numero(l.valorAberto); p.parcelas += parseInt(l.parcelas, 10) || 1;
+  }
+  Object.values(porCaso).forEach(({ c, valor, parcelas }) => {
+    noRelatorio.add(c.id);
+    const novo = { status: c.status === "quitado" || c.status === "em_dia" ? "em_aberto" : c.status, valor_aberto: Math.round(valor * 100) / 100, parcelas };
+    if (novo.status !== c.status || novo.valor_aberto !== c.valor_aberto || novo.parcelas !== c.parcelas)
+      mudancas.push(mudancaSaida(c, novo, "no relatório"));
+  });
+  casos.forEach((c) => {
+    if (noRelatorio.has(c.id) || !(Number(c.valor_aberto) > 0)) return;
+    mudancas.push(mudancaSaida(c, { status: "quitado", valor_aberto: 0, parcelas: 0 }, "fora do relatório"));
+  });
+  if (!b.simular && mudancas.length) {
+    const agora = agoraISO(), dia = b.dataRelatorio && dataISO(b.dataRelatorio) ? dataISO(b.dataRelatorio) : hojeISO();
+    const brd = dia.split("-").reverse().join("/");
+    const stmts = [];
+    mudancas.forEach((m) => {
+      stmts.push(env.DB.prepare("UPDATE jur_casos SET status = ?, valor_aberto = ?, parcelas = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?")
+        .bind(m.statusDepois, m.valorDepois, m.parcelasDepois, agora, eu.nome, m.id));
+      const txt = m.motivo === "fora do relatório"
+        ? `Não consta no relatório de inadimplência de ${brd}: status ${JUR_ST_ROTULO[m.statusAntes] || m.statusAntes} → Quitado (valor em aberto zerado).`
+        : `Relatório de inadimplência de ${brd}: valor em aberto R$ ${numero(m.valorDepois).toFixed(2).replace(".", ",")} em ${m.parcelasDepois} parcela(s)` +
+          (m.statusAntes !== m.statusDepois ? `; status ${JUR_ST_ROTULO[m.statusAntes] || m.statusAntes} → ${JUR_ST_ROTULO[m.statusDepois]}.` : ".");
+      stmts.push(insertObsJur(env, m.id, agora, txt, eu));
+    });
+    await executarEmLotes(env, stmts);
+  }
+  return json({ mudancas, foraDoPainel, outrasCarteiras, noRelatorio: noRelatorio.size, casosAtivos: casos.length, gravado: !b.simular });
+}
+
+// Relatório de recebimento: cada pagamento é abatido do valor em aberto do caso e registrado
+// como tratativa. Zerou: Quitado; sobrou: Em dia se o caso tem acordo (valor negociado),
+// senão Parcialmente pago. O mesmo pagamento (caso + data + valor) nunca é abatido duas vezes.
+async function recebimentoJuridico(req, env, eu) {
+  const b = await corpo(req);
+  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 5000) : [];
+  if (!linhas.length) throw new HttpError(400, "Nenhum pagamento encontrado no relatório.");
+  const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0").all()).results;
+  const idx = indiceCasosJur(casos);
+  const jaLancados = new Set((await env.DB.prepare("SELECT chave FROM jur_pagamentos").all()).results.map((r) => r.chave));
+  const porCaso = {}, foraDoPainel = [], repetidos = [];
+  const vistos = {};
+  for (const l of linhas) {
+    const nome = texto(l.aluno || l.nome, 150), ra = texto(l.ra, 30), valor = numero(l.valor), data = dataISO(l.data);
+    if ((!nome && !ra) || !(valor > 0)) continue;
+    const achados = acharCasosJur(idx, ra, nome);
+    if (!achados.length) { foraDoPainel.push({ ra, aluno: nome, data, valor }); continue; }
+    // entre os casos do aluno, o que ainda tem valor em aberto (carteira mais recente primeiro)
+    const c = achados.find((x) => Number(x.valor_aberto) > 0) || achados[0];
+    // a mesma linha repetida no próprio arquivo conta uma vez por ocorrência
+    const base = [c.id, data, valor.toFixed(2)].join("|");
+    vistos[base] = (vistos[base] || 0) + 1;
+    const chave = base + "|" + vistos[base];
+    if (jaLancados.has(chave)) { repetidos.push({ ra: c.ra, aluno: c.aluno, data, valor }); continue; }
+    const p = porCaso[c.id] || (porCaso[c.id] = { c, pagamentos: [], total: 0 });
+    p.pagamentos.push({ data, valor, chave }); p.total += valor;
+  }
+  const mudancas = Object.values(porCaso).map(({ c, pagamentos, total }) => {
+    const antes = c.valor_aberto;
+    let valor = antes == null ? null : Math.round((Number(antes) - total) * 100) / 100;
+    let status;
+    if (valor != null && valor <= 0) { valor = 0; status = "quitado"; } else status = Number(c.valor_negociado) > 0 ? "em_dia" : "parcial";
+    const m = mudancaSaida(c, { status, valor_aberto: valor, parcelas: c.parcelas }, "pagamento");
+    m.pagamentos = pagamentos; m.totalPago = Math.round(total * 100) / 100;
+    return m;
+  });
+  if (!b.simular && mudancas.length) {
+    const agora = agoraISO(), stmts = [];
+    mudancas.forEach((m) => {
+      stmts.push(env.DB.prepare("UPDATE jur_casos SET status = ?, valor_aberto = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?")
+        .bind(m.statusDepois, m.valorDepois, agora, eu.nome, m.id));
+      m.pagamentos.forEach((pg) => {
+        stmts.push(env.DB.prepare("INSERT OR IGNORE INTO jur_pagamentos (chave, caso_id, data, valor, criado_em, criado_por) VALUES (?,?,?,?,?,?)").bind(pg.chave, m.id, pg.data, pg.valor, agora, eu.nome));
+        stmts.push(insertObsJur(env, m.id, agora, `Pagamento recebido${pg.data ? " em " + pg.data.split("-").reverse().join("/") : ""}: R$ ${pg.valor.toFixed(2).replace(".", ",")} (relatório de recebimento).`, eu));
+      });
+      if (m.statusAntes !== m.statusDepois) stmts.push(insertObsJur(env, m.id, agora, `Status ${JUR_ST_ROTULO[m.statusAntes] || m.statusAntes} → ${JUR_ST_ROTULO[m.statusDepois]} pelo relatório de recebimento` + (m.valorDepois != null ? ` (valor em aberto R$ ${numero(m.valorDepois).toFixed(2).replace(".", ",")}).` : "."), eu));
+    });
+    await executarEmLotes(env, stmts);
+  }
+  return json({ mudancas, foraDoPainel, repetidos, gravado: !b.simular });
 }

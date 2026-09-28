@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v20";
+  var VERSAO = "28/09 · v21";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2736,6 +2736,7 @@
     });
   }
   function receberArquivoJur(f) {
+    if (jurModo !== "cadastro") return receberRelatorioJur(f);
     var res = $("jurImpRes"); res.innerHTML = '<div class="meta">Lendo ' + esc(f.name) + "…</div>";
     jurPendentes = []; $("jurImpOk").disabled = true;
     var r = new FileReader();
@@ -2773,13 +2774,134 @@
       : '<div class="form-err">Nenhuma linha com Aluno ou RA foi encontrada no arquivo.</div>';
     $("jurImpOk").disabled = !linhas.length; $("jurImpOk").textContent = "Importar " + linhas.length + " caso(s)";
   }
-  $("btnJurImportar").addEventListener("click", function () {
-    jurPendentes = []; $("jurImpRes").innerHTML = ""; $("jurFile").value = "";
-    var b = $("jurImpOk"); b.disabled = true; b.textContent = "Importar casos";
+  // Três importações na mesma janela: cadastro (planilha dos casos), relatório de inadimplência
+  // e relatório de recebimento. Os dois relatórios são comparados com o painel no servidor; a
+  // prévia mostra o que muda e só grava ao confirmar.
+  var jurModo = "cadastro", jurRelatorio = null;
+  var JUR_MODOS = {
+    cadastro: { t: "Importar cadastro — Painel jurídico", s: "Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.", b: "Importar casos" },
+    inadimplencia: { t: "Importar relatório de inadimplência", s: "Envie o relatório de inadimplência (Excel, CSV ou o PDF do sistema). Quem está no relatório tem o valor em aberto e as parcelas atualizados (Quitado ou Em dia volta para Em aberto). Quem tinha valor em aberto e não está no relatório fica Quitado. Nada é gravado antes de você confirmar.", b: "Aplicar mudanças" },
+    recebimento: { t: "Importar relatório de recebimento", s: "Envie o relatório de recebimento (Excel, CSV ou PDF) com aluno ou RA, data e valor pago. Cada pagamento é abatido do valor em aberto e registrado nas tratativas. Zerou: Quitado; sobrou: Em dia (caso com acordo) ou Parcialmente pago. Um pagamento já lançado não é abatido de novo.", b: "Aplicar mudanças" }
+  };
+  function abrirJurImp(modo) {
+    jurModo = modo; jurPendentes = []; jurRelatorio = null;
+    $("jurImpRes").innerHTML = ""; $("jurFile").value = "";
+    $("jiTitulo").textContent = JUR_MODOS[modo].t; $("jiSub").textContent = JUR_MODOS[modo].s;
+    var b = $("jurImpOk"); b.disabled = true; b.hidden = false; b.textContent = JUR_MODOS[modo].b;
     abrir("mJurImp");
-  });
+  }
+  $("btnJurImportar").addEventListener("click", function () { abrirJurImp("cadastro"); });
+  $("btnJurInadimp").addEventListener("click", function () { abrirJurImp("inadimplencia"); });
+  $("btnJurReceb").addEventListener("click", function () { abrirJurImp("recebimento"); });
+
+  var REL_COLUNAS = {
+    ra: ["ra", "codigo", "matricula", "cod", "cod. aluno", "codigo do aluno", "cod aluno"],
+    aluno: ["aluno", "nome do aluno", "nome", "nome completo"],
+    valor: ["devido", "valor devido", "total devido", "valor em aberto", "valor em aberto (r$)", "saldo", "valor", "valor (r$)"],
+    venc: ["vencimento", "data vcto.", "data vcto", "data de vencimento", "dt vencimento", "dt. vencimento", "vcto"],
+    pago: ["valor pago", "vl pago", "vl. pago", "valor recebido", "recebido", "pago", "valor liquido", "liquido", "valor pago (r$)", "valor", "valor (r$)"],
+    data: ["data pagamento", "data de pagamento", "dt pagamento", "dt. pagamento", "data do pagamento", "data recebimento", "data de recebimento", "pagamento", "recebido em", "data baixa", "data"]
+  };
+  // uma linha por parcela (inadimplência) ou por pagamento (recebimento)
+  function linhasRelatorio(t) {
+    var h = t.headers, ix = {};
+    Object.keys(REL_COLUNAS).forEach(function (k) { ix[k] = colunaJur(h, REL_COLUNAS[k]); });
+    if (ix.aluno === -1 && ix.ra === -1) return null;
+    var out = [];
+    t.rows.forEach(function (r) {
+      function cel(k) { var v = ix[k] === -1 ? "" : r[ix[k]]; return v instanceof Date ? v : String(v == null ? "" : v).trim(); }
+      var ra = String(cel("ra")).replace(/\.0+$/, ""), nome = cel("aluno");
+      if (!ra && !nome) return;
+      if (!ra && /^(total|soma|subtotal)\b/i.test(normHeader(nome))) return;
+      if (ra && !/\d/.test(ra)) return; // linha de título repetida no meio do relatório
+      if (jurModo === "inadimplencia") {
+        out.push({ ra: ra, nome: nome, valorAberto: valorCelula(ix.valor === -1 ? "" : r[ix.valor]) || 0, vencimento: dataCelula(ix.venc === -1 ? "" : r[ix.venc]) || "" });
+      } else {
+        var v = valorCelula(ix.pago === -1 ? "" : r[ix.pago]) || 0;
+        if (v > 0) out.push({ ra: ra, aluno: nome, valor: Math.round(v * 100) / 100, data: dataCelula(ix.data === -1 ? "" : r[ix.data]) || "" });
+      }
+    });
+    return out;
+  }
+  function receberRelatorioJur(f) {
+    var res = $("jurImpRes"); res.innerHTML = '<div class="meta">Lendo ' + esc(f.name) + "…</div>";
+    jurRelatorio = null; $("jurImpOk").disabled = true;
+    var r = new FileReader();
+    r.onload = function () {
+      var buf = new Uint8Array(r.result), p;
+      if (ehPDF(f)) {
+        // o PDF de inadimplência do sistema tem leitor próprio; os outros viram tabela
+        p = (jurModo === "inadimplencia" ? lerRelatorioPDF(buf) : Promise.resolve(null)).then(function (e) {
+          if (e && e.brutos && e.brutos.length) return { brutos: e.brutos };
+          return pdfParaTabela(buf).then(function (t) { return t ? [t] : []; });
+        });
+      } else if (ehExcel(f)) p = tabelaDoExcel(buf);
+      else p = Promise.resolve([parseCSV(new TextDecoder("utf-8").decode(buf))]);
+      p.then(function (ts) {
+        var linhas;
+        if (ts && ts.brutos) linhas = ts.brutos;
+        else {
+          // várias abas: usa a que tiver mais linhas válidas
+          linhas = null;
+          (ts || []).forEach(function (t) { var l = linhasRelatorio(t); if (l && (!linhas || l.length > linhas.length)) linhas = l; });
+          if (!linhas) throw new Error("Não achei as colunas de aluno ou RA no relatório.");
+        }
+        if (!linhas.length) throw new Error(jurModo === "recebimento" ? "Não achei pagamentos (valor pago maior que zero) no relatório." : "Não achei parcelas no relatório.");
+        if (jurModo === "inadimplencia") {
+          // uma linha por aluno: soma o devido e conta as parcelas
+          linhas = agrupar(linhas.map(function (l) { return { ra: l.ra || "", nome: l.nome || l.aluno || "", valorAberto: l.valorAberto || 0, vencimento: l.vencimento || "" }; }))
+            .map(function (g) { return { ra: g.ra, aluno: g.nome, valorAberto: g.valorAberto, parcelas: g.parcelas }; });
+        }
+        jurRelatorio = { linhas: linhas, nome: f.name };
+        return api("POST", "/api/juridico/" + jurModo, { linhas: linhas, simular: true }).then(mostrarComparacaoJur);
+      }).catch(function (x) { res.innerHTML = '<div class="form-err">Não foi possível ler o relatório: ' + esc(x.message) + "</div>"; });
+    };
+    r.readAsArrayBuffer(f);
+  }
+  function mostrarComparacaoJur(d) {
+    var ms = d.mudancas || [], res = $("jurImpRes");
+    var mudaSt = ms.filter(function (m) { return m.statusAntes !== m.statusDepois; });
+    var porSt = {}; mudaSt.forEach(function (m) { porSt[m.statusDepois] = (porSt[m.statusDepois] || 0) + 1; });
+    var linhasTab = ms.slice().sort(function (a, b) { return (a.statusAntes === a.statusDepois) - (b.statusAntes === b.statusDepois) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
+    var html = "<p><b>" + esc(jurRelatorio.nome) + "</b>: " + jurRelatorio.linhas.length + (jurModo === "recebimento" ? " pagamento(s) lido(s)." : " aluno(s) no relatório.") + "</p>";
+    html += '<p class="meta" style="line-height:2">' + ms.length + " caso(s) vão mudar" + (mudaSt.length ? " · mudança de status: " + JUR_STATUS.filter(function (s) { return porSt[s.k]; }).map(function (s) { return jpill(s.k) + ' <b class="tabular">' + porSt[s.k] + "</b>"; }).join(" &nbsp; ") : "") + "</p>";
+    if (jurModo === "inadimplencia") {
+      var fora = ms.filter(function (m) { return m.motivo === "fora do relatório"; }).length;
+      if (fora) html += '<div class="form-err" style="background:var(--warn-soft);color:var(--warn)">' + fora + " caso(s) tinham valor em aberto e não estão no relatório: vão ficar <b>Quitado</b> com valor 0. Confira se o relatório cobre todas as carteiras antes de aplicar.</div>";
+    }
+    if (d.repetidos && d.repetidos.length) html += '<div class="meta">' + d.repetidos.length + " pagamento(s) já tinham sido lançados antes e foram ignorados.</div>";
+    if (ms.length) {
+      html += '<div class="table-wrap" style="max-height:340px;overflow:auto"><table class="data"><thead><tr><th>Aluno</th><th>Status</th><th class="right">Valor em aberto</th>' + (jurModo === "recebimento" ? '<th class="right">Pago</th>' : "") + "</tr></thead><tbody>" +
+        linhasTab.map(function (m) {
+          return "<tr><td><b>" + esc(m.aluno || "—") + '</b><div class="meta">' + (m.ra ? "RA " + esc(m.ra) + " · " : "") + esc(m.carteira || "—") + (m.motivo === "fora do relatório" ? " · fora do relatório" : "") + "</div></td>" +
+            "<td>" + (m.statusAntes === m.statusDepois ? jpill(m.statusDepois) : jpill(m.statusAntes) + " → " + jpill(m.statusDepois)) + "</td>" +
+            '<td class="tabular right">' + moneyOu(m.valorAntes) + " → <b>" + moneyOu(m.valorDepois) + "</b>" + (m.parcelasDepois ? '<div class="meta">' + m.parcelasDepois + " parcela(s)</div>" : "") + "</td>" +
+            (jurModo === "recebimento" ? '<td class="tabular right">' + money(m.totalPago) + '<div class="meta">' + (m.pagamentos || []).map(function (p) { return p.data ? br(p.data) : "sem data"; }).join(", ") + "</div></td>" : "") + "</tr>";
+        }).join("") + "</tbody></table></div>";
+    } else html += '<div class="meta">Nada para mudar: o painel já está igual ao relatório.</div>';
+    if (d.foraDoPainel && d.foraDoPainel.length) {
+      html += '<details style="margin-top:10px"><summary class="meta" style="cursor:pointer">' + d.foraDoPainel.length + " aluno(s) do relatório não estão no Painel jurídico (não foram criados)</summary><div class=\"meta\" style=\"margin-top:6px\">" +
+        d.foraDoPainel.slice(0, 200).map(function (x) { return esc((x.ra ? x.ra + " · " : "") + (x.aluno || "—")) + " (" + money(x.valor) + ")"; }).join("<br>") + "</div></details>";
+    }
+    if (d.outrasCarteiras && d.outrasCarteiras.length) html += '<div class="meta" style="margin-top:6px">' + d.outrasCarteiras.length + " aluno(s) têm caso em mais de uma carteira: o relatório foi aplicado na carteira mais recente.</div>";
+    res.innerHTML = html;
+    var b = $("jurImpOk"); b.disabled = !ms.length; b.textContent = ms.length ? "Aplicar " + ms.length + " mudança(s)" : "Nada para aplicar";
+  }
+  function aplicarRelatorioJur(btn) {
+    if (!jurRelatorio) return;
+    btn.disabled = true; btn.textContent = "Aplicando…";
+    api("POST", "/api/juridico/" + jurModo, { linhas: jurRelatorio.linhas, simular: false }).then(function (d) {
+      var n = (d.mudancas || []).length;
+      jurRelatorio = null; btn.textContent = "Aplicado";
+      $("jurImpRes").innerHTML = '<p><b style="color:var(--success)">Concluído:</b> ' + n + " caso(s) atualizado(s). Cada mudança ficou registrada nas tratativas do caso.</p>";
+      toast("Relatório aplicado: " + n + " caso(s) atualizado(s)."); return carregarJuridico();
+    }).catch(function (x) {
+      btn.disabled = false; btn.textContent = "Tentar de novo";
+      $("jurImpRes").insertAdjacentHTML("afterbegin", '<div class="form-err">Não foi possível aplicar: ' + esc(x.message) + "</div>");
+    });
+  }
   ligarDropzone($("jurDrop"), $("jurFile"), null, receberArquivoJur);
-  $("jurImpOk").addEventListener("click", function () {
+  $("jurImpOk").addEventListener("click", function () { if (jurModo !== "cadastro") return aplicarRelatorioJur(this);
     if (!jurPendentes.length) return;
     var btn = this, partes = [], tot = { criados: 0, atualizados: 0, ignorados: 0 };
     for (var i = 0; i < jurPendentes.length; i += 400) partes.push(jurPendentes.slice(i, i + 400));

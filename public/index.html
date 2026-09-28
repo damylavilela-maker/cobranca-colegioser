@@ -263,7 +263,9 @@
           <button type="button" class="btn danger small" id="btnJurZerar" data-admin title="Apaga todos os casos e tratativas do Painel jurídico">Apagar tudo e começar do zero</button>
           <button type="button" class="btn ghost small" id="btnJurArquivados">Arquivados</button>
           <button type="button" class="btn ghost small" id="btnJurModelo">Baixar modelo</button>
-          <button type="button" class="btn ghost small" id="btnJurImportar">Importar planilha</button>
+          <button type="button" class="btn ghost small" id="btnJurImportar" title="Cadastro dos casos (carteiras, contatos, negociações)">Importar cadastro</button>
+          <button type="button" class="btn ghost small" id="btnJurInadimp" title="Compara com o relatório de inadimplência e atualiza valores e status">Importar inadimplência</button>
+          <button type="button" class="btn ghost small" id="btnJurReceb" title="Abate os pagamentos do relatório de recebimento e atualiza o status">Importar recebimento</button>
           <button type="button" class="btn ghost small" id="btnJurRelatorio">Relatório mensal</button>
         </div>
       </div>
@@ -567,7 +569,7 @@
 
 <div class="overlay" id="mJurImp" hidden>
   <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="jiTitulo">
-    <div class="m-head"><div><h2 id="jiTitulo">Importar planilha — Painel jurídico</h2><div class="sub">Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-head"><div><h2 id="jiTitulo">Importar planilha — Painel jurídico</h2><div class="sub" id="jiSub">Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
     <div class="m-body">
       <div class="dropzone" id="jurDrop">Arraste um arquivo .xlsx, .xls, .csv ou .pdf aqui, ou clique para escolher<input type="file" id="jurFile" accept=".xlsx,.xls,.csv,.txt,.pdf" hidden></div>
       <div id="jurImpRes"></div>
