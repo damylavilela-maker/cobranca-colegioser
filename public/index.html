@@ -82,6 +82,7 @@
       <button type="button" data-view="contraturno"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Contraturno<span class="badge" id="navBadgeCt" hidden></span></button>
       <button type="button" data-view="serasa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>Serasa</button>
       <button type="button" data-view="base"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>Base de dados</button>
+      <button type="button" data-view="juridico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M7 21h10M5 7h14"/><path d="M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg>Painel jurídico</button>
       <div class="nav-lbl" data-admin>Administração</div>
       <button type="button" data-view="usuarios" data-admin><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.7 3 2.4 3.5 5.2"/></svg>Usuários e acessos</button>
     </nav>
@@ -244,6 +245,17 @@
         </table>
       </div>
       <div class="row-end" style="justify-content:center;margin-top:12px"><button type="button" class="btn ghost small" id="baseMais" hidden>Mostrar mais</button></div>
+    </div>
+
+    <!-- PAINEL JURÍDICO -->
+    <div id="v-juridico" class="view" hidden>
+      <div class="page-head">
+        <div><h1>Painel jurídico</h1><div class="sub">Cobrança jurídica · GM Carvalho</div></div>
+        <div class="actions">
+          <a class="btn ghost small" href="https://cobranca-juridica.netlify.app/" target="_blank" rel="noopener">Abrir em nova aba</a>
+        </div>
+      </div>
+      <iframe id="juridicoFrame" class="juridico-frame" title="Painel de cobrança jurídica" data-src="https://cobranca-juridica.netlify.app/"></iframe>
     </div>
 
     <!-- USUÁRIOS -->

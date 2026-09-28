@@ -373,3 +373,6 @@ table.data.as-tab td.mudou{background:var(--warn-soft)}
 .check-linha{display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13.5px;font-weight:400;cursor:pointer}
 .check-linha input{width:auto;margin-top:3px}
 .versao{font-size:11.5px;color:var(--muted-2, var(--muted));margin-top:8px;text-align:center;opacity:.8}
+
+.juridico-frame{display:block;width:100%;height:calc(100vh - 150px);min-height:560px;border:1px solid var(--line);border-radius:12px;background:#fff}
+a.btn{text-decoration:none}

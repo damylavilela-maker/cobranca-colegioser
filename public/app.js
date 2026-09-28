@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "25/09 · v6";
+  var VERSAO = "28/09 · v7";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -260,6 +260,7 @@
     document.querySelectorAll(".view").forEach(function (x) { x.hidden = x.id !== "v-" + el; });
     document.querySelectorAll("#nav button").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-view") === v); });
     if (v === "usuarios") carregarUsuarios();
+    if (v === "juridico" && !$("juridicoFrame").src) $("juridicoFrame").src = $("juridicoFrame").getAttribute("data-src");
     // ao trocar de aba, busca o que foi registrado por todos desde a última atualização
     if (eu && Date.now() - ultimaCarga > 5000) carregar();
     if (v === "base" && !baseCarregada) carregarBaseDados();
