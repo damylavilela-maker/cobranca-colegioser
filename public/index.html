@@ -143,12 +143,6 @@
         <div class="card"><h3>Atendimentos por canal</h3><div id="barCanal"></div></div>
         <div class="card"><h3>Carteira do Painel por status</h3><div id="barStatus"></div></div>
       </div>
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-head"><div><h3>Alunos por faixa de atraso</h3><div class="meta">Pela parcela em aberto mais antiga de cada aluno, contando os dias do vencimento até hoje</div></div>
-          <select id="faixaAlunosCart" aria-label="Carteira"><option value="todas">Painel e Contraturno</option><option value="regular">Painel</option><option value="contraturno">Contraturno</option></select></div>
-        <div id="faixaAlunosList"></div>
-        <div class="meta" id="faixaAlunosNota" style="margin-top:8px"></div>
-      </div>
       <div class="cards even">
         <div class="card">
           <div class="card-head"><h3>Total recuperado por mês</h3><select id="anoEvolSel" aria-label="Ano"></select></div>
@@ -167,6 +161,12 @@
       <div class="card">
         <h3>Recuperação por faixa de vencimento <span class="muted small-note">(mês selecionado acima)</span></h3>
         <div id="faixaVencList"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-head"><div><h3>Alunos por faixa de atraso</h3><div class="meta">Pela parcela em aberto mais antiga de cada aluno, contando os dias do vencimento até hoje</div></div>
+          <select id="faixaAlunosCart" aria-label="Carteira"><option value="todas">Painel e Contraturno</option><option value="regular">Painel</option><option value="contraturno">Contraturno</option></select></div>
+        <div id="faixaAlunosList"></div>
+        <div class="meta" id="faixaAlunosNota" style="margin-top:8px"></div>
       </div>
     </div>
 
