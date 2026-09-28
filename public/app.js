@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v22";
+  var VERSAO = "28/09 · v23";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2780,7 +2780,7 @@
   var jurModo = "cadastro", jurRelatorio = null, jurInadData = "";
   var JUR_MODOS = {
     cadastro: { t: "Importar cadastro — Painel jurídico", s: "Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.", b: "Importar casos" },
-    inadimplencia: { t: "Importar relatório de inadimplência", s: "Envie o relatório de inadimplência (Excel, CSV ou o PDF do sistema). Quem está no relatório tem o valor em aberto e as parcelas atualizados (Quitado ou Em dia volta para Em aberto). Quem tinha valor em aberto e não está no relatório fica Quitado. Nada é gravado antes de você confirmar.", b: "Aplicar mudanças" },
+    inadimplencia: { t: "Importar relatório de inadimplência", s: "Envie o relatório geral de inadimplência (Excel, CSV ou o PDF do sistema), com todas as contas financeiras. Só os alunos que já estão no Painel jurídico são atualizados; os outros são ignorados e nenhum caso novo é criado. Quem está no relatório tem o valor em aberto e as parcelas atualizados (Quitado ou Em dia volta para Em aberto). Quem tinha valor em aberto e não está no relatório fica Quitado. Nada é gravado antes de você confirmar.", b: "Aplicar mudanças" },
     recebimento: { t: "Importar relatório de recebimento", s: "Envie o relatório de recebimento (Excel, CSV ou PDF) com aluno ou RA, data e valor pago. Cada pagamento é abatido do valor em aberto e registrado nas tratativas. Caso com acordo fica Em dia; sem acordo: zerou é Quitado, sobrou é Parcialmente pago. Um pagamento já lançado não é abatido de novo.", b: "Aplicar mudanças" }
   };
   function abrirJurImp(modo) {
@@ -2921,18 +2921,12 @@
     var R = jurRelatorio, el = $("jurRelFiltros"), nomes = Object.keys(R.contas).sort(function (a, b) { return R.contas[b].v - R.contas[a].v; });
     var campoData = '<div class="field"><label for="jurDataRel">Data em que o relatório foi gerado</label><input type="date" id="jurDataRel" value="' + esc(R.dataRel || hoje()) + '" style="max-width:200px">' +
       '<span class="hint">Pagamentos feitos a partir desta data serão abatidos quando você importar o relatório de recebimento.</span></div>';
-    if (jurModo === "inadimplencia" && nomes.length === 1 && !nomes[0]) {
-      el.innerHTML = campoData;
+    if (jurModo === "inadimplencia") {
+      // relatório geral: entram todas as contas financeiras, só dos alunos que já estão no painel
+      var nAlunos = {}; R.brutos.forEach(function (l) { nAlunos[(l.ra || "") + "|" + normHeader(l.nome || l.aluno)] = 1; });
+      el.innerHTML = campoData + '<div class="meta" style="margin-bottom:8px">Relatório geral: ' + Object.keys(nAlunos).length + " aluno(s), " + R.brutos.length + " parcela(s)" +
+        (nomes.length > 1 || nomes[0] ? " em " + nomes.length + " conta(s) financeira(s)" : "") + ". Todas as contas entram no valor em aberto, só para os alunos que já estão no Painel jurídico; os outros são ignorados.</div>";
       $("jurDataRel").addEventListener("change", function () { R.dataRel = this.value; });
-    } else if (jurModo === "inadimplencia") {
-      el.innerHTML = campoData + '<div class="field"><label>Contas financeiras que entram no valor em aberto</label>' +
-        '<div class="hint">O relatório traz todas as contas do aluno. Desmarque as que não fazem parte da cobrança jurídica; a prévia é refeita na hora.</div>' +
-        '<div class="rel-contas">' + nomes.map(function (c, i) {
-          return '<label class="check-linha"><input type="checkbox" data-conta="' + i + '"' + (R.sel[c] ? " checked" : "") + "> <span>" + esc(c || "(sem conta)") + ' <span class="muted">· ' + R.contas[c].n + " parc. · " + money(R.contas[c].v) + "</span></span></label>";
-        }).join("") + '</div><div class="row-end" style="justify-content:flex-start"><button type="button" class="linkbtn" data-contas="todas">Marcar todas</button><button type="button" class="linkbtn" data-contas="nenhuma">Desmarcar todas</button></div></div>';
-      $("jurDataRel").addEventListener("change", function () { R.dataRel = this.value; });
-      el.querySelectorAll("[data-conta]").forEach(function (cb) { cb.addEventListener("change", function () { R.sel[nomes[+cb.getAttribute("data-conta")]] = cb.checked; simularRelatorioJur(); }); });
-      el.querySelectorAll("[data-contas]").forEach(function (b) { b.addEventListener("click", function () { var v = b.getAttribute("data-contas") === "todas"; nomes.forEach(function (c) { R.sel[c] = v; }); montarFiltrosRelatorio(); simularRelatorioJur(); }); });
     } else if (jurModo === "recebimento") {
       var datas = R.brutos.map(function (l) { return l.data; }).filter(Boolean).sort();
       el.innerHTML = '<div class="field"><label for="jurDesde">Considerar pagamentos a partir de</label><input type="date" id="jurDesde" value="' + esc(R.desde) + '" style="max-width:200px">' +
@@ -2959,7 +2953,7 @@
     var linhasTab = ms.slice().sort(function (a, b) { return (a.statusAntes === a.statusDepois) - (b.statusAntes === b.statusDepois) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
     var html = "<p><b>" + esc(jurRelatorio.nome) + "</b>: " + (jurModo === "recebimento"
       ? jurRelatorio.enviadas.length + " pagamento(s) considerado(s), de " + jurRelatorio.brutos.length + " no relatório."
-      : jurRelatorio.enviadas.length + " aluno(s) no relatório (com as contas marcadas).") + "</p>";
+      : (d.noRelatorio || 0) + " caso(s) do Painel jurídico encontrados no relatório · " + (d.foraDoPainel || []).length + " aluno(s) do relatório não estão na base e foram ignorados.") + "</p>";
     html += '<p class="meta" style="line-height:2">' + ms.length + " caso(s) vão mudar" + (mudaSt.length ? " · mudança de status: " + JUR_STATUS.filter(function (s) { return porSt[s.k]; }).map(function (s) { return jpill(s.k) + ' <b class="tabular">' + porSt[s.k] + "</b>"; }).join(" &nbsp; ") : "") + "</p>";
     if (jurModo === "inadimplencia") {
       var fora = ms.filter(function (m) { return m.motivo === "fora do relatório"; }).length;
@@ -2976,7 +2970,7 @@
         }).join("") + "</tbody></table></div>";
     } else html += '<div class="meta">Nada para mudar: o painel já está igual ao relatório.</div>';
     if (d.foraDoPainel && d.foraDoPainel.length) {
-      html += '<details style="margin-top:10px"><summary class="meta" style="cursor:pointer">' + d.foraDoPainel.length + " aluno(s) do relatório não estão no Painel jurídico (não foram criados)</summary><div class=\"meta\" style=\"margin-top:6px\">" +
+      html += '<details style="margin-top:10px"><summary class="meta" style="cursor:pointer">' + d.foraDoPainel.length + " aluno(s) do relatório não estão na base do Painel jurídico: nenhum dado deles foi importado (ver lista)</summary><div class=\"meta\" style=\"margin-top:6px\">" +
         d.foraDoPainel.slice(0, 200).map(function (x) { return esc((x.ra ? x.ra + " · " : "") + (x.aluno || "—")) + " (" + money(x.valor) + ")"; }).join("<br>") + "</div></details>";
     }
     if (d.outrasCarteiras && d.outrasCarteiras.length) html += '<div class="meta" style="margin-top:6px">' + d.outrasCarteiras.length + " aluno(s) têm caso em mais de uma carteira: o relatório foi aplicado na carteira mais recente.</div>";
