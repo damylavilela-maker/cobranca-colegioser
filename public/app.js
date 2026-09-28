@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v7";
+  var VERSAO = "28/09 · v8";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -189,6 +189,7 @@
   // Eles são recarregados a cada 30 s, ao voltar para o site e ao trocar de aba.
   var ultimaCarga = 0;
   function carregar() {
+    if (view === "juridico" && jurCarregado) carregarJuridico();
     return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa"), api("GET", "/api/serasa/periodos")])
       .then(function (r) {
         alunos = {}; r[0].alunos.forEach(function (a) { alunos[a.id] = a; });
@@ -216,7 +217,7 @@
       if (document.hidden || !eu) return;
       // as janelas abertas não são redesenhadas (quem está preenchendo não perde nada); só a
       // importação em andamento espera
-      if (!$("mImportar").hidden) return;
+      if (!$("mImportar").hidden || !$("mJurImp").hidden) return;
       carregar();
     }, 30000);
   }
@@ -228,6 +229,7 @@
     if (view === "evolucao") renderEvolucao();
     if (view === "serasa") renderSerasa();
     if (view === "base") renderBase();
+    if (view === "juridico") renderJuridico();
     if (view === "usuarios") renderUsuarios();
     atualizarBadge();
   }
@@ -260,7 +262,7 @@
     document.querySelectorAll(".view").forEach(function (x) { x.hidden = x.id !== "v-" + el; });
     document.querySelectorAll("#nav button").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-view") === v); });
     if (v === "usuarios") carregarUsuarios();
-    if (v === "juridico" && !$("juridicoFrame").src) $("juridicoFrame").src = $("juridicoFrame").getAttribute("data-src");
+    if (v === "juridico" && !jurCarregado) carregarJuridico();
     // ao trocar de aba, busca o que foi registrado por todos desde a última atualização
     if (eu && Date.now() - ultimaCarga > 5000) carregar();
     if (v === "base" && !baseCarregada) carregarBaseDados();
@@ -2192,6 +2194,429 @@
       carregarUsuarios(); atualizarAtendentes();
     }).catch(function (x) { mostrarErro($("euErr"), x.message); });
   });
+
+  // ---------------------------------------------------------------- Painel jurídico
+  // Casos da cobrança jurídica (GM Carvalho): painel com filtros, novo caso, tratativas,
+  // arquivados, importação/exportação em planilha e gráficos de evolução.
+  var JUR_STATUS = [
+    { k: "sem_negociacao", l: "Sem negociação", c: "warn" },
+    { k: "nao_classificado", l: "Não classificado", c: "gray" },
+    { k: "verificar", l: "Verificar manualmente", c: "brand" },
+    { k: "em_aberto", l: "Em aberto", c: "danger" },
+    { k: "parcial", l: "Parcialmente pago", c: "gold" },
+    { k: "em_dia", l: "Em dia", c: "info" },
+    { k: "quitado", l: "Quitado", c: "success" }
+  ];
+  var JUR_MOTIVOS = ["Aguardando negociação com a família", "Aguardando documentação", "Aguardando aprovação interna", "Em análise financeira", "Contato não localizado", "Acordo em cumprimento", "Outro (ver observação)"];
+  var JUR_CAB = ["RA", "Aluno", "Responsável", "CPF", "E-mail", "Celular", "Carteira", "Ano", "Status", "Valor negociado (R$)", "Valor em aberto (R$)", "Enviado ao jurídico", "Data envio jurídico", "Motivo pendência", "Última observação", "Atualizado em"];
+  var casosJur = [], jurCarregado = false, jurTab = "painel", jurLimite = 300, casoJur = null, jurPendentes = [];
+
+  function jst(k) { for (var i = 0; i < JUR_STATUS.length; i++) if (JUR_STATUS[i].k === k) return JUR_STATUS[i]; return JUR_STATUS[1]; }
+  function jpill(k) { var s = jst(k); return '<span class="pill" style="color:var(--' + s.c + ');background:var(--' + s.c + '-soft)"><i></i>' + s.l + "</span>"; }
+  function moneyOu(v) { return v === null || v === undefined || v === "" ? "—" : money(v); }
+  function numOuNull(v) { var n = parseFloat(v); return isNaN(n) ? null : n; }
+  function ultimaObs(c) { return c.obs && c.obs.length ? c.obs[0].texto : ""; }
+  function dataHora(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+  function dataCurta(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? br(iso) : d.toLocaleDateString("pt-BR"); }
+  function opcoesStatusJur() { return JUR_STATUS.map(function (s) { return { v: s.k, l: s.l }; }); }
+  function unicos(campo) {
+    var u = {}; casosJur.forEach(function (c) { if (c[campo]) u[c[campo]] = 1; });
+    return Object.keys(u).sort();
+  }
+
+  function carregarJuridico() {
+    return api("GET", "/api/juridico").then(function (d) {
+      casosJur = d.casos; jurCarregado = true; marcarSync(true);
+      if (view === "juridico") renderJuridico();
+    }).catch(function (x) { marcarSync(false); if (x.status !== 401 && x.status !== 403) toast(x.message); });
+  }
+  function trocarCaso(c) {
+    var i = casosJur.findIndex(function (x) { return x.id === c.id; });
+    if (c.arquivado) { if (i !== -1) casosJur.splice(i, 1); }
+    else if (i === -1) casosJur.push(c); else casosJur[i] = c;
+  }
+
+  // sub-abas: Painel / Novo caso / Evolução
+  function irJur(t) {
+    jurTab = t;
+    document.querySelectorAll("[data-jtab]").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-jtab") === t); });
+    $("jurPainel").hidden = t !== "painel"; $("jurNovo").hidden = t !== "novo"; $("jurEvolucao").hidden = t !== "evolucao";
+    if (t === "novo") prepararNovoCaso();
+    renderJuridico();
+  }
+  document.querySelectorAll("[data-jtab]").forEach(function (b) { b.addEventListener("click", function () { irJur(b.getAttribute("data-jtab")); }); });
+
+  function renderJuridico() {
+    if (jurTab === "painel") { renderKpisJur(); renderTabelaJur(); }
+    if (jurTab === "evolucao") renderEvoJur();
+  }
+
+  function renderKpisJur() {
+    var tot = casosJur.length, neg = 0, ab = 0, emDia = 0, semPos = 0;
+    casosJur.forEach(function (c) {
+      neg += Number(c.valorNegociado) || 0; ab += Number(c.valorAberto) || 0;
+      if (c.status === "em_dia" || c.status === "quitado") emDia++;
+      if (c.status === "sem_negociacao" || c.status === "nao_classificado") semPos++;
+    });
+    var tiles = [
+      { n: tot, l: "Casos na carteira" },
+      { n: money(neg), l: "Valor negociado", c: "info" },
+      { n: money(ab), l: "Valor em aberto", c: "danger" },
+      { n: (tot ? Math.round(emDia / tot * 100) : 0) + "%", l: "Em dia ou quitados", c: "success" },
+      { n: semPos, l: "Sem posicionamento", c: "warn" }
+    ];
+    $("jurKpis").innerHTML = tiles.map(function (t) {
+      return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ' title="' + esc(t.n) + '">' + t.n + '</div><div class="lbl">' + t.l + "</div></div>";
+    }).join("");
+  }
+
+  function filtrarJur() {
+    prepararSelect($("jStatus"), [{ v: "", l: "Todos os status" }].concat(opcoesStatusJur()), "");
+    prepararSelect($("jCarteira"), [{ v: "", l: "Todas as carteiras" }].concat(unicos("carteira").map(function (c) { return { v: esc(c), l: esc(c) }; })), "");
+    prepararSelect($("jAno"), [{ v: "", l: "Todos os anos" }].concat(unicos("ano").map(function (a) { return { v: esc(a), l: esc(a) }; })), "");
+    var q = $("jBusca").value.trim().toLowerCase(), s = $("jStatus").value, ca = $("jCarteira").value, an = $("jAno").value, ju = $("jJuridico").value;
+    return casosJur.filter(function (c) {
+      if (s && c.status !== s) return false;
+      if (ca && c.carteira !== ca) return false;
+      if (an && c.ano !== an) return false;
+      if (ju === "sim" && !c.enviadoJuridico) return false;
+      if (ju === "nao" && c.enviadoJuridico) return false;
+      if (q && [c.aluno, c.responsavel, c.ra, c.cpf].join(" ").toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    }).sort(function (a, b) { return (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
+  }
+
+  function renderTabelaJur() {
+    var vis = filtrarJur();
+    $("jurCount").textContent = vis.length + " de " + casosJur.length + " casos";
+    $("jurVazio").hidden = vis.length > 0;
+    $("jurVazio").textContent = casosJur.length ? "Nenhum caso encontrado com estes filtros." : "Nenhum caso cadastrado ainda. Use “Novo caso” ou “Importar planilha”.";
+    $("jurTbody").innerHTML = vis.slice(0, jurLimite).map(function (c) {
+      var ob = ultimaObs(c);
+      return '<tr class="click" data-id="' + esc(c.id) + '">' +
+        '<td><b>' + esc(c.aluno || "—") + "</b>" + (c.ra ? '<div class="meta">RA ' + esc(c.ra) + "</div>" : "") + "</td>" +
+        '<td class="muted">' + esc(c.responsavel || "—") + "</td>" +
+        "<td>" + esc(c.carteira || "—") + "</td>" +
+        "<td>" + jpill(c.status) + "</td>" +
+        '<td class="tabular right">' + moneyOu(c.valorNegociado) + "</td>" +
+        '<td class="tabular right">' + moneyOu(c.valorAberto) + "</td>" +
+        '<td><span class="yn ' + (c.enviadoJuridico ? "sim" : "nao") + '">' + (c.enviadoJuridico ? "Sim" : "Não") + "</span></td>" +
+        '<td class="muted obs-cell">' + esc(ob ? (ob.length > 60 ? ob.slice(0, 60).trim() + "…" : ob) : "—") + "</td>" +
+        '<td class="muted">' + dataCurta(c.atualizadoEm) + "</td></tr>";
+    }).join("");
+    $("jurMais").hidden = vis.length <= jurLimite;
+  }
+  ["jBusca", "jStatus", "jCarteira", "jAno", "jJuridico"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; renderTabelaJur(); }); });
+  $("jurMais").addEventListener("click", function () { jurLimite += 300; renderTabelaJur(); });
+  $("jurTbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirCasoJur(tr.getAttribute("data-id")); });
+
+  // editar caso (janela)
+  function renderObsJur(c) {
+    $("jcObsLog").innerHTML = c.obs && c.obs.length ? c.obs.map(function (o) {
+      return '<div class="ob"><div class="meta">' + dataHora(o.data) + (o.autor ? " · " + esc(o.autor) : "") + "</div><div>" + esc(o.texto) + "</div></div>";
+    }).join("") : '<div class="ob-vazio">Nenhuma observação registrada ainda.</div>';
+  }
+  function abrirCasoJur(id) {
+    var c = null; casosJur.forEach(function (x) { if (x.id === id) c = x; });
+    if (!c) return;
+    casoJur = c; mostrarErro($("jcErr"), "");
+    $("jcTitulo").textContent = c.aluno || "Caso";
+    $("jcSub").textContent = "RA " + (c.ra || "—") + " · " + (c.carteira || "—") + " · ano letivo " + (c.ano || "—");
+    $("jcConflito").hidden = !c.flagConflito;
+    $("jcAluno").value = c.aluno || ""; $("jcRa").value = c.ra || ""; $("jcResp").value = c.responsavel || ""; $("jcCpf").value = c.cpf || "";
+    $("jcEmail").value = c.email || ""; $("jcCelular").value = c.celular || ""; $("jcCarteira").value = c.carteira || ""; $("jcAno").value = c.ano || "";
+    fill($("jcStatus"), opcoesStatusJur()); $("jcStatus").value = c.status || "nao_classificado";
+    $("jcNegociado").value = c.valorNegociado == null ? "" : c.valorNegociado;
+    $("jcAberto").value = c.valorAberto == null ? "" : c.valorAberto;
+    $("jcJuridico").checked = !!c.enviadoJuridico; $("jcDataEnvio").value = c.dataEnvio || "";
+    fill($("jcMotivo"), JUR_MOTIVOS.concat(c.motivo && JUR_MOTIVOS.indexOf(c.motivo) === -1 ? [c.motivo] : []), "Selecionar...");
+    $("jcMotivo").value = c.motivo || "";
+    $("jcNovaObs").value = ""; renderObsJur(c);
+    $("jcAtualizado").textContent = "Última atualização: " + (c.atualizadoEm ? dataHora(c.atualizadoEm) + (c.atualizadoPor ? " por " + c.atualizadoPor : "") : "nunca");
+    var b = $("jcArquivar"); b.classList.remove("armed"); b.textContent = "Arquivar caso";
+    abrir("mJurCaso");
+  }
+  $("jcJuridico").addEventListener("change", function () { if (this.checked && !$("jcDataEnvio").value) $("jcDataEnvio").value = hoje(); });
+  $("jcSalvar").addEventListener("click", function () {
+    if (!casoJur) return;
+    if (!$("jcAluno").value.trim()) return mostrarErro($("jcErr"), "Informe o nome do aluno.");
+    var btn = this; btn.disabled = true;
+    api("PATCH", "/api/juridico/" + encodeURIComponent(casoJur.id), {
+      aluno: $("jcAluno").value.trim(), ra: $("jcRa").value.trim(), responsavel: $("jcResp").value.trim(), cpf: $("jcCpf").value.trim(),
+      email: $("jcEmail").value.trim(), celular: $("jcCelular").value.trim(), carteira: $("jcCarteira").value.trim(), ano: $("jcAno").value.trim(),
+      status: $("jcStatus").value, valorNegociado: numOuNull($("jcNegociado").value), valorAberto: numOuNull($("jcAberto").value),
+      enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value
+    }).then(function (d) {
+      trocarCaso(d.caso); $("mJurCaso").hidden = true; renderJuridico(); toast("Caso atualizado.");
+    }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
+  });
+  $("jcAddObs").addEventListener("click", function () {
+    var t = $("jcNovaObs").value.trim();
+    if (!t) return mostrarErro($("jcErr"), "Escreva uma observação antes de adicionar.");
+    var btn = this; btn.disabled = true; mostrarErro($("jcErr"), "");
+    api("POST", "/api/juridico/" + encodeURIComponent(casoJur.id) + "/obs", { texto: t }).then(function (d) {
+      trocarCaso(d.caso); casoJur = d.caso; $("jcNovaObs").value = ""; renderObsJur(d.caso); renderJuridico(); toast("Observação registrada.");
+    }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
+  });
+  $("jcArquivar").addEventListener("click", function () {
+    var b = this;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar: arquivar"; return; }
+    api("PATCH", "/api/juridico/" + encodeURIComponent(casoJur.id), { arquivado: true }).then(function (d) {
+      trocarCaso(d.caso); $("mJurCaso").hidden = true; renderJuridico(); toast("Caso arquivado.");
+    }).catch(function (x) { toast(x.message); });
+  });
+
+  // arquivados
+  function renderArquivadosJur(lista) {
+    $("jurArqLista").innerHTML = lista.length ? lista.map(function (c) {
+      return '<div class="arq-linha"><div><b>' + esc(c.aluno || "—") + '</b><div class="meta">RA ' + esc(c.ra || "—") + " · " + esc(c.carteira || "—") + " · arquivado em " + dataCurta(c.arquivadoEm) + "</div></div>" +
+        '<button type="button" class="btn ghost small" data-restaurar="' + esc(c.id) + '">Restaurar</button></div>';
+    }).join("") : '<div class="meta">Nenhum caso arquivado.</div>';
+  }
+  $("btnJurArquivados").addEventListener("click", function () {
+    $("jurArqLista").innerHTML = '<div class="meta">Carregando…</div>'; abrir("mJurArq");
+    api("GET", "/api/juridico?arquivados=1").then(function (d) { renderArquivadosJur(d.casos); })
+      .catch(function (x) { $("jurArqLista").innerHTML = '<div class="form-err">' + esc(x.message) + "</div>"; });
+  });
+  $("jurArqLista").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-restaurar]"); if (!b) return;
+    b.disabled = true;
+    api("PATCH", "/api/juridico/" + encodeURIComponent(b.getAttribute("data-restaurar")), { arquivado: false }).then(function (d) {
+      trocarCaso(d.caso); b.closest(".arq-linha").remove();
+      if (!$("jurArqLista").querySelector(".arq-linha")) renderArquivadosJur([]);
+      renderJuridico(); toast("Caso restaurado para o painel.");
+    }).catch(function (x) { b.disabled = false; toast(x.message); });
+  });
+
+  // novo caso
+  function prepararNovoCaso() {
+    $("formJurNovo").reset(); mostrarErro($("ncErr"), "");
+    fill($("ncStatus"), opcoesStatusJur()); $("ncStatus").value = "nao_classificado";
+    fill($("ncMotivo"), JUR_MOTIVOS, "Selecionar...");
+    $("ncCarteiras").innerHTML = unicos("carteira").map(function (c) { return '<option value="' + esc(c) + '"></option>'; }).join("");
+    carregarBaseDados(); // sempre a versão mais nova, para completar pelo RA
+    setTimeout(function () { $("ncAluno").focus(); }, 30);
+  }
+  // RA digitado: completa com a Base de dados o que ainda estiver vazio
+  $("ncRa").addEventListener("change", function () {
+    var ra = this.value.trim().toLowerCase(); if (!ra) return;
+    var b = null; baseAlunos.forEach(function (x) { if (String(x.ra || "").trim().toLowerCase() === ra) b = x; });
+    if (!b) return;
+    [["ncAluno", b.nome], ["ncResp", b.responsavel], ["ncEmail", b.email], ["ncCelular", b.telefone]].forEach(function (p) { if (!$(p[0]).value.trim() && p[1]) $(p[0]).value = p[1]; });
+    toast("Dados preenchidos pela Base de dados.");
+  });
+  $("ncCancelar").addEventListener("click", function () { irJur("painel"); });
+  $("formJurNovo").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var err = $("ncErr");
+    if (!$("ncAluno").value.trim()) return mostrarErro(err, "Informe o nome do aluno antes de adicionar.");
+    var ra = $("ncRa").value.trim();
+    if (ra && casosJur.some(function (c) { return c.ra === ra; })) return mostrarErro(err, "Já existe um caso com esse RA. Edite o caso existente em vez de duplicá-lo.");
+    var btn = $("ncSalvar"); btn.disabled = true; mostrarErro(err, "");
+    api("POST", "/api/juridico", {
+      aluno: $("ncAluno").value.trim(), ra: ra, carteira: $("ncCarteira").value.trim(), ano: $("ncAno").value.trim(), status: $("ncStatus").value,
+      responsavel: $("ncResp").value.trim(), cpf: $("ncCpf").value.trim(), celular: $("ncCelular").value.trim(), email: $("ncEmail").value.trim(),
+      valorNegociado: numOuNull($("ncNegociado").value), valorAberto: numOuNull($("ncAberto").value),
+      enviadoJuridico: $("ncJuridico").checked, dataEnvio: $("ncJuridico").checked ? hoje() : "", motivo: $("ncMotivo").value, obs: $("ncObs").value.trim()
+    }).then(function (d) {
+      trocarCaso(d.caso); irJur("painel"); toast("Caso adicionado.");
+    }).catch(function (x) { mostrarErro(err, x.message); }).then(function () { btn.disabled = false; });
+  });
+
+  // bibliotecas carregadas só quando precisa: planilha Excel e gráficos
+  function carregarScript(url, global) {
+    if (window[global]) return Promise.resolve(window[global]);
+    return new Promise(function (ok, falhou) {
+      var s = document.createElement("script"); s.src = url;
+      s.onload = function () { ok(window[global]); };
+      s.onerror = function () { falhou(new Error("Não consegui carregar um componente do site. Confira a internet e tente de novo.")); };
+      document.head.appendChild(s);
+    });
+  }
+  function carregarXLSX() { return carregarScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js", "XLSX"); }
+  function carregarChart() { return carregarScript("https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js", "Chart"); }
+
+  // relatório mensal e modelo (Excel)
+  function linhaRelatorioJur(c) {
+    return [c.ra, c.aluno, c.responsavel, c.cpf, c.email, c.celular, c.carteira, c.ano, jst(c.status).l, c.valorNegociado, c.valorAberto,
+      c.enviadoJuridico ? "Sim" : "Não", c.dataEnvio ? br(c.dataEnvio) : "", c.motivo || "", ultimaObs(c), c.atualizadoEm ? dataCurta(c.atualizadoEm) : ""];
+  }
+  function baixarXLSX(nome, aba, linhas) {
+    return carregarXLSX().then(function (X) {
+      var wb = X.utils.book_new(); X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(linhas), aba); X.writeFile(wb, nome);
+    }).catch(function (x) { toast(x.message); });
+  }
+  $("btnJurRelatorio").addEventListener("click", function () {
+    var pend = casosJur.filter(function (c) { return c.status !== "quitado"; });
+    var cab = JUR_CAB.concat(["Histórico de observações"]);
+    baixarXLSX("relatorio-cobranca-juridica-" + hoje() + ".xlsx", "Posicionamento", [cab].concat(pend.map(function (c) {
+      return linhaRelatorioJur(c).concat([(c.obs || []).map(function (o) { return "[" + dataCurta(o.data) + "] " + o.texto; }).join(" | ")]);
+    }))).then(function () { toast("Relatório exportado — " + pend.length + " casos."); });
+  });
+  $("btnJurModelo").addEventListener("click", function () {
+    baixarXLSX("modelo-importacao-casos.xlsx", "Modelo", [JUR_CAB, ["", "", "", "", "", "", "", "", "Sem negociação / Em dia / Parcialmente pago / Em aberto / Quitado / Verificar manualmente", "", "", "Sim/Não", "", "", "", ""]]);
+  });
+
+  // importação: .xlsx, .csv ou .pdf → linhas com os campos do caso
+  var JUR_COLUNAS = {
+    ra: ["ra", "matricula", "codigo"], aluno: ["aluno", "nome do aluno", "nome"], responsavel: ["responsavel", "responsavel financeiro", "nome do responsavel"],
+    cpf: ["cpf", "cpf do responsavel"], email: ["e-mail", "email"], celular: ["celular", "telefone", "tel"], carteira: ["carteira"], ano: ["ano", "ano letivo"],
+    status: ["status", "situacao"], valorNegociado: ["valor negociado (r$)", "valor negociado", "negociado"], valorAberto: ["valor em aberto (r$)", "valor em aberto", "em aberto"],
+    enviadoJuridico: ["enviado ao juridico", "juridico"], dataEnvio: ["data envio juridico", "data de envio ao juridico"], motivo: ["motivo pendencia", "motivo"],
+    obs: ["ultima observacao", "observacao", "ultima tratativa", "tratativa"]
+  };
+  // nome exato primeiro; parte do nome só para nomes longos ("ra" não pode casar com "carteira")
+  function colunaJur(h, nomes) {
+    for (var n = 0; n < nomes.length; n++) { var i = h.indexOf(nomes[n]); if (i !== -1) return i; }
+    for (var j = 0; j < h.length; j++) for (var m = 0; m < nomes.length; m++) if (nomes[m].length >= 5 && h[j] && h[j].indexOf(nomes[m]) !== -1) return j;
+    return -1;
+  }
+  function statusDoTexto(v) {
+    var t = normHeader(v); if (!t) return undefined;
+    for (var i = 0; i < JUR_STATUS.length; i++) if (normHeader(JUR_STATUS[i].l) === t || JUR_STATUS[i].k === t) return JUR_STATUS[i].k;
+    if (t.indexOf("quitad") !== -1) return "quitado";
+    if (t.indexOf("parcial") !== -1) return "parcial";
+    if (t.indexOf("em dia") !== -1) return "em_dia";
+    if (t.indexOf("aberto") !== -1) return "em_aberto";
+    if (t.indexOf("sem neg") !== -1) return "sem_negociacao";
+    if (t.indexOf("verific") !== -1) return "verificar";
+    return "nao_classificado";
+  }
+  function valorCelula(v) { if (v === "" || v == null) return undefined; return typeof v === "number" ? v : (/\d/.test(String(v)) ? parseMoneyBR(v) : undefined); }
+  // data do Excel pode vir à meia-noite UTC (21h do dia anterior aqui): meio-dia evita cair no dia errado
+  function dataCelula(v) { if (!v) return undefined; if (v instanceof Date) return isoLocal(new Date(v.getTime() + 12 * 3600000)); return parseDateBR(v) || undefined; }
+  function linhasJur(headers, rows) {
+    var ix = {}; Object.keys(JUR_COLUNAS).forEach(function (k) { ix[k] = colunaJur(headers, JUR_COLUNAS[k]); });
+    if (ix.aluno === -1 && ix.ra === -1) throw new Error("Não achei as colunas Aluno ou RA no arquivo. Use o modelo (botão “Baixar modelo”).");
+    var out = [];
+    rows.forEach(function (r) {
+      function cel(k) { var v = ix[k] === -1 ? "" : r[ix[k]]; return v instanceof Date ? v : String(v == null ? "" : v).trim(); }
+      var l = {
+        ra: cel("ra"), aluno: cel("aluno"), responsavel: cel("responsavel"), cpf: cel("cpf"), email: cel("email"), celular: cel("celular"),
+        carteira: cel("carteira"), ano: cel("ano"), motivo: cel("motivo"), obs: cel("obs")
+      };
+      if (!l.ra && !l.aluno) return;
+      l.status = statusDoTexto(cel("status"));
+      l.valorNegociado = valorCelula(ix.valorNegociado === -1 ? "" : r[ix.valorNegociado]);
+      l.valorAberto = valorCelula(ix.valorAberto === -1 ? "" : r[ix.valorAberto]);
+      var ju = normHeader(cel("enviadoJuridico"));
+      if (ju) l.enviadoJuridico = /^(s|sim|true|x|1)/.test(ju);
+      l.dataEnvio = dataCelula(ix.dataEnvio === -1 ? "" : r[ix.dataEnvio]);
+      Object.keys(l).forEach(function (k) { if (l[k] === undefined || l[k] === "") delete l[k]; });
+      out.push(l);
+    });
+    return out;
+  }
+  function tabelaDoExcel(buf) {
+    return carregarXLSX().then(function (X) {
+      var wb = X.read(buf, { type: "array", cellDates: true });
+      var aoa = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "", raw: true });
+      // a linha de títulos pode não ser a primeira: usa a que mais parece cabeçalho
+      var melhor = 0, nota = -1;
+      for (var i = 0; i < Math.min(aoa.length, 8); i++) {
+        var h = aoa[i].map(normHeader), sc = 0;
+        Object.keys(JUR_COLUNAS).forEach(function (k) { if (colunaJur(h, JUR_COLUNAS[k]) !== -1) sc++; });
+        if (sc > nota) { nota = sc; melhor = i; }
+      }
+      return { headers: (aoa[melhor] || []).map(normHeader), rows: aoa.slice(melhor + 1) };
+    });
+  }
+  function receberArquivoJur(f) {
+    var res = $("jurImpRes"); res.innerHTML = '<div class="meta">Lendo ' + esc(f.name) + "…</div>";
+    jurPendentes = []; $("jurImpOk").disabled = true;
+    var r = new FileReader();
+    r.onload = function () {
+      var buf = new Uint8Array(r.result), p;
+      if (ehPDF(f)) p = pdfParaTabela(buf);
+      else if (/\.(xlsx|xls)$/i.test(f.name)) p = tabelaDoExcel(buf);
+      else p = Promise.resolve(parseCSV(new TextDecoder("utf-8").decode(buf)));
+      p.then(function (t) { mostrarPreviaJur(linhasJur(t.headers, t.rows), f.name); })
+        .catch(function (x) { res.innerHTML = '<div class="form-err">Não foi possível ler o arquivo: ' + esc(x.message) + "</div>"; });
+    };
+    r.readAsArrayBuffer(f);
+  }
+  function mostrarPreviaJur(linhas, nome) {
+    jurPendentes = linhas;
+    var ras = {}, nomes = {}; casosJur.forEach(function (c) { if (c.ra) ras[c.ra.toLowerCase()] = 1; nomes[normHeader(c.aluno)] = 1; });
+    var atual = linhas.filter(function (l) { return (l.ra && ras[l.ra.toLowerCase()]) || (l.aluno && nomes[normHeader(l.aluno)]); }).length;
+    $("jurImpRes").innerHTML = linhas.length
+      ? "<p><b>" + esc(nome) + "</b>: " + linhas.length + " caso(s) encontrados — cerca de " + atual + " já estão no painel (serão atualizados) e " + (linhas.length - atual) + " são novos.</p>" +
+        '<div class="table-wrap"><table class="data"><thead><tr><th>RA</th><th>Aluno</th><th>Carteira</th><th>Status</th><th class="right">Negociado</th><th class="right">Em aberto</th></tr></thead><tbody>' +
+        linhas.slice(0, 8).map(function (l) {
+          return "<tr><td>" + esc(l.ra || "—") + "</td><td>" + esc(l.aluno || "—") + "</td><td>" + esc(l.carteira || "—") + "</td><td>" + (l.status ? jpill(l.status) : "—") +
+            '</td><td class="tabular right">' + moneyOu(l.valorNegociado) + '</td><td class="tabular right">' + moneyOu(l.valorAberto) + "</td></tr>";
+        }).join("") + "</tbody></table></div>" + (linhas.length > 8 ? '<div class="meta">…e mais ' + (linhas.length - 8) + " linha(s).</div>" : "")
+      : '<div class="form-err">Nenhuma linha com Aluno ou RA foi encontrada no arquivo.</div>';
+    $("jurImpOk").disabled = !linhas.length; $("jurImpOk").textContent = "Importar " + linhas.length + " caso(s)";
+  }
+  $("btnJurImportar").addEventListener("click", function () {
+    jurPendentes = []; $("jurImpRes").innerHTML = ""; $("jurFile").value = "";
+    var b = $("jurImpOk"); b.disabled = true; b.textContent = "Importar casos";
+    abrir("mJurImp");
+  });
+  ligarDropzone($("jurDrop"), $("jurFile"), null, receberArquivoJur);
+  $("jurImpOk").addEventListener("click", function () {
+    if (!jurPendentes.length) return;
+    var btn = this, partes = [], tot = { criados: 0, atualizados: 0, ignorados: 0 };
+    for (var i = 0; i < jurPendentes.length; i += 400) partes.push(jurPendentes.slice(i, i + 400));
+    btn.disabled = true; btn.textContent = "Importando…";
+    partes.reduce(function (p, parte) {
+      return p.then(function () { return api("POST", "/api/juridico/importar", { linhas: parte }).then(function (r) { tot.criados += r.criados; tot.atualizados += r.atualizados; tot.ignorados += r.ignorados; }); });
+    }, Promise.resolve()).then(function () {
+      jurPendentes = []; btn.hidden = false; btn.textContent = "Importado";
+      $("jurImpRes").innerHTML = '<p><b style="color:var(--success)">Concluído:</b> ' + tot.criados + " caso(s) criado(s), " + tot.atualizados + " atualizado(s), " + tot.ignorados + " ignorada(s).</p>";
+      toast("Importação concluída."); return carregarJuridico();
+    }).catch(function (x) {
+      btn.disabled = false; btn.textContent = "Tentar de novo";
+      $("jurImpRes").insertAdjacentHTML("afterbegin", '<div class="form-err">Não foi possível importar: ' + esc(x.message) + "</div>");
+    });
+  });
+
+  // evolução (gráficos)
+  var graficosJur = {};
+  function corVar(c) { return getComputedStyle(document.documentElement).getPropertyValue("--" + c).trim(); }
+  function graficoJur(id, cfg) {
+    var jaTinha = !!graficosJur[id]; // redesenho da atualização automática: sem animação
+    if (jaTinha) graficosJur[id].destroy();
+    cfg.options = cfg.options || {};
+    cfg.options.responsive = true; cfg.options.maintainAspectRatio = false; if (jaTinha) cfg.options.animation = false;
+    cfg.options.plugins = { legend: { position: "bottom", labels: { boxWidth: 10, color: corVar("muted") } } };
+    graficosJur[id] = new window.Chart($(id), cfg);
+  }
+  function renderEvoJur() {
+    Promise.all([carregarChart(), api("GET", "/api/juridico/evolucao")]).then(function (r) {
+      if (jurTab !== "evolucao") return;
+      var Chart = r[0], hist = r[1].historico;
+      Chart.defaults.color = corVar("muted"); Chart.defaults.borderColor = corVar("line"); Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+      var carteiras = unicos("carteira");
+      graficoJur("jChartCarteira", {
+        type: "bar",
+        data: { labels: carteiras, datasets: JUR_STATUS.map(function (s) {
+          return { label: s.l, backgroundColor: corVar(s.c), data: carteiras.map(function (ca) { return casosJur.filter(function (c) { return c.carteira === ca && c.status === s.k; }).length; }) };
+        }) },
+        options: { scales: { x: { stacked: true }, y: { stacked: true, ticks: { precision: 0 } } } }
+      });
+      function soma(ca, f) { return casosJur.filter(function (c) { return c.carteira === ca; }).reduce(function (t, c) { return t + (Number(c[f]) || 0); }, 0); }
+      graficoJur("jChartValores", {
+        type: "bar",
+        data: { labels: carteiras, datasets: [
+          { label: "Valor negociado", backgroundColor: corVar("info"), data: carteiras.map(function (ca) { return soma(ca, "valorNegociado"); }) },
+          { label: "Valor em aberto", backgroundColor: corVar("danger"), data: carteiras.map(function (ca) { return soma(ca, "valorAberto"); }) }
+        ] },
+        options: { scales: { y: { ticks: { callback: function (v) { return "R$ " + Number(v).toLocaleString("pt-BR"); } } } } }
+      });
+      $("jEvoNota").textContent = hist.length < 2
+        ? "Primeira leitura registrada hoje. Volte em outro dia de uso para ver a evolução ao longo do tempo."
+        : "Uma leitura por dia de uso do painel, desde " + br(hist[0].data) + ".";
+      graficoJur("jChartTempo", {
+        type: "line",
+        data: { labels: hist.map(function (h) { return br(h.data); }), datasets: JUR_STATUS.map(function (s) {
+          return { label: s.l, borderColor: corVar(s.c), backgroundColor: corVar(s.c), fill: false, tension: 0.2, data: hist.map(function (h) { return h[s.k] || 0; }) };
+        }) },
+        options: { scales: { y: { ticks: { precision: 0 } } } }
+      });
+    }).catch(function (x) { toast(x.message); });
+  }
 
   // backup do painel antigo
   ligarDropzone($("backupDrop"), $("backupFile"), function (txt) {

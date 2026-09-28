@@ -250,12 +250,81 @@
     <!-- PAINEL JURÍDICO -->
     <div id="v-juridico" class="view" hidden>
       <div class="page-head">
-        <div><h1>Painel jurídico</h1><div class="sub">Cobrança jurídica · GM Carvalho</div></div>
+        <div><h1>Painel de cobrança jurídica</h1><div class="sub">GM Carvalho · Colégio Ser — carteiras 2022–2025</div></div>
         <div class="actions">
-          <a class="btn ghost small" href="https://cobranca-juridica.netlify.app/" target="_blank" rel="noopener">Abrir em nova aba</a>
+          <span class="sync" title="Os dados são atualizados automaticamente a cada 30 segundos"><i></i><span class="sync-lbl">—</span></span>
+          <button type="button" class="btn ghost small" id="btnJurArquivados">Arquivados</button>
+          <button type="button" class="btn ghost small" id="btnJurModelo">Baixar modelo</button>
+          <button type="button" class="btn ghost small" id="btnJurImportar">Importar planilha</button>
+          <button type="button" class="btn ghost small" id="btnJurRelatorio">Relatório mensal</button>
         </div>
       </div>
-      <iframe id="juridicoFrame" class="juridico-frame" title="Painel de cobrança jurídica" data-src="https://cobranca-juridica.netlify.app/"></iframe>
+      <div class="subtabs" role="tablist">
+        <button type="button" class="active" data-jtab="painel">Painel</button>
+        <button type="button" data-jtab="novo">Novo caso</button>
+        <button type="button" data-jtab="evolucao">Evolução</button>
+      </div>
+
+      <div id="jurPainel">
+        <div class="kpis k5" id="jurKpis"></div>
+        <div class="filters">
+          <input type="search" id="jBusca" placeholder="Buscar aluno, responsável, RA ou CPF" aria-label="Buscar">
+          <select id="jStatus" aria-label="Status"></select>
+          <select id="jCarteira" aria-label="Carteira"></select>
+          <select id="jAno" aria-label="Ano letivo"></select>
+          <select id="jJuridico" aria-label="Jurídico">
+            <option value="">Jurídico: todos</option>
+            <option value="sim">Enviado ao jurídico</option>
+            <option value="nao">Ainda não enviado</option>
+          </select>
+        </div>
+        <div class="count" id="jurCount"></div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Aluno</th><th>Responsável</th><th>Carteira</th><th>Status</th><th class="right">Negociado</th><th class="right">Em aberto</th><th>Jurídico</th><th>Última tratativa</th><th>Atualizado</th></tr></thead>
+            <tbody id="jurTbody"></tbody>
+          </table>
+          <div class="empty muted" id="jurVazio" hidden>Nenhum caso encontrado com estes filtros.</div>
+        </div>
+        <div class="row-end" style="justify-content:center;margin-top:12px"><button type="button" class="btn ghost small" id="jurMais" hidden>Mostrar mais</button></div>
+      </div>
+
+      <div id="jurNovo" hidden>
+        <form class="card jur-novo" id="formJurNovo" novalidate>
+          <h3>Incluir novo caso</h3>
+          <div class="meta" style="margin-bottom:16px">Preencha os dados do aluno e da situação de cobrança. Campos com * são obrigatórios. Ao digitar o RA, os dados da Base de dados são preenchidos sozinhos.</div>
+          <div class="field"><label for="ncAluno">Nome do aluno *</label><input id="ncAluno" placeholder="Nome completo do aluno"></div>
+          <div class="grid2">
+            <div class="field"><label for="ncRa">RA</label><input id="ncRa" placeholder="Registro do aluno"></div>
+            <div class="field"><label for="ncCarteira">Carteira</label><input id="ncCarteira" placeholder="Ex: Carteira 2026" list="ncCarteiras"><datalist id="ncCarteiras"></datalist></div>
+            <div class="field"><label for="ncAno">Ano letivo</label><input id="ncAno" placeholder="Ex: 2025"></div>
+            <div class="field"><label for="ncStatus">Status</label><select id="ncStatus"></select></div>
+          </div>
+          <hr class="sep">
+          <div class="field"><label for="ncResp">Nome do responsável</label><input id="ncResp" placeholder="Nome do responsável financeiro"></div>
+          <div class="grid2">
+            <div class="field"><label for="ncCpf">CPF</label><input id="ncCpf" inputmode="numeric" placeholder="000.000.000-00"></div>
+            <div class="field"><label for="ncCelular">Celular</label><input id="ncCelular" placeholder="(11)90000-0000"></div>
+          </div>
+          <div class="field"><label for="ncEmail">E-mail</label><input id="ncEmail" type="email" placeholder="nome@email.com"></div>
+          <hr class="sep">
+          <div class="grid2">
+            <div class="field"><label for="ncNegociado">Valor negociado (R$)</label><input id="ncNegociado" type="number" step="0.01" min="0"></div>
+            <div class="field"><label for="ncAberto">Valor em aberto (R$)</label><input id="ncAberto" type="number" step="0.01" min="0"></div>
+          </div>
+          <label class="check-linha"><input type="checkbox" id="ncJuridico"> <span>Já enviado ao jurídico</span></label>
+          <div class="field"><label for="ncMotivo">Motivo de ainda não ter ido ao jurídico</label><select id="ncMotivo"></select></div>
+          <div class="field"><label for="ncObs">Tratativa inicial (opcional)</label><textarea id="ncObs" rows="3" placeholder="Primeiro registro sobre este caso..."></textarea></div>
+          <div class="form-err" id="ncErr" hidden></div>
+          <div class="row-end"><button type="button" class="btn ghost" id="ncCancelar">Cancelar</button><button type="submit" class="btn primary" id="ncSalvar">Adicionar caso</button></div>
+        </form>
+      </div>
+
+      <div id="jurEvolucao" hidden>
+        <div class="card jur-evo"><h3>Casos por carteira e status</h3><div class="meta">Como os casos de cada carteira anual estão distribuídos entre os status.</div><div class="chart-box"><canvas id="jChartCarteira"></canvas></div></div>
+        <div class="card jur-evo"><h3>Valores por carteira</h3><div class="meta">Valor negociado e valor em aberto, somados por carteira.</div><div class="chart-box"><canvas id="jChartValores"></canvas></div></div>
+        <div class="card jur-evo"><h3>Evolução dos status ao longo do tempo</h3><div class="meta" id="jEvoNota">Este gráfico registra uma leitura por dia de uso do painel — ele vai se preenchendo a partir de hoje.</div><div class="chart-box"><canvas id="jChartTempo"></canvas></div></div>
+      </div>
     </div>
 
     <!-- USUÁRIOS -->
@@ -435,6 +504,70 @@
         <button type="button" class="btn ghost small" id="asNovaParcela">+ Parcela para este aluno</button>
         <span class="row-end"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="asSalvar" disabled>Salvar alterações</button></span>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="mJurCaso" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="jcTitulo">
+    <div class="m-head"><div><h2 id="jcTitulo">Caso</h2><div class="sub" id="jcSub"></div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div class="form-err" id="jcConflito" hidden>Este caso aparece em mais de uma aba de status na planilha original e precisa de verificação manual.</div>
+      <div class="grid2">
+        <div class="field"><label for="jcAluno">Nome do aluno</label><input id="jcAluno"></div>
+        <div class="field"><label for="jcRa">RA</label><input id="jcRa"></div>
+        <div class="field"><label for="jcResp">Responsável</label><input id="jcResp"></div>
+        <div class="field"><label for="jcCpf">CPF</label><input id="jcCpf" inputmode="numeric"></div>
+        <div class="field"><label for="jcEmail">E-mail</label><input id="jcEmail" type="email"></div>
+        <div class="field"><label for="jcCelular">Celular</label><input id="jcCelular"></div>
+        <div class="field"><label for="jcCarteira">Carteira</label><input id="jcCarteira" list="ncCarteiras"></div>
+        <div class="field"><label for="jcAno">Ano letivo</label><input id="jcAno"></div>
+      </div>
+      <hr class="sep">
+      <div class="field"><label for="jcStatus">Status</label><select id="jcStatus"></select></div>
+      <div class="grid2">
+        <div class="field"><label for="jcNegociado">Valor negociado (R$)</label><input id="jcNegociado" type="number" step="0.01" min="0"></div>
+        <div class="field"><label for="jcAberto">Valor em aberto (R$)</label><input id="jcAberto" type="number" step="0.01" min="0"></div>
+      </div>
+      <label class="check-linha"><input type="checkbox" id="jcJuridico"> <span>Já enviado ao jurídico</span></label>
+      <div class="grid2">
+        <div class="field"><label for="jcDataEnvio">Data de envio ao jurídico</label><input id="jcDataEnvio" type="date"></div>
+        <div class="field"><label for="jcMotivo">Motivo de ainda não ter ido ao jurídico</label><select id="jcMotivo"></select></div>
+      </div>
+      <hr class="sep">
+      <div class="field">
+        <label>Tratativas do caso</label>
+        <div class="jur-obs" id="jcObsLog"></div>
+        <textarea id="jcNovaObs" rows="2" placeholder="Registrar contato feito, combinado com a família, retorno do jurídico..."></textarea>
+        <div><button type="button" class="btn ghost small" id="jcAddObs">Adicionar tratativa</button></div>
+      </div>
+      <div class="meta" id="jcAtualizado"></div>
+      <div class="form-err" id="jcErr" hidden></div>
+      <div class="m-foot spread">
+        <button type="button" class="btn danger small" id="jcArquivar">Arquivar caso</button>
+        <span class="row-end"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="jcSalvar">Salvar alterações</button></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="mJurImp" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="jiTitulo">
+    <div class="m-head"><div><h2 id="jiTitulo">Importar planilha — Painel jurídico</h2><div class="sub">Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div class="dropzone" id="jurDrop">Arraste um arquivo .xlsx, .csv ou .pdf aqui, ou clique para escolher<input type="file" id="jurFile" accept=".xlsx,.xls,.csv,.txt,.pdf" hidden></div>
+      <div id="jurImpRes"></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="jurImpOk" disabled>Importar casos</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="mJurArq" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="jaTitulo">
+    <div class="m-head"><div><h2 id="jaTitulo">Casos arquivados</h2><div class="sub">"Arquivar caso" no lugar de excluir de vez — arquivados saem do painel principal mas ficam aqui, e podem ser restaurados a qualquer momento.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div id="jurArqLista"></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button></div>
     </div>
   </div>
 </div>

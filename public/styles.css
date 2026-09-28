@@ -374,5 +374,28 @@ table.data.as-tab td.mudou{background:var(--warn-soft)}
 .check-linha input{width:auto;margin-top:3px}
 .versao{font-size:11.5px;color:var(--muted-2, var(--muted));margin-top:8px;text-align:center;opacity:.8}
 
-.juridico-frame{display:block;width:100%;height:calc(100vh - 150px);min-height:560px;border:1px solid var(--line);border-radius:12px;background:#fff}
-a.btn{text-decoration:none}
+/* Painel jurídico */
+.subtabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px;overflow-x:auto}
+.subtabs button{appearance:none;background:none;border:none;border-bottom:3px solid transparent;padding:10px 16px;font-weight:700;color:var(--muted);cursor:pointer;white-space:nowrap;margin-bottom:-1px}
+.subtabs button:hover{color:var(--ink)}
+.subtabs button.active{color:var(--brand);border-bottom-color:var(--brand)}
+.kpis.k5{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media (max-width:1700px){.kpis.k5 .kpi,.kpis.k5 .kpi:nth-child(n+5){grid-column:auto}.kpis.k5{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media (max-width:900px){.kpis.k5{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis.k5 .kpi:last-child{grid-column:1 / -1}}
+hr.sep{border:none;border-top:1px solid var(--line);margin:6px 0;width:100%}
+.jur-novo{max-width:680px;display:flex;flex-direction:column;gap:12px}
+.jur-evo{margin-bottom:16px}
+.jur-evo h3{margin:0 0 2px}
+.chart-box{position:relative;height:300px;margin-top:12px}
+.jur-obs{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+.jur-obs .ob{padding:9px 12px;border-bottom:1px solid var(--line)}
+.jur-obs .ob:last-child{border-bottom:none}
+.jur-obs .ob .meta{font-size:12px}
+.jur-obs .ob-vazio{padding:12px;color:var(--muted);font-size:13.5px}
+.yn{font-weight:700;font-size:13px}
+.yn.sim{color:var(--success)}
+.yn.nao{color:var(--muted-2)}
+td.obs-cell{max-width:260px}
+.arq-linha{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.arq-linha:last-child{border-bottom:none}
+

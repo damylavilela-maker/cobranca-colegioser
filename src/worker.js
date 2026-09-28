@@ -126,7 +126,42 @@ const SCHEMA = [
     atualizado_em TEXT NOT NULL,
     atualizado_por TEXT NOT NULL DEFAULT ''
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_base_ra ON base_alunos(ra)`
+  `CREATE INDEX IF NOT EXISTS idx_base_ra ON base_alunos(ra)`,
+  // Painel jurídico: casos da cobrança jurídica (GM Carvalho), tratativas e uma leitura por dia
+  // dos totais (gráfico de evolução). Arquivar em vez de excluir.
+  `CREATE TABLE IF NOT EXISTS jur_casos (
+    id TEXT PRIMARY KEY,
+    ra TEXT NOT NULL DEFAULT '',
+    carteira TEXT NOT NULL DEFAULT '',
+    ano TEXT NOT NULL DEFAULT '',
+    aluno TEXT NOT NULL DEFAULT '',
+    responsavel TEXT NOT NULL DEFAULT '',
+    cpf TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    celular TEXT NOT NULL DEFAULT '',
+    valor_negociado REAL,
+    valor_aberto REAL,
+    status TEXT NOT NULL DEFAULT 'nao_classificado',
+    enviado_juridico INTEGER NOT NULL DEFAULT 0,
+    data_envio_juridico TEXT NOT NULL DEFAULT '',
+    motivo_pendencia TEXT NOT NULL DEFAULT '',
+    flag_conflito INTEGER NOT NULL DEFAULT 0,
+    arquivado INTEGER NOT NULL DEFAULT 0,
+    arquivado_em TEXT NOT NULL DEFAULT '',
+    criado_em TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL,
+    atualizado_por TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_jur_ra ON jur_casos(ra)`,
+  `CREATE TABLE IF NOT EXISTS jur_obs (
+    id TEXT PRIMARY KEY,
+    caso_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    texto TEXT NOT NULL,
+    autor TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_jur_obs_caso ON jur_obs(caso_id)`,
+  `CREATE TABLE IF NOT EXISTS jur_kpi (data TEXT PRIMARY KEY, dados TEXT NOT NULL)`
 ];
 
 // Períodos que já existiam na planilha "SERASA - SER", criados uma única vez. O nome é o
@@ -305,6 +340,15 @@ async function rotear(req, env, url) {
   if (partes[0] === "base") {
     if (partes.length === 1 && m === "GET") return listarBase(env);
     if (partes[1] === "importar" && m === "POST") return importarBase(req, env, eu);
+  }
+
+  if (partes[0] === "juridico") {
+    if (partes.length === 1 && m === "GET") return listarJuridico(env, url);
+    if (partes.length === 1 && m === "POST") return criarCasoJur(req, env, eu);
+    if (partes[1] === "importar" && m === "POST") return importarJuridico(req, env, eu);
+    if (partes[1] === "evolucao" && m === "GET") return evolucaoJuridico(env);
+    if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
+    if (partes.length === 3 && partes[2] === "obs" && m === "POST") return novaObsJur(req, env, eu, partes[1]);
   }
 
   if (partes[0] === "atendimentos") {
@@ -1343,4 +1387,179 @@ async function duplicadasSerasa(env, eu, remover) {
     await executarEmLotes(env, stmts);
   }
   return json({ duplicadas: apagar.length, grupos: nGrupos, exemplos, removidas: remover ? apagar.length : 0 });
+}
+
+// ---------------------------------------------------------------- Painel jurídico
+
+const JUR_STATUS = ["sem_negociacao", "nao_classificado", "verificar", "em_aberto", "parcial", "em_dia", "quitado"];
+const JUR_MOTIVOS = ["Aguardando negociação com a família", "Aguardando documentação", "Aguardando aprovação interna", "Em análise financeira", "Contato não localizado", "Acordo em cumprimento", "Outro (ver observação)"];
+const JUR_COLS = ["id", "ra", "carteira", "ano", "aluno", "responsavel", "cpf", "email", "celular", "valor_negociado", "valor_aberto", "status", "enviado_juridico", "data_envio_juridico", "motivo_pendencia", "flag_conflito", "arquivado", "arquivado_em", "criado_em", "atualizado_em", "atualizado_por"];
+
+function jurStatusValido(v) { return JUR_STATUS.includes(v) ? v : "nao_classificado"; }
+function valorOuNull(v) { return v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : numero(v); }
+
+function casoSaida(r, obs) {
+  return {
+    id: r.id, ra: r.ra, carteira: r.carteira, ano: r.ano, aluno: r.aluno, responsavel: r.responsavel, cpf: r.cpf,
+    email: r.email, celular: r.celular, valorNegociado: r.valor_negociado, valorAberto: r.valor_aberto, status: r.status,
+    enviadoJuridico: !!r.enviado_juridico, dataEnvio: r.data_envio_juridico, motivo: r.motivo_pendencia,
+    flagConflito: !!r.flag_conflito, arquivado: !!r.arquivado, arquivadoEm: r.arquivado_em, criadoEm: r.criado_em,
+    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por, obs: obs || []
+  };
+}
+
+// Junta o que veio da tela com o registro salvo: só muda o campo que foi enviado.
+function casoValores(o, atual, eu) {
+  const a = atual || {};
+  const agora = agoraISO();
+  const tem = (k) => Object.prototype.hasOwnProperty.call(o, k);
+  const arq = tem("arquivado") ? (o.arquivado ? 1 : 0) : (a.arquivado || 0);
+  return [
+    a.id || novoId(),
+    tem("ra") ? texto(o.ra, 30) : a.ra || "",
+    tem("carteira") ? texto(o.carteira, 60) : a.carteira || "",
+    tem("ano") ? texto(o.ano, 10) : a.ano || "",
+    tem("aluno") ? texto(o.aluno, 150) : a.aluno || "",
+    tem("responsavel") ? texto(o.responsavel, 150) : a.responsavel || "",
+    tem("cpf") ? texto(o.cpf, 20) : a.cpf || "",
+    tem("email") ? texto(o.email, 150) : a.email || "",
+    tem("celular") ? texto(o.celular, 40) : a.celular || "",
+    tem("valorNegociado") ? valorOuNull(o.valorNegociado) : (a.valor_negociado ?? null),
+    tem("valorAberto") ? valorOuNull(o.valorAberto) : (a.valor_aberto ?? null),
+    tem("status") ? jurStatusValido(o.status) : a.status || "nao_classificado",
+    tem("enviadoJuridico") ? (o.enviadoJuridico ? 1 : 0) : (a.enviado_juridico || 0),
+    tem("dataEnvio") ? dataISO(o.dataEnvio) : a.data_envio_juridico || "",
+    tem("motivo") ? texto(o.motivo, 120) : a.motivo_pendencia || "",
+    a.flag_conflito || 0,
+    arq,
+    arq ? (a.arquivado ? a.arquivado_em : agora) : "",
+    a.criado_em || agora,
+    agora,
+    eu ? eu.nome : ""
+  ];
+}
+
+async function buscarCasoJur(env, id) {
+  const r = await env.DB.prepare("SELECT * FROM jur_casos WHERE id = ?").bind(id).first();
+  if (!r) throw new HttpError(404, "Caso não encontrado.");
+  return r;
+}
+
+async function obsDoCaso(env, id) {
+  return (await env.DB.prepare("SELECT data, texto, autor FROM jur_obs WHERE caso_id = ? ORDER BY data DESC").bind(id).all()).results;
+}
+
+async function casoCompleto(env, id) {
+  return json({ caso: casoSaida(await buscarCasoJur(env, id), await obsDoCaso(env, id)) });
+}
+
+async function listarJuridico(env, url) {
+  const arq = url.searchParams.get("arquivados") === "1" ? 1 : 0;
+  const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = ? ORDER BY " + (arq ? "arquivado_em DESC" : "aluno")).bind(arq).all()).results;
+  const porCaso = {};
+  if (!arq) {
+    const obs = (await env.DB.prepare("SELECT o.caso_id, o.data, o.texto, o.autor FROM jur_obs o JOIN jur_casos c ON c.id = o.caso_id WHERE c.arquivado = 0 ORDER BY o.data DESC").all()).results;
+    obs.forEach((o) => { (porCaso[o.caso_id] = porCaso[o.caso_id] || []).push({ data: o.data, texto: o.texto, autor: o.autor }); });
+  }
+  return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])) });
+}
+
+// Dados cadastrais que faltarem vêm da Base de dados (pelo RA ou pelo nome).
+function completarJurComBase(o, base) {
+  const bx = acharNaBase(base, { ra: o.ra, nome: o.aluno });
+  if (!bx) return o;
+  const r = { ...o };
+  if (!texto(r.ra)) r.ra = bx.ra;
+  if (!texto(r.aluno)) r.aluno = bx.nome;
+  if (!texto(r.responsavel)) r.responsavel = bx.responsavel;
+  if (!texto(r.email)) r.email = bx.email;
+  if (!texto(r.celular)) r.celular = bx.telefone;
+  return r;
+}
+
+function insertObsJur(env, casoId, data, t, eu) {
+  return env.DB.prepare("INSERT INTO jur_obs (id, caso_id, data, texto, autor) VALUES (?,?,?,?,?)").bind(novoId(), casoId, data, t, eu ? eu.nome : "");
+}
+
+async function criarCasoJur(req, env, eu) {
+  const b = completarJurComBase(await corpo(req), await carregarBase(env));
+  if (!texto(b.aluno)) throw new HttpError(400, "Informe o nome do aluno antes de adicionar.");
+  const ra = texto(b.ra, 30);
+  if (ra && await env.DB.prepare("SELECT id FROM jur_casos WHERE ra = ? AND arquivado = 0").bind(ra).first())
+    throw new HttpError(400, "Já existe um caso com esse RA. Edite o caso existente em vez de duplicá-lo.");
+  const vals = casoValores({ status: "nao_classificado", ...b, arquivado: false }, null, eu);
+  const stmts = [env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals)];
+  const obs = texto(b.obs, 4000);
+  if (obs) stmts.push(insertObsJur(env, vals[0], agoraISO(), obs, eu));
+  await env.DB.batch(stmts);
+  return casoCompleto(env, vals[0]);
+}
+
+async function alterarCasoJur(req, env, eu, id) {
+  const atual = await buscarCasoJur(env, id);
+  const b = await corpo(req);
+  await env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...casoValores(b, atual, eu)).run();
+  return casoCompleto(env, id);
+}
+
+async function novaObsJur(req, env, eu, id) {
+  await buscarCasoJur(env, id);
+  const t = texto((await corpo(req)).texto, 4000);
+  if (!t) throw new HttpError(400, "Escreva uma observação antes de adicionar.");
+  const agora = agoraISO();
+  await env.DB.batch([
+    insertObsJur(env, id, agora, t, eu),
+    // registrar a tratativa também atualiza o "atualizado em" do caso
+    env.DB.prepare("UPDATE jur_casos SET atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agora, eu.nome, id)
+  ]);
+  return casoCompleto(env, id);
+}
+
+// Casos com o mesmo RA são atualizados (sem RA, pelo nome do aluno); os outros são criados.
+// Célula vazia na planilha não apaga o que já está salvo.
+async function importarJuridico(req, env, eu) {
+  const b = await corpo(req);
+  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 3000) : [];
+  const todos = (await env.DB.prepare("SELECT * FROM jur_casos ORDER BY arquivado").all()).results;
+  const porRa = {}, porNome = {};
+  function indexar(c) {
+    if (c.ra && !porRa[c.ra.toLowerCase()]) porRa[c.ra.toLowerCase()] = c;
+    const n = normNome(c.aluno); if (n && !porNome[n]) porNome[n] = c;
+  }
+  todos.forEach(indexar);
+  const base = await carregarBase(env);
+  const agora = agoraISO();
+  const stmts = [];
+  let criados = 0, atualizados = 0, ignorados = 0;
+  linhas.forEach((l0) => {
+    const l = {};
+    Object.keys(l0 || {}).forEach((k) => { const v = l0[k]; if (v !== null && v !== undefined && String(v).trim() !== "") l[k] = v; });
+    const ra = texto(l.ra, 30), nome = texto(l.aluno, 150);
+    if (!ra && !nome) { ignorados++; return; }
+    const atual = (ra && porRa[ra.toLowerCase()]) || (nome && porNome[normNome(nome)]) || null;
+    const o = completarJurComBase(l, base);
+    const vals = casoValores(atual ? o : { status: "nao_classificado", ...o, aluno: o.aluno || "Sem nome" }, atual, eu);
+    stmts.push(env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals));
+    const obs = texto(l.obs, 4000);
+    if (obs) stmts.push(insertObsJur(env, vals[0], agora, obs, eu));
+    if (atual) atualizados++;
+    else {
+      criados++;
+      const novo = {}; JUR_COLS.forEach((c, i) => { novo[c] = vals[i]; });
+      indexar(novo); // a mesma pessoa repetida no arquivo não vira dois casos
+    }
+  });
+  await executarEmLotes(env, stmts);
+  return json({ criados, atualizados, ignorados });
+}
+
+// Gráfico de evolução: grava a leitura de hoje (casos por status e valores) e devolve o histórico.
+async function evolucaoJuridico(env) {
+  const r = (await env.DB.prepare("SELECT status, COUNT(*) AS n, SUM(COALESCE(valor_negociado,0)) AS neg, SUM(COALESCE(valor_aberto,0)) AS ab FROM jur_casos WHERE arquivado = 0 GROUP BY status").all()).results;
+  const snap = { negociado: 0, aberto: 0 };
+  JUR_STATUS.forEach((s) => { snap[s] = 0; });
+  r.forEach((x) => { snap[jurStatusValido(x.status)] += x.n; snap.negociado += x.neg || 0; snap.aberto += x.ab || 0; });
+  await env.DB.prepare("INSERT OR REPLACE INTO jur_kpi (data, dados) VALUES (?, ?)").bind(hojeISO(), JSON.stringify(snap)).run();
+  const h = (await env.DB.prepare("SELECT * FROM jur_kpi ORDER BY data").all()).results;
+  return json({ historico: h.map((x) => { let d = {}; try { d = JSON.parse(x.dados); } catch (e) { d = {}; } return { data: x.data, ...d }; }) });
 }
