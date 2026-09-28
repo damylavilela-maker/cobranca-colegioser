@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v8";
+  var VERSAO = "28/09 · v9";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -263,6 +263,7 @@
     document.querySelectorAll("#nav button").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-view") === v); });
     if (v === "usuarios") carregarUsuarios();
     if (v === "juridico" && !jurCarregado) carregarJuridico();
+    if (v === "juridico" && !baseCarregada) carregarBaseDados().then(function () { if (view === "juridico") renderJuridico(); }); // turma dos alunos vem da base
     // ao trocar de aba, busca o que foi registrado por todos desde a última atualização
     if (eu && Date.now() - ultimaCarga > 5000) carregar();
     if (v === "base" && !baseCarregada) carregarBaseDados();
@@ -2208,7 +2209,7 @@
     { k: "quitado", l: "Quitado", c: "success" }
   ];
   var JUR_MOTIVOS = ["Aguardando negociação com a família", "Aguardando documentação", "Aguardando aprovação interna", "Em análise financeira", "Contato não localizado", "Acordo em cumprimento", "Outro (ver observação)"];
-  var JUR_CAB = ["RA", "Aluno", "Responsável", "CPF", "E-mail", "Celular", "Carteira", "Ano", "Status", "Valor negociado (R$)", "Valor em aberto (R$)", "Enviado ao jurídico", "Data envio jurídico", "Motivo pendência", "Última observação", "Atualizado em"];
+  var JUR_CAB = ["RA", "Aluno", "Responsável", "CPF", "E-mail", "Celular", "Carteira", "Ano", "Status", "Valor negociado (R$)", "Valor em aberto (R$)", "Parcelas em aberto", "Enviado ao jurídico", "Data envio jurídico", "Motivo pendência", "Última observação", "Atualizado em"];
   var casosJur = [], jurCarregado = false, jurTab = "painel", jurLimite = 300, casoJur = null, jurPendentes = [];
 
   function jst(k) { for (var i = 0; i < JUR_STATUS.length; i++) if (JUR_STATUS[i].k === k) return JUR_STATUS[i]; return JUR_STATUS[1]; }
@@ -2283,7 +2284,7 @@
       if (ju === "nao" && c.enviadoJuridico) return false;
       if (q && [c.aluno, c.responsavel, c.ra, c.cpf].join(" ").toLowerCase().indexOf(q) === -1) return false;
       return true;
-    }).sort(function (a, b) { return (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
+    }).sort(function (a, b) { return (Number(b.valorAberto) || 0) - (Number(a.valorAberto) || 0) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
   }
 
   function renderTabelaJur() {
@@ -2291,15 +2292,18 @@
     $("jurCount").textContent = vis.length + " de " + casosJur.length + " casos";
     $("jurVazio").hidden = vis.length > 0;
     $("jurVazio").textContent = casosJur.length ? "Nenhum caso encontrado com estes filtros." : "Nenhum caso cadastrado ainda. Use “Novo caso” ou “Importar planilha”.";
+    // mesmo formato do Painel: aluno com responsável · RA · turma embaixo; valor em aberto com as parcelas
+    var turmaPorRa = {}; baseAlunos.forEach(function (b) { if (b.ra && b.turma) turmaPorRa[String(b.ra).trim().toLowerCase()] = b.turma; });
     $("jurTbody").innerHTML = vis.slice(0, jurLimite).map(function (c) {
-      var ob = ultimaObs(c);
+      var ob = ultimaObs(c), v = Number(c.valorAberto) || 0, turma = c.ra ? turmaPorRa[c.ra.trim().toLowerCase()] : "";
       return '<tr class="click" data-id="' + esc(c.id) + '">' +
-        '<td><b>' + esc(c.aluno || "—") + "</b>" + (c.ra ? '<div class="meta">RA ' + esc(c.ra) + "</div>" : "") + "</td>" +
-        '<td class="muted">' + esc(c.responsavel || "—") + "</td>" +
-        "<td>" + esc(c.carteira || "—") + "</td>" +
+        '<td><div class="nome">' + esc(c.aluno || "—") + '</div><div class="meta">' +
+        esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + (turma ? " · " + esc(turma) : "") + "</div></td>" +
+        '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" +
+        (c.parcelas ? '<div class="meta">' + c.parcelas + (c.parcelas === 1 ? " parcela" : " parcelas") + "</div>" : "") + "</td>" +
         "<td>" + jpill(c.status) + "</td>" +
-        '<td class="tabular right">' + moneyOu(c.valorNegociado) + "</td>" +
-        '<td class="tabular right">' + moneyOu(c.valorAberto) + "</td>" +
+        '<td class="tabular">' + moneyOu(c.valorNegociado) + "</td>" +
+        "<td>" + esc(c.carteira || "—") + (c.ano ? '<div class="meta">ano letivo ' + esc(c.ano) + "</div>" : "") + "</td>" +
         '<td><span class="yn ' + (c.enviadoJuridico ? "sim" : "nao") + '">' + (c.enviadoJuridico ? "Sim" : "Não") + "</span></td>" +
         '<td class="muted obs-cell">' + esc(ob ? (ob.length > 60 ? ob.slice(0, 60).trim() + "…" : ob) : "—") + "</td>" +
         '<td class="muted">' + dataCurta(c.atualizadoEm) + "</td></tr>";
@@ -2327,7 +2331,7 @@
     $("jcEmail").value = c.email || ""; $("jcCelular").value = c.celular || ""; $("jcCarteira").value = c.carteira || ""; $("jcAno").value = c.ano || "";
     fill($("jcStatus"), opcoesStatusJur()); $("jcStatus").value = c.status || "nao_classificado";
     $("jcNegociado").value = c.valorNegociado == null ? "" : c.valorNegociado;
-    $("jcAberto").value = c.valorAberto == null ? "" : c.valorAberto;
+    $("jcAberto").value = c.valorAberto == null ? "" : c.valorAberto; $("jcParcelas").value = c.parcelas || "";
     $("jcJuridico").checked = !!c.enviadoJuridico; $("jcDataEnvio").value = c.dataEnvio || "";
     fill($("jcMotivo"), JUR_MOTIVOS.concat(c.motivo && JUR_MOTIVOS.indexOf(c.motivo) === -1 ? [c.motivo] : []), "Selecionar...");
     $("jcMotivo").value = c.motivo || "";
@@ -2344,7 +2348,7 @@
     api("PATCH", "/api/juridico/" + encodeURIComponent(casoJur.id), {
       aluno: $("jcAluno").value.trim(), ra: $("jcRa").value.trim(), responsavel: $("jcResp").value.trim(), cpf: $("jcCpf").value.trim(),
       email: $("jcEmail").value.trim(), celular: $("jcCelular").value.trim(), carteira: $("jcCarteira").value.trim(), ano: $("jcAno").value.trim(),
-      status: $("jcStatus").value, valorNegociado: numOuNull($("jcNegociado").value), valorAberto: numOuNull($("jcAberto").value),
+      status: $("jcStatus").value, valorNegociado: numOuNull($("jcNegociado").value), valorAberto: numOuNull($("jcAberto").value), parcelas: parseInt($("jcParcelas").value, 10) || 0,
       enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value
     }).then(function (d) {
       trocarCaso(d.caso); $("mJurCaso").hidden = true; renderJuridico(); toast("Caso atualizado.");
@@ -2416,7 +2420,7 @@
     api("POST", "/api/juridico", {
       aluno: $("ncAluno").value.trim(), ra: ra, carteira: $("ncCarteira").value.trim(), ano: $("ncAno").value.trim(), status: $("ncStatus").value,
       responsavel: $("ncResp").value.trim(), cpf: $("ncCpf").value.trim(), celular: $("ncCelular").value.trim(), email: $("ncEmail").value.trim(),
-      valorNegociado: numOuNull($("ncNegociado").value), valorAberto: numOuNull($("ncAberto").value),
+      valorNegociado: numOuNull($("ncNegociado").value), valorAberto: numOuNull($("ncAberto").value), parcelas: parseInt($("ncParcelas").value, 10) || 0,
       enviadoJuridico: $("ncJuridico").checked, dataEnvio: $("ncJuridico").checked ? hoje() : "", motivo: $("ncMotivo").value, obs: $("ncObs").value.trim()
     }).then(function (d) {
       trocarCaso(d.caso); irJur("painel"); toast("Caso adicionado.");
@@ -2438,7 +2442,7 @@
 
   // relatório mensal e modelo (Excel)
   function linhaRelatorioJur(c) {
-    return [c.ra, c.aluno, c.responsavel, c.cpf, c.email, c.celular, c.carteira, c.ano, jst(c.status).l, c.valorNegociado, c.valorAberto,
+    return [c.ra, c.aluno, c.responsavel, c.cpf, c.email, c.celular, c.carteira, c.ano, jst(c.status).l, c.valorNegociado, c.valorAberto, c.parcelas || "",
       c.enviadoJuridico ? "Sim" : "Não", c.dataEnvio ? br(c.dataEnvio) : "", c.motivo || "", ultimaObs(c), c.atualizadoEm ? dataCurta(c.atualizadoEm) : ""];
   }
   function baixarXLSX(nome, aba, linhas) {
@@ -2454,14 +2458,15 @@
     }))).then(function () { toast("Relatório exportado — " + pend.length + " casos."); });
   });
   $("btnJurModelo").addEventListener("click", function () {
-    baixarXLSX("modelo-importacao-casos.xlsx", "Modelo", [JUR_CAB, ["", "", "", "", "", "", "", "", "Sem negociação / Em dia / Parcialmente pago / Em aberto / Quitado / Verificar manualmente", "", "", "Sim/Não", "", "", "", ""]]);
+    baixarXLSX("modelo-importacao-casos.xlsx", "Modelo", [JUR_CAB, ["", "", "", "", "", "", "", "", "Sem negociação / Em dia / Parcialmente pago / Em aberto / Quitado / Verificar manualmente", "", "", "", "Sim/Não", "", "", "", ""]]);
   });
 
   // importação: .xlsx, .csv ou .pdf → linhas com os campos do caso
   var JUR_COLUNAS = {
     ra: ["ra", "matricula", "codigo"], aluno: ["aluno", "nome do aluno", "nome"], responsavel: ["responsavel", "responsavel financeiro", "nome do responsavel"],
     cpf: ["cpf", "cpf do responsavel"], email: ["e-mail", "email"], celular: ["celular", "telefone", "tel"], carteira: ["carteira"], ano: ["ano", "ano letivo"],
-    status: ["status", "situacao"], valorNegociado: ["valor negociado (r$)", "valor negociado", "negociado"], valorAberto: ["valor em aberto (r$)", "valor em aberto", "em aberto"],
+    status: ["status", "situacao"], valorNegociado: ["valor negociado (r$)", "valor negociado", "negociado"], valorAberto: ["valor em aberto (r$)", "valor em aberto", "em aberto", "valor devido", "total devido"],
+    parcelas: ["parcelas em aberto", "parcelas", "qtd parcelas", "qtd. parcelas", "quantidade de parcelas", "n parcelas"],
     enviadoJuridico: ["enviado ao juridico", "juridico"], dataEnvio: ["data envio juridico", "data de envio ao juridico"], motivo: ["motivo pendencia", "motivo"],
     obs: ["ultima observacao", "observacao", "ultima tratativa", "tratativa"]
   };
@@ -2499,6 +2504,7 @@
       l.status = statusDoTexto(cel("status"));
       l.valorNegociado = valorCelula(ix.valorNegociado === -1 ? "" : r[ix.valorNegociado]);
       l.valorAberto = valorCelula(ix.valorAberto === -1 ? "" : r[ix.valorAberto]);
+      var np = parseInt(String(cel("parcelas")).replace(/\D/g, ""), 10); if (np > 0) l.parcelas = np;
       var ju = normHeader(cel("enviadoJuridico"));
       if (ju) l.enviadoJuridico = /^(s|sim|true|x|1)/.test(ju);
       l.dataEnvio = dataCelula(ix.dataEnvio === -1 ? "" : r[ix.dataEnvio]);
@@ -2544,7 +2550,7 @@
         '<div class="table-wrap"><table class="data"><thead><tr><th>RA</th><th>Aluno</th><th>Carteira</th><th>Status</th><th class="right">Negociado</th><th class="right">Em aberto</th></tr></thead><tbody>' +
         linhas.slice(0, 8).map(function (l) {
           return "<tr><td>" + esc(l.ra || "—") + "</td><td>" + esc(l.aluno || "—") + "</td><td>" + esc(l.carteira || "—") + "</td><td>" + (l.status ? jpill(l.status) : "—") +
-            '</td><td class="tabular right">' + moneyOu(l.valorNegociado) + '</td><td class="tabular right">' + moneyOu(l.valorAberto) + "</td></tr>";
+            '</td><td class="tabular right">' + moneyOu(l.valorNegociado) + '</td><td class="tabular right">' + moneyOu(l.valorAberto) + (l.parcelas ? '<div class="meta">' + l.parcelas + " parcelas</div>" : "") + "</td></tr>";
         }).join("") + "</tbody></table></div>" + (linhas.length > 8 ? '<div class="meta">…e mais ' + (linhas.length - 8) + " linha(s).</div>" : "")
       : '<div class="form-err">Nenhuma linha com Aluno ou RA foi encontrada no arquivo.</div>';
     $("jurImpOk").disabled = !linhas.length; $("jurImpOk").textContent = "Importar " + linhas.length + " caso(s)";

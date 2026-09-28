@@ -210,6 +210,9 @@ export default {
         // Cada parcela da Serasa pertence a um período (como uma linha pertence a uma aba da planilha).
         const colsSer = (await env.DB.prepare("PRAGMA table_info(serasa)").all()).results.map((c) => c.name);
         if (!colsSer.includes("periodo_id")) await env.DB.prepare("ALTER TABLE serasa ADD COLUMN periodo_id TEXT NOT NULL DEFAULT ''").run();
+        // Casos do Painel jurídico criados antes da coluna de quantidade de parcelas em aberto.
+        const colsJur = (await env.DB.prepare("PRAGMA table_info(jur_casos)").all()).results.map((c) => c.name);
+        if (!colsJur.includes("parcelas")) await env.DB.prepare("ALTER TABLE jur_casos ADD COLUMN parcelas INTEGER NOT NULL DEFAULT 0").run();
         // Cria os períodos da planilha uma única vez (se forem apagados, não voltam).
         // Só quem conseguir gravar a marca "periodos_iniciais" cria os períodos (evita duplicar
         // se duas pessoas abrirem o site ao mesmo tempo logo após a atualização).
@@ -1393,7 +1396,7 @@ async function duplicadasSerasa(env, eu, remover) {
 
 const JUR_STATUS = ["sem_negociacao", "nao_classificado", "verificar", "em_aberto", "parcial", "em_dia", "quitado"];
 const JUR_MOTIVOS = ["Aguardando negociação com a família", "Aguardando documentação", "Aguardando aprovação interna", "Em análise financeira", "Contato não localizado", "Acordo em cumprimento", "Outro (ver observação)"];
-const JUR_COLS = ["id", "ra", "carteira", "ano", "aluno", "responsavel", "cpf", "email", "celular", "valor_negociado", "valor_aberto", "status", "enviado_juridico", "data_envio_juridico", "motivo_pendencia", "flag_conflito", "arquivado", "arquivado_em", "criado_em", "atualizado_em", "atualizado_por"];
+const JUR_COLS = ["id", "ra", "carteira", "ano", "aluno", "responsavel", "cpf", "email", "celular", "valor_negociado", "valor_aberto", "status", "enviado_juridico", "data_envio_juridico", "motivo_pendencia", "flag_conflito", "arquivado", "arquivado_em", "criado_em", "atualizado_em", "atualizado_por", "parcelas"];
 
 function jurStatusValido(v) { return JUR_STATUS.includes(v) ? v : "nao_classificado"; }
 function valorOuNull(v) { return v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : numero(v); }
@@ -1404,7 +1407,7 @@ function casoSaida(r, obs) {
     email: r.email, celular: r.celular, valorNegociado: r.valor_negociado, valorAberto: r.valor_aberto, status: r.status,
     enviadoJuridico: !!r.enviado_juridico, dataEnvio: r.data_envio_juridico, motivo: r.motivo_pendencia,
     flagConflito: !!r.flag_conflito, arquivado: !!r.arquivado, arquivadoEm: r.arquivado_em, criadoEm: r.criado_em,
-    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por, obs: obs || []
+    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por, parcelas: r.parcelas || 0, obs: obs || []
   };
 }
 
@@ -1435,7 +1438,8 @@ function casoValores(o, atual, eu) {
     arq ? (a.arquivado ? a.arquivado_em : agora) : "",
     a.criado_em || agora,
     agora,
-    eu ? eu.nome : ""
+    eu ? eu.nome : "",
+    tem("parcelas") ? Math.max(0, Math.min(999, parseInt(o.parcelas, 10) || 0)) : (a.parcelas || 0)
   ];
 }
 

@@ -281,7 +281,7 @@
         <div class="count" id="jurCount"></div>
         <div class="table-wrap">
           <table class="data">
-            <thead><tr><th>Aluno</th><th>Responsável</th><th>Carteira</th><th>Status</th><th class="right">Negociado</th><th class="right">Em aberto</th><th>Jurídico</th><th>Última tratativa</th><th>Atualizado</th></tr></thead>
+            <thead><tr><th>Aluno</th><th>Valor em aberto</th><th>Status</th><th>Negociado</th><th>Carteira</th><th>Jurídico</th><th>Última tratativa</th><th>Atualizado</th></tr></thead>
             <tbody id="jurTbody"></tbody>
           </table>
           <div class="empty muted" id="jurVazio" hidden>Nenhum caso encontrado com estes filtros.</div>
@@ -308,9 +308,10 @@
           </div>
           <div class="field"><label for="ncEmail">E-mail</label><input id="ncEmail" type="email" placeholder="nome@email.com"></div>
           <hr class="sep">
-          <div class="grid2">
+          <div class="grid3">
             <div class="field"><label for="ncNegociado">Valor negociado (R$)</label><input id="ncNegociado" type="number" step="0.01" min="0"></div>
             <div class="field"><label for="ncAberto">Valor em aberto (R$)</label><input id="ncAberto" type="number" step="0.01" min="0"></div>
+            <div class="field"><label for="ncParcelas">Parcelas em aberto</label><input id="ncParcelas" type="number" step="1" min="0" placeholder="Ex: 12"></div>
           </div>
           <label class="check-linha"><input type="checkbox" id="ncJuridico"> <span>Já enviado ao jurídico</span></label>
           <div class="field"><label for="ncMotivo">Motivo de ainda não ter ido ao jurídico</label><select id="ncMotivo"></select></div>
@@ -525,9 +526,10 @@
       </div>
       <hr class="sep">
       <div class="field"><label for="jcStatus">Status</label><select id="jcStatus"></select></div>
-      <div class="grid2">
+      <div class="grid3">
         <div class="field"><label for="jcNegociado">Valor negociado (R$)</label><input id="jcNegociado" type="number" step="0.01" min="0"></div>
         <div class="field"><label for="jcAberto">Valor em aberto (R$)</label><input id="jcAberto" type="number" step="0.01" min="0"></div>
+        <div class="field"><label for="jcParcelas">Parcelas em aberto</label><input id="jcParcelas" type="number" step="1" min="0"></div>
       </div>
       <label class="check-linha"><input type="checkbox" id="jcJuridico"> <span>Já enviado ao jurídico</span></label>
       <div class="grid2">
