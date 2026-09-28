@@ -213,6 +213,7 @@ export default {
         // Casos do Painel jurídico criados antes da coluna de quantidade de parcelas em aberto.
         const colsJur = (await env.DB.prepare("PRAGMA table_info(jur_casos)").all()).results.map((c) => c.name);
         if (!colsJur.includes("parcelas")) await env.DB.prepare("ALTER TABLE jur_casos ADD COLUMN parcelas INTEGER NOT NULL DEFAULT 0").run();
+        if (!colsJur.includes("extrato")) await env.DB.batch(["ALTER TABLE jur_casos ADD COLUMN extrato REAL", "ALTER TABLE jur_casos ADD COLUMN conta_financeira TEXT NOT NULL DEFAULT ''", "ALTER TABLE jur_casos ADD COLUMN link_drive TEXT NOT NULL DEFAULT ''"].map((s) => env.DB.prepare(s)));
         // Cria os períodos da planilha uma única vez (se forem apagados, não voltam).
         // Só quem conseguir gravar a marca "periodos_iniciais" cria os períodos (evita duplicar
         // se duas pessoas abrirem o site ao mesmo tempo logo após a atualização).
@@ -1396,9 +1397,11 @@ async function duplicadasSerasa(env, eu, remover) {
 
 const JUR_STATUS = ["sem_negociacao", "nao_classificado", "verificar", "em_aberto", "parcial", "em_dia", "quitado"];
 const JUR_MOTIVOS = ["Aguardando negociação com a família", "Aguardando documentação", "Aguardando aprovação interna", "Em análise financeira", "Contato não localizado", "Acordo em cumprimento", "Outro (ver observação)"];
-const JUR_COLS = ["id", "ra", "carteira", "ano", "aluno", "responsavel", "cpf", "email", "celular", "valor_negociado", "valor_aberto", "status", "enviado_juridico", "data_envio_juridico", "motivo_pendencia", "flag_conflito", "arquivado", "arquivado_em", "criado_em", "atualizado_em", "atualizado_por", "parcelas"];
+const JUR_COLS = ["id", "ra", "carteira", "ano", "aluno", "responsavel", "cpf", "email", "celular", "valor_negociado", "valor_aberto", "status", "enviado_juridico", "data_envio_juridico", "motivo_pendencia", "flag_conflito", "arquivado", "arquivado_em", "criado_em", "atualizado_em", "atualizado_por", "parcelas", "extrato", "conta_financeira", "link_drive"];
 
 function jurStatusValido(v) { return JUR_STATUS.includes(v) ? v : "nao_classificado"; }
+// Nome igual, ou um é o começo do outro (nome cortado em alguma aba da planilha).
+function nomesCompativeis(a, b) { const x = normNome(a), y = normNome(b); return !x || !y || x === y || x.startsWith(y) || y.startsWith(x); }
 function valorOuNull(v) { return v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : numero(v); }
 
 function casoSaida(r, obs) {
@@ -1407,7 +1410,7 @@ function casoSaida(r, obs) {
     email: r.email, celular: r.celular, valorNegociado: r.valor_negociado, valorAberto: r.valor_aberto, status: r.status,
     enviadoJuridico: !!r.enviado_juridico, dataEnvio: r.data_envio_juridico, motivo: r.motivo_pendencia,
     flagConflito: !!r.flag_conflito, arquivado: !!r.arquivado, arquivadoEm: r.arquivado_em, criadoEm: r.criado_em,
-    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por, parcelas: r.parcelas || 0, obs: obs || []
+    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por, parcelas: r.parcelas || 0, extrato: r.extrato, contaFinanceira: r.conta_financeira || "", linkDrive: r.link_drive || "", obs: obs || []
   };
 }
 
@@ -1439,7 +1442,10 @@ function casoValores(o, atual, eu) {
     a.criado_em || agora,
     agora,
     eu ? eu.nome : "",
-    tem("parcelas") ? Math.max(0, Math.min(999, parseInt(o.parcelas, 10) || 0)) : (a.parcelas || 0)
+    tem("parcelas") ? Math.max(0, Math.min(999, parseInt(o.parcelas, 10) || 0)) : (a.parcelas || 0),
+    tem("extrato") ? valorOuNull(o.extrato) : (a.extrato ?? null),
+    tem("contaFinanceira") ? texto(o.contaFinanceira, 60) : a.conta_financeira || "",
+    tem("linkDrive") ? (/^https?:\/\//i.test(texto(o.linkDrive, 500)) ? texto(o.linkDrive, 500) : "") : a.link_drive || ""
   ];
 }
 
@@ -1525,9 +1531,9 @@ async function importarJuridico(req, env, eu) {
   const b = await corpo(req);
   const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 3000) : [];
   const todos = (await env.DB.prepare("SELECT * FROM jur_casos ORDER BY arquivado").all()).results;
-  const porRa = {}, porNome = {};
+  const porRa = {}, porNome = {}; // porRa: lista de casos por RA
   function indexar(c) {
-    if (c.ra && !porRa[c.ra.toLowerCase()]) porRa[c.ra.toLowerCase()] = c;
+    if (c.ra) (porRa[c.ra.toLowerCase()] = porRa[c.ra.toLowerCase()] || []).push(c);
     const n = normNome(c.aluno); if (n && !porNome[n]) porNome[n] = c;
   }
   todos.forEach(indexar);
@@ -1540,7 +1546,12 @@ async function importarJuridico(req, env, eu) {
     Object.keys(l0 || {}).forEach((k) => { const v = l0[k]; if (v !== null && v !== undefined && String(v).trim() !== "") l[k] = v; });
     const ra = texto(l.ra, 30), nome = texto(l.aluno, 150);
     if (!ra && !nome) { ignorados++; return; }
-    const atual = (ra && porRa[ra.toLowerCase()]) || (nome && porNome[normNome(nome)]) || null;
+    // mesmo RA só é o mesmo caso se o nome bater (a planilha tem RA repetido para alunos diferentes)
+    // e o mesmo aluno em duas carteiras são dois casos
+    const cart = normNome(l.carteira);
+    const mesmaCarteira = (c) => !cart || !normNome(c.carteira) || normNome(c.carteira) === cart;
+    const atual = (ra && (porRa[ra.toLowerCase()] || []).find((c) => nomesCompativeis(c.aluno, nome) && mesmaCarteira(c))) ||
+      (nome && [porNome[normNome(nome)]].find((c) => c && (!ra || !c.ra) && mesmaCarteira(c))) || null;
     const o = completarJurComBase(l, base);
     const vals = casoValores(atual ? o : { status: "nao_classificado", ...o, aluno: o.aluno || "Sem nome" }, atual, eu);
     stmts.push(env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals));

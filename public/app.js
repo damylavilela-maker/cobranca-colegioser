@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v10";
+  var VERSAO = "28/09 · v11";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2209,7 +2209,7 @@
     { k: "quitado", l: "Quitado", c: "success" }
   ];
   var JUR_MOTIVOS = ["Aguardando negociação com a família", "Aguardando documentação", "Aguardando aprovação interna", "Em análise financeira", "Contato não localizado", "Acordo em cumprimento", "Outro (ver observação)"];
-  var JUR_CAB = ["RA", "Aluno", "Responsável", "CPF", "E-mail", "Celular", "Carteira", "Ano", "Status", "Valor negociado (R$)", "Valor em aberto (R$)", "Parcelas em aberto", "Enviado ao jurídico", "Data envio jurídico", "Motivo pendência", "Última observação", "Atualizado em"];
+  var JUR_CAB = ["RA", "Aluno", "Responsável", "CPF", "E-mail", "Celular", "Carteira", "Ano", "Status", "Valor negociado (R$)", "Valor em aberto (R$)", "Parcelas em aberto", "Enviado ao jurídico", "Data envio jurídico", "Motivo pendência", "Última observação", "Atualizado em", "Extrato (R$)", "Conta financeira", "Link Drive"];
   var casosJur = [], jurCarregado = false, jurTab = "painel", jurLimite = 300, casoJur = null, jurPendentes = [];
 
   function jst(k) { for (var i = 0; i < JUR_STATUS.length; i++) if (JUR_STATUS[i].k === k) return JUR_STATUS[i]; return JUR_STATUS[1]; }
@@ -2335,6 +2335,8 @@
     $("jcJuridico").checked = !!c.enviadoJuridico; $("jcDataEnvio").value = c.dataEnvio || "";
     fill($("jcMotivo"), JUR_MOTIVOS.concat(c.motivo && JUR_MOTIVOS.indexOf(c.motivo) === -1 ? [c.motivo] : []), "Selecionar...");
     $("jcMotivo").value = c.motivo || "";
+    $("jcExtrato").value = c.extrato == null ? "" : c.extrato; $("jcConta").value = c.contaFinanceira || ""; $("jcLink").value = c.linkDrive || "";
+    $("jcAbrirLink").hidden = !c.linkDrive; $("jcAbrirLink").href = c.linkDrive || "#";
     $("jcNovaObs").value = ""; renderObsJur(c);
     $("jcAtualizado").textContent = "Última atualização: " + (c.atualizadoEm ? dataHora(c.atualizadoEm) + (c.atualizadoPor ? " por " + c.atualizadoPor : "") : "nunca");
     var b = $("jcArquivar"); b.classList.remove("armed"); b.textContent = "Arquivar caso";
@@ -2349,7 +2351,8 @@
       aluno: $("jcAluno").value.trim(), ra: $("jcRa").value.trim(), responsavel: $("jcResp").value.trim(), cpf: $("jcCpf").value.trim(),
       email: $("jcEmail").value.trim(), celular: $("jcCelular").value.trim(), carteira: $("jcCarteira").value.trim(), ano: $("jcAno").value.trim(),
       status: $("jcStatus").value, valorNegociado: numOuNull($("jcNegociado").value), valorAberto: numOuNull($("jcAberto").value), parcelas: parseInt($("jcParcelas").value, 10) || 0,
-      enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value, flagConflito: false
+      enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value, flagConflito: false,
+      extrato: numOuNull($("jcExtrato").value), contaFinanceira: $("jcConta").value.trim(), linkDrive: $("jcLink").value.trim()
     }).then(function (d) {
       trocarCaso(d.caso); $("mJurCaso").hidden = true; renderJuridico(); toast("Caso atualizado.");
     }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
@@ -2443,7 +2446,7 @@
   // relatório mensal e modelo (Excel)
   function linhaRelatorioJur(c) {
     return [c.ra, c.aluno, c.responsavel, c.cpf, c.email, c.celular, c.carteira, c.ano, jst(c.status).l, c.valorNegociado, c.valorAberto, c.parcelas || "",
-      c.enviadoJuridico ? "Sim" : "Não", c.dataEnvio ? br(c.dataEnvio) : "", c.motivo || "", ultimaObs(c), c.atualizadoEm ? dataCurta(c.atualizadoEm) : ""];
+      c.enviadoJuridico ? "Sim" : "Não", c.dataEnvio ? br(c.dataEnvio) : "", c.motivo || "", ultimaObs(c), c.atualizadoEm ? dataCurta(c.atualizadoEm) : "", c.extrato == null ? "" : c.extrato, c.contaFinanceira || "", c.linkDrive || ""];
   }
   function baixarXLSX(nome, aba, linhas) {
     return carregarXLSX().then(function (X) {
@@ -2464,11 +2467,12 @@
   // importação: .xlsx, .csv ou .pdf → linhas com os campos do caso
   var JUR_COLUNAS = {
     ra: ["ra", "matricula", "codigo"], aluno: ["aluno", "nome do aluno", "nome"], responsavel: ["responsavel", "responsavel financeiro", "nome do responsavel"],
-    cpf: ["cpf", "cpf do responsavel"], email: ["e-mail", "email"], celular: ["celular", "telefone", "tel"], carteira: ["carteira"], ano: ["ano", "ano letivo"],
+    cpf: ["cpf", "cpf do responsavel"], email: ["e-mail", "email"], celular: ["celular", "telefone", "tel"], carteira: ["carteira"], ano: ["ano", "ano letivo", "ano de referencia"],
     status: ["status", "situacao"], valorNegociado: ["valor negociado (r$)", "valor negociado", "negociado"], valorAberto: ["valor em aberto (r$)", "valor em aberto", "em aberto", "valor devido", "total devido"],
     parcelas: ["parcelas em aberto", "parcelas", "qtd parcelas", "qtd. parcelas", "quantidade de parcelas", "n parcelas"],
     enviadoJuridico: ["enviado ao juridico", "juridico"], dataEnvio: ["data envio juridico", "data de envio ao juridico"], motivo: ["motivo pendencia", "motivo"],
-    obs: ["ultima observacao", "observacao", "ultima tratativa", "tratativa"]
+    obs: ["ultima observacao", "observacao", "ultima tratativa", "tratativa"], extrato: ["extrato (r$)", "extrato"],
+    contaFinanceira: ["conta financeira", "cf"], linkDrive: ["link drive", "link", "documentos", "link dos documentos"]
   };
   // nome exato primeiro; parte do nome só para nomes longos ("ra" não pode casar com "carteira")
   function colunaJur(h, nomes) {
@@ -2477,6 +2481,7 @@
     return -1;
   }
   // status escrito na planilha (ou nome da aba) → status do painel; null quando não reconhece
+  function nomesIguaisJur(a, b) { var x = normHeader(a), y = normHeader(b); return !x || !y || x === y || x.indexOf(y) === 0 || y.indexOf(x) === 0; }
   function statusDoTexto(v) {
     var t = normHeader(v); if (!t) return null;
     for (var i = 0; i < JUR_STATUS.length; i++) if (normHeader(JUR_STATUS[i].l) === t || JUR_STATUS[i].k === t || JUR_STATUS[i].k.replace(/_/g, " ") === t) return JUR_STATUS[i].k;
@@ -2502,8 +2507,8 @@
     t.rows.forEach(function (r) {
       function cel(k) { var v = ix[k] === -1 ? "" : r[ix[k]]; return v instanceof Date ? v : String(v == null ? "" : v).trim(); }
       var l = {
-        ra: cel("ra"), aluno: cel("aluno"), responsavel: cel("responsavel"), cpf: cel("cpf"), email: cel("email"), celular: cel("celular"),
-        carteira: cel("carteira"), ano: cel("ano"), motivo: cel("motivo"), obs: cel("obs")
+        ra: cel("ra").replace(/\.0+$/, ""), aluno: cel("aluno"), responsavel: cel("responsavel"), cpf: cel("cpf"), email: cel("email"), celular: cel("celular"),
+        carteira: cel("carteira"), ano: cel("ano").replace(/\.0+$/, ""), contaFinanceira: cel("contaFinanceira"), motivo: cel("motivo"), obs: cel("obs")
       };
       if (!l.ra && !l.aluno) return;
       // linha de total no fim da planilha não é caso
@@ -2515,6 +2520,8 @@
       } else if (stAba) l.status = stAba;
       l.valorNegociado = valorCelula(ix.valorNegociado === -1 ? "" : r[ix.valorNegociado]);
       l.valorAberto = valorCelula(ix.valorAberto === -1 ? "" : r[ix.valorAberto]);
+      l.extrato = valorCelula(ix.extrato === -1 ? "" : r[ix.extrato]);
+      var link = cel("linkDrive"); if (/^https?:\/\//i.test(link)) l.linkDrive = link;
       var np = parseInt(String(cel("parcelas")).replace(/\D/g, ""), 10); if (np > 0) l.parcelas = np;
       var ju = normHeader(cel("enviadoJuridico"));
       if (ju) l.enviadoJuridico = /^(s|sim|true|x|1|enviad)/.test(ju);
@@ -2533,8 +2540,10 @@
       var ls = linhasJur(t, nao); if (!ls) return;
       lidas++;
       ls.forEach(function (l) {
-        var k = l.ra ? "ra:" + l.ra.toLowerCase() : "nm:" + normHeader(l.aluno);
+        // um caso por aluno e carteira (o mesmo aluno pode estar em duas carteiras)
+        var k = (l.ra ? "ra:" + l.ra.toLowerCase() : "nm:" + normHeader(l.aluno)) + "|c:" + normHeader(l.carteira);
         var j = porChave[k];
+        if (j && l.ra && !nomesIguaisJur(j.aluno, l.aluno)) { k += "|" + normHeader(l.aluno); j = porChave[k]; }
         if (!j) { porChave[k] = l; ordem.push(k); return; }
         if (l.status && j.status && l.status !== j.status && !j.flagConflito) { j.flagConflito = true; j._statusAbas = [j.status]; conflitos++; }
         if (j.flagConflito && l.status && j._statusAbas.indexOf(l.status) === -1) j._statusAbas.push(l.status);
@@ -2549,7 +2558,16 @@
     return carregarXLSX().then(function (X) {
       var wb = X.read(buf, { type: "array", cellDates: true });
       return wb.SheetNames.map(function (nome) {
-        var aoa = X.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: "", raw: true });
+        var ws = wb.Sheets[nome], aoa = X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true, blankrows: true });
+        // link dos documentos vem como fórmula HYPERLINK("endereço";"Acessar documentos"): guarda o endereço
+        var ini = ws["!ref"] ? X.utils.decode_range(ws["!ref"]).s : { r: 0, c: 0 };
+        Object.keys(ws).forEach(function (ad) {
+          if (ad.charAt(0) === "!") return;
+          var cel = ws[ad], m = cel.f && /HYPERLINK\(\s*"([^"]+)"/i.exec(cel.f), url = m ? m[1] : cel.l && cel.l.Target;
+          if (!url || !/^https?:/i.test(url)) return;
+          var p = X.utils.decode_cell(ad), row = aoa[p.r - ini.r];
+          if (row) row[p.c - ini.c] = url;
+        });
         // a linha de títulos pode não ser a primeira: usa a que mais parece cabeçalho
         var melhor = 0, nota = -1;
         for (var i = 0; i < Math.min(aoa.length, 8); i++) {
