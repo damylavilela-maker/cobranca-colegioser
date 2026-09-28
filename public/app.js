@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v9";
+  var VERSAO = "28/09 · v10";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2349,7 +2349,7 @@
       aluno: $("jcAluno").value.trim(), ra: $("jcRa").value.trim(), responsavel: $("jcResp").value.trim(), cpf: $("jcCpf").value.trim(),
       email: $("jcEmail").value.trim(), celular: $("jcCelular").value.trim(), carteira: $("jcCarteira").value.trim(), ano: $("jcAno").value.trim(),
       status: $("jcStatus").value, valorNegociado: numOuNull($("jcNegociado").value), valorAberto: numOuNull($("jcAberto").value), parcelas: parseInt($("jcParcelas").value, 10) || 0,
-      enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value
+      enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value, flagConflito: false
     }).then(function (d) {
       trocarCaso(d.caso); $("mJurCaso").hidden = true; renderJuridico(); toast("Caso atualizado.");
     }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
@@ -2476,55 +2476,89 @@
     for (var j = 0; j < h.length; j++) for (var m = 0; m < nomes.length; m++) if (nomes[m].length >= 5 && h[j] && h[j].indexOf(nomes[m]) !== -1) return j;
     return -1;
   }
+  // status escrito na planilha (ou nome da aba) → status do painel; null quando não reconhece
   function statusDoTexto(v) {
-    var t = normHeader(v); if (!t) return undefined;
-    for (var i = 0; i < JUR_STATUS.length; i++) if (normHeader(JUR_STATUS[i].l) === t || JUR_STATUS[i].k === t) return JUR_STATUS[i].k;
-    if (t.indexOf("quitad") !== -1) return "quitado";
-    if (t.indexOf("parcial") !== -1) return "parcial";
-    if (t.indexOf("em dia") !== -1) return "em_dia";
-    if (t.indexOf("aberto") !== -1) return "em_aberto";
-    if (t.indexOf("sem neg") !== -1) return "sem_negociacao";
-    if (t.indexOf("verific") !== -1) return "verificar";
-    return "nao_classificado";
+    var t = normHeader(v); if (!t) return null;
+    for (var i = 0; i < JUR_STATUS.length; i++) if (normHeader(JUR_STATUS[i].l) === t || JUR_STATUS[i].k === t || JUR_STATUS[i].k.replace(/_/g, " ") === t) return JUR_STATUS[i].k;
+    if (/quitad|liquidad|^pag[oa]s?$|^pago|pagos? total/.test(t)) return "quitado";
+    if (/parcial/.test(t)) return "parcial";
+    if (/nao classific|sem classific/.test(t)) return "nao_classificado";
+    if (/sem neg|sem acordo|sem retorno|sem posic/.test(t)) return "sem_negociacao";
+    if (/verific|conferir|manual|duvid/.test(t)) return "verificar";
+    if (/em dia|adimplent|cumprindo|acordo em cumprimento/.test(t)) return "em_dia";
+    if (/aberto|atras|inadimpl|pendent|vencid/.test(t)) return "em_aberto";
+    return null;
   }
   function valorCelula(v) { if (v === "" || v == null) return undefined; return typeof v === "number" ? v : (/\d/.test(String(v)) ? parseMoneyBR(v) : undefined); }
   // data do Excel pode vir à meia-noite UTC (21h do dia anterior aqui): meio-dia evita cair no dia errado
   function dataCelula(v) { if (!v) return undefined; if (v instanceof Date) return isoLocal(new Date(v.getTime() + 12 * 3600000)); return parseDateBR(v) || undefined; }
-  function linhasJur(headers, rows) {
-    var ix = {}; Object.keys(JUR_COLUNAS).forEach(function (k) { ix[k] = colunaJur(headers, JUR_COLUNAS[k]); });
-    if (ix.aluno === -1 && ix.ra === -1) throw new Error("Não achei as colunas Aluno ou RA no arquivo. Use o modelo (botão “Baixar modelo”).");
-    var out = [];
-    rows.forEach(function (r) {
+  // Lê uma tabela (aba do Excel, CSV ou PDF). Sem coluna Status, o status vem do nome da aba
+  // (planilha com uma aba por status: "Quitados", "Em aberto"…). Tabela sem Aluno/RA é ignorada.
+  function linhasJur(t, naoReconhecidos) {
+    var headers = t.headers, ix = {};
+    Object.keys(JUR_COLUNAS).forEach(function (k) { ix[k] = colunaJur(headers, JUR_COLUNAS[k]); });
+    if (ix.aluno === -1 && ix.ra === -1) return null;
+    var stAba = t.aba ? statusDoTexto(t.aba) : null, out = [];
+    t.rows.forEach(function (r) {
       function cel(k) { var v = ix[k] === -1 ? "" : r[ix[k]]; return v instanceof Date ? v : String(v == null ? "" : v).trim(); }
       var l = {
         ra: cel("ra"), aluno: cel("aluno"), responsavel: cel("responsavel"), cpf: cel("cpf"), email: cel("email"), celular: cel("celular"),
         carteira: cel("carteira"), ano: cel("ano"), motivo: cel("motivo"), obs: cel("obs")
       };
       if (!l.ra && !l.aluno) return;
-      l.status = statusDoTexto(cel("status"));
+      // linha de total no fim da planilha não é caso
+      if (!l.ra && /^(total|soma|subtotal)\b/i.test(normHeader(l.aluno))) return;
+      var stTxt = cel("status");
+      if (stTxt) {
+        l.status = statusDoTexto(stTxt);
+        if (!l.status) { l.status = "nao_classificado"; naoReconhecidos[stTxt] = (naoReconhecidos[stTxt] || 0) + 1; }
+      } else if (stAba) l.status = stAba;
       l.valorNegociado = valorCelula(ix.valorNegociado === -1 ? "" : r[ix.valorNegociado]);
       l.valorAberto = valorCelula(ix.valorAberto === -1 ? "" : r[ix.valorAberto]);
       var np = parseInt(String(cel("parcelas")).replace(/\D/g, ""), 10); if (np > 0) l.parcelas = np;
       var ju = normHeader(cel("enviadoJuridico"));
-      if (ju) l.enviadoJuridico = /^(s|sim|true|x|1)/.test(ju);
+      if (ju) l.enviadoJuridico = /^(s|sim|true|x|1|enviad)/.test(ju);
       l.dataEnvio = dataCelula(ix.dataEnvio === -1 ? "" : r[ix.dataEnvio]);
-      Object.keys(l).forEach(function (k) { if (l[k] === undefined || l[k] === "") delete l[k]; });
+      Object.keys(l).forEach(function (k) { if (l[k] === undefined || l[k] === null || l[k] === "") delete l[k]; });
+      l._aba = t.aba || "";
       out.push(l);
     });
     return out;
   }
+  // Junta as tabelas: o mesmo aluno em mais de uma aba vira um caso só; se as abas dão
+  // status diferentes, o caso fica "Verificar manualmente" e marcado para conferência.
+  function juntarLinhasJur(tabelas) {
+    var nao = {}, porChave = {}, ordem = [], conflitos = 0, lidas = 0;
+    tabelas.forEach(function (t) {
+      var ls = linhasJur(t, nao); if (!ls) return;
+      lidas++;
+      ls.forEach(function (l) {
+        var k = l.ra ? "ra:" + l.ra.toLowerCase() : "nm:" + normHeader(l.aluno);
+        var j = porChave[k];
+        if (!j) { porChave[k] = l; ordem.push(k); return; }
+        if (l.status && j.status && l.status !== j.status && !j.flagConflito) { j.flagConflito = true; j._statusAbas = [j.status]; conflitos++; }
+        if (j.flagConflito && l.status && j._statusAbas.indexOf(l.status) === -1) j._statusAbas.push(l.status);
+        Object.keys(l).forEach(function (c) { if (j[c] === undefined) j[c] = l[c]; });
+        if (j.flagConflito) j.status = "verificar";
+      });
+    });
+    if (!lidas) throw new Error("Não achei as colunas Aluno ou RA no arquivo. Use o modelo (botão “Baixar modelo”).");
+    return { linhas: ordem.map(function (k) { return porChave[k]; }), naoReconhecidos: nao, conflitos: conflitos, abas: lidas };
+  }
   function tabelaDoExcel(buf) {
     return carregarXLSX().then(function (X) {
       var wb = X.read(buf, { type: "array", cellDates: true });
-      var aoa = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "", raw: true });
-      // a linha de títulos pode não ser a primeira: usa a que mais parece cabeçalho
-      var melhor = 0, nota = -1;
-      for (var i = 0; i < Math.min(aoa.length, 8); i++) {
-        var h = aoa[i].map(normHeader), sc = 0;
-        Object.keys(JUR_COLUNAS).forEach(function (k) { if (colunaJur(h, JUR_COLUNAS[k]) !== -1) sc++; });
-        if (sc > nota) { nota = sc; melhor = i; }
-      }
-      return { headers: (aoa[melhor] || []).map(normHeader), rows: aoa.slice(melhor + 1) };
+      return wb.SheetNames.map(function (nome) {
+        var aoa = X.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: "", raw: true });
+        // a linha de títulos pode não ser a primeira: usa a que mais parece cabeçalho
+        var melhor = 0, nota = -1;
+        for (var i = 0; i < Math.min(aoa.length, 8); i++) {
+          var h = aoa[i].map(normHeader), sc = 0;
+          Object.keys(JUR_COLUNAS).forEach(function (k) { if (colunaJur(h, JUR_COLUNAS[k]) !== -1) sc++; });
+          if (sc > nota) { nota = sc; melhor = i; }
+        }
+        return { aba: wb.SheetNames.length > 1 ? nome : "", headers: (aoa[melhor] || []).map(normHeader), rows: aoa.slice(melhor + 1) };
+      });
     });
   }
   function receberArquivoJur(f) {
@@ -2533,23 +2567,32 @@
     var r = new FileReader();
     r.onload = function () {
       var buf = new Uint8Array(r.result), p;
-      if (ehPDF(f)) p = pdfParaTabela(buf);
+      if (ehPDF(f)) p = pdfParaTabela(buf).then(function (t) { return [t]; });
       else if (/\.(xlsx|xls)$/i.test(f.name)) p = tabelaDoExcel(buf);
-      else p = Promise.resolve(parseCSV(new TextDecoder("utf-8").decode(buf)));
-      p.then(function (t) { mostrarPreviaJur(linhasJur(t.headers, t.rows), f.name); })
+      else p = Promise.resolve([parseCSV(new TextDecoder("utf-8").decode(buf))]);
+      p.then(function (ts) { mostrarPreviaJur(juntarLinhasJur(ts), f.name); })
         .catch(function (x) { res.innerHTML = '<div class="form-err">Não foi possível ler o arquivo: ' + esc(x.message) + "</div>"; });
     };
     r.readAsArrayBuffer(f);
   }
-  function mostrarPreviaJur(linhas, nome) {
-    jurPendentes = linhas;
+  function mostrarPreviaJur(lido, nome) {
+    var linhas = lido.linhas;
+    jurPendentes = linhas.map(function (l) { var o = {}; Object.keys(l).forEach(function (k) { if (k.charAt(0) !== "_") o[k] = l[k]; }); if (o.status && !o.flagConflito) o.flagConflito = false; return o; });
     var ras = {}, nomes = {}; casosJur.forEach(function (c) { if (c.ra) ras[c.ra.toLowerCase()] = 1; nomes[normHeader(c.aluno)] = 1; });
     var atual = linhas.filter(function (l) { return (l.ra && ras[l.ra.toLowerCase()]) || (l.aluno && nomes[normHeader(l.aluno)]); }).length;
+    var porSt = {}, semSt = 0;
+    linhas.forEach(function (l) { if (l.status) porSt[l.status] = (porSt[l.status] || 0) + 1; else semSt++; });
+    var resumoSt = JUR_STATUS.filter(function (s) { return porSt[s.k]; }).map(function (s) { return jpill(s.k) + ' <b class="tabular">' + porSt[s.k] + "</b>"; }).join(" &nbsp; ");
+    var nao = Object.keys(lido.naoReconhecidos);
+    var avisos = "";
+    if (nao.length) avisos += '<div class="form-err">Status que o site não reconheceu (entram como “Não classificado”): ' + nao.map(function (t) { return "“" + esc(t) + "” (" + lido.naoReconhecidos[t] + ")"; }).join(", ") + ". Me avise quais são para eu ensinar o site.</div>";
+    if (lido.conflitos) avisos += '<div class="form-err" style="background:var(--warn-soft);color:var(--warn)">' + lido.conflitos + " aluno(s) aparecem em abas com status diferentes: ficam como “Verificar manualmente”, com aviso na ficha.</div>";
     $("jurImpRes").innerHTML = linhas.length
-      ? "<p><b>" + esc(nome) + "</b>: " + linhas.length + " caso(s) encontrados — cerca de " + atual + " já estão no painel (serão atualizados) e " + (linhas.length - atual) + " são novos.</p>" +
+      ? "<p><b>" + esc(nome) + "</b>" + (lido.abas > 1 ? " (" + lido.abas + " abas)" : "") + ": " + linhas.length + " caso(s) — cerca de " + atual + " já estão no painel e serão atualizados com os dados do arquivo; " + (linhas.length - atual) + " são novos.</p>" +
+        '<p class="meta" style="line-height:2">Status no arquivo: ' + (resumoSt || "nenhum") + (semSt ? " &nbsp; · " + semSt + " sem status (mantêm o status que já têm)" : "") + "</p>" + avisos +
         '<div class="table-wrap"><table class="data"><thead><tr><th>RA</th><th>Aluno</th><th>Carteira</th><th>Status</th><th class="right">Negociado</th><th class="right">Em aberto</th></tr></thead><tbody>' +
         linhas.slice(0, 8).map(function (l) {
-          return "<tr><td>" + esc(l.ra || "—") + "</td><td>" + esc(l.aluno || "—") + "</td><td>" + esc(l.carteira || "—") + "</td><td>" + (l.status ? jpill(l.status) : "—") +
+          return "<tr><td>" + esc(l.ra || "—") + "</td><td>" + esc(l.aluno || "—") + (l._aba ? '<div class="meta">aba ' + esc(l._aba) + "</div>" : "") + "</td><td>" + esc(l.carteira || "—") + "</td><td>" + (l.status ? jpill(l.status) : "—") +
             '</td><td class="tabular right">' + moneyOu(l.valorNegociado) + '</td><td class="tabular right">' + moneyOu(l.valorAberto) + (l.parcelas ? '<div class="meta">' + l.parcelas + " parcelas</div>" : "") + "</td></tr>";
         }).join("") + "</tbody></table></div>" + (linhas.length > 8 ? '<div class="meta">…e mais ' + (linhas.length - 8) + " linha(s).</div>" : "")
       : '<div class="form-err">Nenhuma linha com Aluno ou RA foi encontrada no arquivo.</div>';

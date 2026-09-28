@@ -1433,7 +1433,7 @@ function casoValores(o, atual, eu) {
     tem("enviadoJuridico") ? (o.enviadoJuridico ? 1 : 0) : (a.enviado_juridico || 0),
     tem("dataEnvio") ? dataISO(o.dataEnvio) : a.data_envio_juridico || "",
     tem("motivo") ? texto(o.motivo, 120) : a.motivo_pendencia || "",
-    a.flag_conflito || 0,
+    tem("flagConflito") ? (o.flagConflito ? 1 : 0) : (a.flag_conflito || 0),
     arq,
     arq ? (a.arquivado ? a.arquivado_em : agora) : "",
     a.criado_em || agora,
