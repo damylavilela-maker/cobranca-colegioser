@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v28";
+  var VERSAO = "28/09 · v29";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2451,9 +2451,40 @@
   // editar caso (janela)
   function renderObsJur(c) {
     $("jcObsLog").innerHTML = c.obs && c.obs.length ? c.obs.map(function (o) {
-      return '<div class="ob"><div class="meta">' + dataHora(o.data) + (o.autor ? " · " + esc(o.autor) : "") + "</div><div>" + esc(o.texto) + "</div></div>";
+      // editar/excluir: quem registrou ou administrador (o servidor confere de novo)
+      var pode = o.id && eu && (eu.perfil === "admin" || o.autor === eu.nome);
+      return '<div class="ob" data-obs="' + esc(o.id || "") + '"><div class="meta">' + dataHora(o.data) + (o.autor ? " · " + esc(o.autor) : "") +
+        (o.editado_em ? " · editado" + (o.editado_por ? " por " + esc(o.editado_por) : "") + " em " + dataHora(o.editado_em) : "") +
+        (pode ? '<span class="ob-acoes"><button type="button" class="linkbtn" data-ob-editar>Editar</button><button type="button" class="linkbtn danger" data-ob-excluir>Excluir</button></span>' : "") +
+        '</div><div class="ob-texto">' + esc(o.texto) + "</div></div>";
     }).join("") : '<div class="ob-vazio">Nenhuma observação registrada ainda.</div>';
   }
+  $("jcObsLog").addEventListener("click", function (e) {
+    var el = e.target.closest(".ob"); if (!el || !casoJur) return;
+    var id = el.getAttribute("data-obs"), o = null;
+    (casoJur.obs || []).forEach(function (x) { if (x.id === id) o = x; });
+    if (!o) return;
+    var url = "/api/juridico/" + encodeURIComponent(casoJur.id) + "/obs/" + encodeURIComponent(id);
+    function atualizar(d, msg) { trocarCaso(d.caso); casoJur = d.caso; renderObsJur(d.caso); renderJuridico(); toast(msg); }
+    if (e.target.closest("[data-ob-editar]")) {
+      el.querySelector(".ob-texto").innerHTML = '<textarea rows="3" class="ob-edit">' + esc(o.texto) + '</textarea><div class="row-end" style="justify-content:flex-start;margin-top:4px">' +
+        '<button type="button" class="btn primary small" data-ob-salvar>Salvar</button><button type="button" class="btn ghost small" data-ob-cancelar>Cancelar</button></div>';
+      el.querySelector(".ob-acoes").hidden = true; el.querySelector("textarea").focus();
+    } else if (e.target.closest("[data-ob-cancelar]")) {
+      renderObsJur(casoJur);
+    } else if (e.target.closest("[data-ob-salvar]")) {
+      var t = el.querySelector("textarea").value.trim();
+      if (!t) return mostrarErro($("jcErr"), "A tratativa não pode ficar em branco. Para apagar, use Excluir.");
+      e.target.disabled = true;
+      api("PATCH", url, { texto: t }).then(function (d) { mostrarErro($("jcErr"), ""); atualizar(d, "Tratativa corrigida."); })
+        .catch(function (x) { e.target.disabled = false; mostrarErro($("jcErr"), x.message); });
+    } else if (e.target.closest("[data-ob-excluir]")) {
+      var b = e.target.closest("[data-ob-excluir]");
+      if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
+      api("DELETE", url).then(function (d) { mostrarErro($("jcErr"), ""); atualizar(d, "Tratativa excluída."); })
+        .catch(function (x) { mostrarErro($("jcErr"), x.message); });
+    }
+  });
   function abrirCasoJur(id) {
     var c = null; casosJur.forEach(function (x) { if (x.id === id) c = x; });
     if (!c) return;

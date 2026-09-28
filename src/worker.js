@@ -218,6 +218,9 @@ export default {
         // Casos do Painel jurídico criados antes da coluna de quantidade de parcelas em aberto.
         const colsJur = (await env.DB.prepare("PRAGMA table_info(jur_casos)").all()).results.map((c) => c.name);
         if (!colsJur.includes("parcelas")) await env.DB.prepare("ALTER TABLE jur_casos ADD COLUMN parcelas INTEGER NOT NULL DEFAULT 0").run();
+        // tratativas: quem corrigiu e quando
+        const colsObs = (await env.DB.prepare("PRAGMA table_info(jur_obs)").all()).results.map((c) => c.name);
+        if (!colsObs.includes("editado_em")) await env.DB.batch(["ALTER TABLE jur_obs ADD COLUMN editado_em TEXT NOT NULL DEFAULT ''", "ALTER TABLE jur_obs ADD COLUMN editado_por TEXT NOT NULL DEFAULT ''"].map((s) => env.DB.prepare(s)));
         if (!colsJur.includes("extrato")) await env.DB.batch(["ALTER TABLE jur_casos ADD COLUMN extrato REAL", "ALTER TABLE jur_casos ADD COLUMN conta_financeira TEXT NOT NULL DEFAULT ''", "ALTER TABLE jur_casos ADD COLUMN link_drive TEXT NOT NULL DEFAULT ''"].map((s) => env.DB.prepare(s)));
         // Cria os períodos da planilha uma única vez (se forem apagados, não voltam).
         // Só quem conseguir gravar a marca "periodos_iniciais" cria os períodos (evita duplicar
@@ -363,6 +366,8 @@ async function rotear(req, env, url) {
     if (partes[1] === "recebimento" && m === "POST") return recebimentoJuridico(req, env, eu);
     if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
     if (partes.length === 3 && partes[2] === "obs" && m === "POST") return novaObsJur(req, env, eu, partes[1]);
+    if (partes.length === 4 && partes[2] === "obs" && m === "PATCH") return editarObsJur(req, env, eu, partes[1], partes[3]);
+    if (partes.length === 4 && partes[2] === "obs" && m === "DELETE") return excluirObsJur(env, eu, partes[1], partes[3]);
   }
 
   if (partes[0] === "atendimentos") {
@@ -1474,7 +1479,7 @@ async function buscarCasoJur(env, id) {
 }
 
 async function obsDoCaso(env, id) {
-  return (await env.DB.prepare("SELECT data, texto, autor FROM jur_obs WHERE caso_id = ? ORDER BY data DESC").bind(id).all()).results;
+  return (await env.DB.prepare("SELECT id, data, texto, autor, editado_em, editado_por FROM jur_obs WHERE caso_id = ? ORDER BY data DESC").bind(id).all()).results;
 }
 
 async function casoCompleto(env, id) {
@@ -1486,8 +1491,8 @@ async function listarJuridico(env, url) {
   const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = ? ORDER BY " + (arq ? "arquivado_em DESC" : "aluno")).bind(arq).all()).results;
   const porCaso = {};
   if (!arq) {
-    const obs = (await env.DB.prepare("SELECT o.caso_id, o.data, o.texto, o.autor FROM jur_obs o JOIN jur_casos c ON c.id = o.caso_id WHERE c.arquivado = 0 ORDER BY o.data DESC").all()).results;
-    obs.forEach((o) => { (porCaso[o.caso_id] = porCaso[o.caso_id] || []).push({ data: o.data, texto: o.texto, autor: o.autor }); });
+    const obs = (await env.DB.prepare("SELECT o.caso_id, o.id, o.data, o.texto, o.autor, o.editado_em, o.editado_por FROM jur_obs o JOIN jur_casos c ON c.id = o.caso_id WHERE c.arquivado = 0 ORDER BY o.data DESC").all()).results;
+    obs.forEach((o) => { (porCaso[o.caso_id] = porCaso[o.caso_id] || []).push({ id: o.id, data: o.data, texto: o.texto, autor: o.autor, editado_em: o.editado_em, editado_por: o.editado_por }); });
   }
   const inad = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'jur_inad_data'").first();
   return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])), inadData: inad ? inad.valor : "" });
@@ -1542,6 +1547,26 @@ async function novaObsJur(req, env, eu, id) {
     env.DB.prepare("UPDATE jur_casos SET atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agora, eu.nome, id)
   ]);
   return casoCompleto(env, id);
+}
+
+// Corrigir ou excluir uma tratativa: quem registrou ou um administrador.
+async function obsDoCasoJur(env, eu, casoId, obsId) {
+  const o = await env.DB.prepare("SELECT * FROM jur_obs WHERE id = ? AND caso_id = ?").bind(obsId, casoId).first();
+  if (!o) throw new HttpError(404, "Tratativa não encontrada.");
+  if (eu.perfil !== "admin" && o.autor !== eu.nome) throw new HttpError(403, "Só quem registrou a tratativa (ou um administrador) pode alterá-la.");
+  return o;
+}
+async function editarObsJur(req, env, eu, casoId, obsId) {
+  await obsDoCasoJur(env, eu, casoId, obsId);
+  const t = texto((await corpo(req)).texto, 4000);
+  if (!t) throw new HttpError(400, "A tratativa não pode ficar em branco. Para apagar, use Excluir.");
+  await env.DB.prepare("UPDATE jur_obs SET texto = ?, editado_em = ?, editado_por = ? WHERE id = ?").bind(t, agoraISO(), eu.nome, obsId).run();
+  return casoCompleto(env, casoId);
+}
+async function excluirObsJur(env, eu, casoId, obsId) {
+  await obsDoCasoJur(env, eu, casoId, obsId);
+  await env.DB.prepare("DELETE FROM jur_obs WHERE id = ?").bind(obsId).run();
+  return casoCompleto(env, casoId);
 }
 
 // Casos com o mesmo RA são atualizados (sem RA, pelo nome do aluno); os outros são criados.

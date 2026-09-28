@@ -407,3 +407,7 @@ td.obs-cell{max-width:260px}
 .kpi-mes option{color:var(--ink);background:var(--surface)}
 .kpi-sub{font-size:11.5px;margin-top:4px;opacity:.85;line-height:1.3}
 .rel-contas{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:2px 16px;max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin-top:6px}
+.jur-obs .ob-acoes{float:right;display:inline-flex;gap:10px}
+.linkbtn.danger{color:var(--danger)}
+.linkbtn.danger.armed{font-weight:800;text-decoration:underline}
+.jur-obs .ob-edit{width:100%;margin-top:4px}
