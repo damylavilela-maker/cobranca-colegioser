@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v15";
+  var VERSAO = "28/09 · v16";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -343,10 +343,10 @@
   function renderKpis(vis) {
     var tot = 0, c = {};
     vis.forEach(function (a) { tot += Number(a.valorAberto) || 0; var k = a.status || "sem_contato"; c[k] = (c[k] || 0) + 1; });
-    // "Recuperado em": o mês é escolhido na própria caixa (últimos 12 meses)
-    var meses = [], d0 = new Date(); d0.setDate(1);
-    for (var i = 0; i < 12; i++) { var dm = new Date(d0.getFullYear(), d0.getMonth() - i, 1); meses.push({ v: dm.getFullYear() + "-" + pad2(dm.getMonth() + 1), l: MESES[dm.getMonth()] + (dm.getFullYear() !== d0.getFullYear() ? " de " + dm.getFullYear() : "") }); }
-    if (!mesRecup || !meses.some(function (m) { return m.v === mesRecup; })) mesRecup = meses[0].v;
+    // "Recuperado em": o mês é escolhido na própria caixa (janeiro a dezembro do ano atual;
+    // começa no mês atual)
+    var anoR = new Date().getFullYear(), meses = MESES.map(function (nm, i) { return { v: anoR + "-" + pad2(i + 1), l: nm }; });
+    if (!mesRecup || !meses.some(function (m) { return m.v === mesRecup; })) mesRecup = mesAtual();
     var selMes = '<select class="kpi-mes" id="kpiMesRecup" aria-label="Mês do valor recuperado">' + meses.map(function (m) {
       return '<option value="' + m.v + '"' + (m.v === mesRecup ? " selected" : "") + ">" + m.l + "</option>";
     }).join("") + "</select>";
