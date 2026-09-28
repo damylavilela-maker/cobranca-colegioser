@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v27";
+  var VERSAO = "28/09 · v28";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2518,19 +2518,6 @@
     $("jurArqLista").innerHTML = '<div class="meta">Carregando…</div>'; abrir("mJurArq");
     api("GET", "/api/juridico?arquivados=1").then(function (d) { renderArquivadosJur(d.casos); })
       .catch(function (x) { $("jurArqLista").innerHTML = '<div class="form-err">' + esc(x.message) + "</div>"; });
-  });
-  // começar do zero (só administradores): dois cliques de confirmação, depois apaga tudo no servidor
-  $("btnJurZerar").addEventListener("click", function () {
-    var b = this;
-    if (!b.classList.contains("armed")) {
-      b.classList.add("armed"); b.textContent = "Confirmar: apagar os " + casosJur.length + " casos, os arquivados e as tratativas";
-      clearTimeout(b.h); b.h = setTimeout(function () { b.classList.remove("armed"); b.textContent = "Apagar tudo e começar do zero"; }, 8000);
-      return;
-    }
-    clearTimeout(b.h); b.disabled = true; b.textContent = "Apagando…";
-    api("POST", "/api/juridico/limpar", { confirmar: "APAGAR" }).then(function (r) {
-      casosJur = []; renderJuridico(); toast(r.apagados + " caso(s) apagado(s). Agora é só importar a planilha.");
-    }).catch(function (x) { toast(x.message); }).then(function () { b.disabled = false; b.classList.remove("armed"); b.textContent = "Apagar tudo e começar do zero"; });
   });
   $("jurArqLista").addEventListener("click", function (e) {
     var b = e.target.closest("[data-restaurar]"); if (!b) return;
