@@ -1769,9 +1769,9 @@ async function desfazerRecebimentos(req, env, eu) {
   const casosPorId = {};
   (await env.DB.prepare("SELECT * FROM jur_casos").all()).results.forEach((c) => { casosPorId[c.id] = c; });
   const primeiroStatus = {}, ultimaInad = {};
-  (await env.DB.prepare("SELECT caso_id, texto FROM jur_obs WHERE texto LIKE 'Status % pelo relatório de recebimento%' ORDER BY data ASC").all()).results
+  (await env.DB.prepare("SELECT caso_id, texto FROM jur_obs WHERE instr(texto, 'Status ') = 1 AND instr(texto, ' pelo relatório de recebimento') > 0 ORDER BY data ASC").all()).results
     .forEach((o) => { if (!primeiroStatus[o.caso_id]) primeiroStatus[o.caso_id] = o.texto; });
-  (await env.DB.prepare("SELECT caso_id, texto FROM jur_obs WHERE texto LIKE 'Relatório de inadimplência de %valor em aberto R$ %' ORDER BY data DESC").all()).results
+  (await env.DB.prepare("SELECT caso_id, texto FROM jur_obs WHERE instr(texto, 'Relatório de inadimplência de ') = 1 AND instr(texto, 'valor em aberto R$ ') > 0 ORDER BY data DESC").all()).results
     .forEach((o) => { if (!ultimaInad[o.caso_id]) ultimaInad[o.caso_id] = o.texto; });
   const mudancas = [];
   for (const p of pagos) {
@@ -1793,10 +1793,10 @@ async function desfazerRecebimentos(req, env, eu) {
     }
     mudancas.push({ id: c.id, ra: c.ra, aluno: c.aluno, carteira: c.carteira, statusAntes: c.status, statusDepois: status, valorAntes: c.valor_aberto, valorDepois: valor, pagamentos: p.n, totalPago: Math.round(p.total * 100) / 100 });
   }
-  const obs = await env.DB.prepare("SELECT COUNT(*) AS n FROM jur_obs WHERE texto LIKE 'Pagamento recebido%(relatório de recebimento).' OR texto LIKE 'Status % pelo relatório de recebimento%'").first();
+  const obs = await env.DB.prepare("SELECT COUNT(*) AS n FROM jur_obs WHERE (instr(texto, 'Pagamento recebido') = 1 AND instr(texto, '(relatório de recebimento).') > 0) OR (instr(texto, 'Status ') = 1 AND instr(texto, ' pelo relatório de recebimento') > 0)").first();
   if (!b.simular) {
     const agora = agoraISO(), stmts = mudancas.map((m) => env.DB.prepare("UPDATE jur_casos SET status = ?, valor_aberto = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(m.statusDepois, m.valorDepois, agora, eu.nome, m.id));
-    stmts.push(env.DB.prepare("DELETE FROM jur_obs WHERE texto LIKE 'Pagamento recebido%(relatório de recebimento).' OR texto LIKE 'Status % pelo relatório de recebimento%'"));
+    stmts.push(env.DB.prepare("DELETE FROM jur_obs WHERE (instr(texto, 'Pagamento recebido') = 1 AND instr(texto, '(relatório de recebimento).') > 0) OR (instr(texto, 'Status ') = 1 AND instr(texto, ' pelo relatório de recebimento') > 0)"));
     stmts.push(env.DB.prepare("DELETE FROM jur_pagamentos"));
     stmts.push(env.DB.prepare("DELETE FROM jur_receb_antes"));
     await executarEmLotes(env, stmts);
