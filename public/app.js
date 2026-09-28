@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v18";
+  var VERSAO = "28/09 · v19";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -240,7 +240,7 @@
     regular: { titulo: "Painel de cobrança", arquivo: "relatorio_cobranca_" },
     contraturno: { titulo: "Contraturno", arquivo: "relatorio_contraturno_" }
   };
-  var FILTROS = ["fBusca", "fStatus", "fSetor", "fAtend", "fOrdem"];
+  var FILTROS = ["fBusca", "fStatus", "fFaixa", "fSetor", "fAtend", "fOrdem"];
   var filtrosPorCarteira = {};
   function trocarCarteira(nova) {
     if (nova === carteira) return;
@@ -305,6 +305,7 @@
   }
 
   fill($("fStatus"), STATUS.map(function (s) { return { v: s.k, l: s.l }; }), "Todos os status");
+  fill($("fFaixa"), [{ v: "1", l: "Até 30 dias" }, { v: "31", l: "31–60 dias" }, { v: "61", l: "61–90 dias" }, { v: "90", l: "Mais de 90 dias" }, { v: "avencer", l: "Ainda não venceu" }, { v: "sem", l: "Sem vencimento cadastrado" }], "Todas as faixas de atraso");
   fill($("fSetor"), SETORES, "Todos os setores");
   fill($("nSetor"), SETORES); fill($("eSetor"), SETORES, "—");
   fill($("aCanal"), CANAIS); fill($("aSetor"), SETORES); fill($("aMotivo"), MOTIVOS);
@@ -328,6 +329,26 @@
     if (dias < 1) return "avencer";
     for (var i = FAIXAS_ATRASO.length - 1; i >= 0; i--) if (dias >= FAIXAS_ATRASO[i].min) return FAIXAS_ATRASO[i].k;
     return "avencer";
+  }
+  var FAIXA_EXTRA = { avencer: { l: "Ainda não venceu", c: "success" }, sem: { l: "Sem vencimento cadastrado", c: "gray" } };
+  function faixaInfo(k) { for (var i = 0; i < FAIXAS_ATRASO.length; i++) if (FAIXAS_ATRASO[i].k === k) return FAIXAS_ATRASO[i]; return FAIXA_EXTRA[k] || FAIXA_EXTRA.sem; }
+  // Ficha do aluno: a faixa dele (pela parcela mais antiga) e, quando há o detalhe, quantas
+  // parcelas estão em cada faixa
+  function faixaDetalhe(a) {
+    if (!(Number(a.valorAberto) > 0)) return '<span class="muted">sem valor em aberto</span>';
+    var h = hoje(), fx = faixaInfo(faixaDoAluno(a, h));
+    var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc.filter(function (p) { return p && p[0]; }) : [];
+    var venc = pv.length ? pv.map(function (p) { return p[0]; }).sort()[0] : a.vencimento, dias = venc ? diasDesde(venc, h) : 0;
+    var out = '<span class="pill" style="color:var(--' + fx.c + ');background:var(--' + fx.c + '-soft)"><i></i>' + fx.l + "</span>" +
+      (venc && dias > 0 ? ' <span class="muted" style="font-weight:400">parcela mais antiga vencida há ' + dias + " dias (" + br(venc) + ")</span>" : "");
+    if (pv.length > 1) {
+      var n = {};
+      pv.forEach(function (p) { var d = diasDesde(p[0], h), k = d < 1 ? "avencer" : d >= 91 ? "90" : d >= 61 ? "61" : d >= 31 ? "31" : "1"; n[k] = (n[k] || 0) + 1; });
+      out += '<div class="meta" style="font-weight:400">' + ["90", "61", "31", "1", "avencer"].filter(function (k) { return n[k]; }).map(function (k) {
+        return n[k] + (n[k] === 1 ? " parcela" : " parcelas") + " " + faixaInfo(k).l.toLowerCase();
+      }).join(" · ") + "</div>";
+    }
+    return out;
   }
   var mesRecup = "", mesAberto = "";
   $("kpis").addEventListener("change", function (e) {
@@ -386,12 +407,13 @@
     $("btnHoje").classList.toggle("on", soHoje);
     $("btnArquivados").textContent = showArch ? "Ver ativos" : "Arquivados";
 
-    var q = $("fBusca").value.trim().toLowerCase(), fs = $("fStatus").value, fset = $("fSetor").value, fa = $("fAtend").value;
+    var q = $("fBusca").value.trim().toLowerCase(), fs = $("fStatus").value, ffx = $("fFaixa").value, fset = $("fSetor").value, fa = $("fAtend").value;
     var ord = soHoje ? "retorno" : $("fOrdem").value, h = hoje();
     var f = todos.filter(function (a) {
       if (!!a.arquivado !== showArch) return false;
       if (q && ((a.nome || "") + " " + (a.responsavel || "") + " " + (a.ra || "")).toLowerCase().indexOf(q) === -1) return false;
       if (fs && (a.status || "sem_contato") !== fs) return false;
+      if (ffx && (!(Number(a.valorAberto) > 0) || faixaDoAluno(a, h) !== ffx)) return false;
       if (fset && a.setor !== fset) return false;
       if (fa && a.atendenteResponsavel !== fa) return false;
       if (soHoje && !(a.proximoRetorno && a.proximoRetorno <= h)) return false;
@@ -429,7 +451,7 @@
     }).join("");
   }
   $("tbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirAluno(tr.getAttribute("data-id")); });
-  ["fBusca", "fStatus", "fSetor", "fAtend", "fOrdem"].forEach(function (id) { $(id).addEventListener("input", renderPainel); });
+  ["fBusca", "fStatus", "fFaixa", "fSetor", "fAtend", "fOrdem"].forEach(function (id) { $(id).addEventListener("input", renderPainel); });
   $("btnHoje").addEventListener("click", function () { soHoje = !soHoje; if (soHoje) $("fOrdem").value = "retorno"; renderPainel(); });
   $("btnArquivados").addEventListener("click", function () { showArch = !showArch; renderPainel(); });
 
@@ -454,6 +476,7 @@
       '<div class="k">Valor em aberto</div><div class="v tabular">' + money(a.valorAberto) + (a.parcelasAberto > 1 ? ' <span class="muted" style="font-weight:400">(' + a.parcelasAberto + " parcelas)</span>" : "") +
       (a.ultimaAtualizacaoFinanceira ? '<div class="meta" style="font-weight:400">atualizado em ' + br(a.ultimaAtualizacaoFinanceira) + " via importação</div>" : "") + "</div>" +
       '<div class="k">Vencimento</div><div class="v">' + venc + "</div>" +
+      '<div class="k">Faixa de atraso</div><div class="v">' + faixaDetalhe(a) + "</div>" +
       '<div class="k">Setor</div><div class="v">' + esc(a.setor || "—") + "</div>" +
       '<div class="k">Status atual</div><div class="v">' + pill(a.status || "sem_contato") + "</div>";
     var outra = vinculadosDe(a).filter(function (b) { return carteiraDe(b) !== carteiraDe(a); })[0];
