@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v17";
+  var VERSAO = "28/09 · v18";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -310,33 +310,24 @@
   fill($("aCanal"), CANAIS); fill($("aSetor"), SETORES); fill($("aMotivo"), MOTIVOS);
   fill($("aStatus"), STATUS.map(function (s) { return { v: s.k, l: s.l }; }));
 
-  // Faixa de atraso: quantas parcelas em aberto estão em cada faixa, contando os dias desde o
-  // vencimento de cada parcela até hoje. Sem o detalhe das parcelas (importação antiga), usa o
-  // vencimento mais antigo do aluno.
+  // Faixa de atraso do aluno (quadro da Evolução): pela parcela em aberto mais antiga, contando
+  // os dias desde o vencimento dela até hoje. Sem o detalhe das parcelas (importação antiga),
+  // usa o vencimento mais antigo guardado no aluno.
   var FAIXAS_ATRASO = [
-    { k: "90", l: "+90 dias", c: "danger", min: 91 },
-    { k: "61", l: "61–90 dias", c: "warn", min: 61 },
+    { k: "1", l: "Até 30 dias", c: "info", min: 1 },
     { k: "31", l: "31–60 dias", c: "gold", min: 31 },
-    { k: "1", l: "até 30 dias", c: "info", min: 1 },
-    { k: "0", l: "a vencer", c: "gray", min: -Infinity }
+    { k: "61", l: "61–90 dias", c: "warn", min: 61 },
+    { k: "90", l: "Mais de 90 dias", c: "danger", min: 91 }
   ];
-  function faixaDeDias(dias) { for (var i = 0; i < FAIXAS_ATRASO.length; i++) if (dias >= FAIXAS_ATRASO[i].min) return FAIXAS_ATRASO[i]; return FAIXAS_ATRASO[FAIXAS_ATRASO.length - 1]; }
   function diasDesde(venc, h) { return Math.round((new Date(h + "T00:00:00") - new Date(venc + "T00:00:00")) / 86400000); }
-  function faixasAtraso(a, h) {
-    if (!(Number(a.valorAberto) > 0)) return '<span class="muted">—</span>';
+  function faixaDoAluno(a, h) {
     var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc.filter(function (p) { return p && p[0]; }) : [];
-    if (!pv.length) {
-      if (!a.vencimento) return '<span class="muted">—</span>';
-      var fx = faixaDeDias(diasDesde(a.vencimento, h));
-      return '<span class="fx" style="color:var(--' + fx.c + ');background:var(--' + fx.c + '-soft)">' + fx.l + '</span><div class="meta">parcela mais antiga: ' + br(a.vencimento) + "</div>";
-    }
-    var g = {};
-    pv.forEach(function (p) { var fx = faixaDeDias(diasDesde(p[0], h)); var x = g[fx.k] || (g[fx.k] = { n: 0, v: 0 }); x.n++; x.v += Number(p[1]) || 0; });
-    return '<div class="fx-lista">' + FAIXAS_ATRASO.filter(function (fx) { return g[fx.k]; }).map(function (fx) {
-      var x = g[fx.k];
-      return '<span class="fx" style="color:var(--' + fx.c + ');background:var(--' + fx.c + '-soft)" title="' + x.n + (x.n === 1 ? " parcela" : " parcelas") + " · " + money(x.v) + '">' +
-        fx.l + ": <b>" + x.n + "</b></span>";
-    }).join("") + "</div>";
+    var venc = pv.length ? pv.map(function (p) { return p[0]; }).sort()[0] : a.vencimento;
+    if (!venc) return "sem";
+    var dias = diasDesde(venc, h);
+    if (dias < 1) return "avencer";
+    for (var i = FAIXAS_ATRASO.length - 1; i >= 0; i--) if (dias >= FAIXAS_ATRASO[i].min) return FAIXAS_ATRASO[i].k;
+    return "avencer";
   }
   var mesRecup = "", mesAberto = "";
   $("kpis").addEventListener("change", function (e) {
@@ -417,7 +408,7 @@
     var tb = $("tbody");
     if (!f.length) {
       var vazio = !todos.length;
-      tb.innerHTML = '<tr><td colspan="8" class="empty"><b>' + (vazio ? "Nenhum aluno cadastrado ainda" : "Nenhum resultado para estes filtros") + '</b><div class="muted">' +
+      tb.innerHTML = '<tr><td colspan="7" class="empty"><b>' + (vazio ? "Nenhum aluno cadastrado ainda" : "Nenhum resultado para estes filtros") + '</b><div class="muted">' +
         (vazio ? "Importe a planilha atual ou cadastre o primeiro caso para começar." : "Ajuste a busca ou os filtros acima.") + "</div></td></tr>";
       return;
     }
@@ -430,7 +421,6 @@
       return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + '</div><div class="meta">' +
         esc(a.responsavel || "sem responsável informado") + (a.ra ? " · RA " + esc(a.ra) : "") + (a.turma ? " · " + esc(a.turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + (a.parcelasAberto > 1 ? '<div class="meta">' + a.parcelasAberto + " parcelas</div>" : "") + "</td>" +
-        "<td>" + faixasAtraso(a, h) + "</td>" +
         "<td>" + pill(a.status || "sem_contato") + "</td>" +
         "<td>" + (a.setor ? esc(a.setor) : '<span class="muted">—</span>') + "</td>" +
         "<td>" + (uc && uc.data ? br(uc.data) + '<div class="meta">' + esc(uc.canal || "") + "</div>" : '<span class="muted">sem contato</span>') + "</td>" +
@@ -1288,6 +1278,7 @@
     var vis = listaCarteira("regular").filter(function (a) { return !a.arquivado; }), sc = {};
     vis.forEach(function (a) { var k = a.status || "sem_contato"; sc[k] = (sc[k] || 0) + 1; });
     barras("barStatus", STATUS.map(function (s) { return { l: s.l, v: sc[s.k] || 0, c: s.c }; }), vis.length);
+    renderFaixaAlunos();
 
     renderRecuperadoAnual();
     renderMensalidadesEvol();
@@ -1389,6 +1380,25 @@
     if (semVenc) rows.push({ l: "Sem vencimento cadastrado", v: semVenc, c: "gray" });
     barras("faixaVencList", rows, total, money);
   }
+  // Alunos com valor em aberto, cada um contado uma vez na faixa da sua parcela mais antiga
+  function renderFaixaAlunos() {
+    var cart = $("faixaAlunosCart").value, h = hoje(), por = {}, val = {}, total = 0;
+    var lista0 = cart === "todas" ? listaCarteira("regular").concat(listaCarteira("contraturno")) : listaCarteira(cart);
+    lista0.forEach(function (a) {
+      if (a.arquivado || !(Number(a.valorAberto) > 0)) return;
+      var k = faixaDoAluno(a, h);
+      por[k] = (por[k] || 0) + 1; val[k] = (val[k] || 0) + (Number(a.valorAberto) || 0); total++;
+    });
+    if (!total) { $("faixaAlunosList").innerHTML = '<div class="muted">Nenhum aluno com valor em aberto.</div>'; $("faixaAlunosNota").textContent = ""; return; }
+    var rows = FAIXAS_ATRASO.map(function (f) { return { l: f.l, v: por[f.k] || 0, c: f.c, k: f.k }; });
+    if (por.avencer) rows.push({ l: "Ainda não venceu", v: por.avencer, c: "success", k: "avencer" });
+    if (por.sem) rows.push({ l: "Sem vencimento cadastrado", v: por.sem, c: "gray", k: "sem" });
+    barras("faixaAlunosList", rows, Math.max.apply(null, rows.map(function (r) { return r.v; })), function (n) { return n + (n === 1 ? " aluno" : " alunos"); });
+    // valor em aberto de cada faixa ao passar o mouse
+    [].forEach.call($("faixaAlunosList").querySelectorAll(".bar"), function (el, i) { el.title = rows[i].l + ": " + rows[i].v + " aluno(s) · " + money(val[rows[i].k] || 0) + " em aberto"; });
+    $("faixaAlunosNota").textContent = total + " aluno(s) com valor em aberto · " + FAIXAS_ATRASO.map(function (f) { return f.l.toLowerCase() + ": " + money(val[f.k] || 0); }).join(" · ");
+  }
+  $("faixaAlunosCart").addEventListener("change", renderFaixaAlunos);
   ["anoEvolSel", "mensEvolAnoSel", "ctrlMesSel"].forEach(function (id) { $(id).addEventListener("change", renderEvolucao); });
   $("btnEvolAtualizar").addEventListener("click", function () { var b = this; b.disabled = true; carregar().then(function () { b.disabled = false; toast("Evolução atualizada."); }); });
 
