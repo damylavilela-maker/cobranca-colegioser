@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v11";
+  var VERSAO = "28/09 · v12";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2552,7 +2552,12 @@
       });
     });
     if (!lidas) throw new Error("Não achei as colunas Aluno ou RA no arquivo. Use o modelo (botão “Baixar modelo”).");
-    return { linhas: ordem.map(function (k) { return porChave[k]; }), naoReconhecidos: nao, conflitos: conflitos, abas: lidas };
+    // link do Drive repetido em alunos diferentes é fórmula arrastada na planilha: não vale para ninguém
+    // (vai vazio para apagar o link errado que já tenha sido gravado)
+    var donos = {}, linksRuins = 0;
+    ordem.forEach(function (k) { var l = porChave[k]; if (l.linkDrive) (donos[l.linkDrive] = donos[l.linkDrive] || {})[l.ra || normHeader(l.aluno)] = 1; });
+    ordem.forEach(function (k) { var l = porChave[k]; if (l.linkDrive && Object.keys(donos[l.linkDrive]).length > 1) { l.linkDrive = ""; linksRuins++; } });
+    return { linhas: ordem.map(function (k) { return porChave[k]; }), naoReconhecidos: nao, conflitos: conflitos, abas: lidas, linksRuins: linksRuins };
   }
   function tabelaDoExcel(buf) {
     return carregarXLSX().then(function (X) {
@@ -2605,6 +2610,7 @@
     var avisos = "";
     if (nao.length) avisos += '<div class="form-err">Status que o site não reconheceu (entram como “Não classificado”): ' + nao.map(function (t) { return "“" + esc(t) + "” (" + lido.naoReconhecidos[t] + ")"; }).join(", ") + ". Me avise quais são para eu ensinar o site.</div>";
     if (lido.conflitos) avisos += '<div class="form-err" style="background:var(--warn-soft);color:var(--warn)">' + lido.conflitos + " aluno(s) aparecem em abas com status diferentes: ficam como “Verificar manualmente”, com aviso na ficha.</div>";
+    if (lido.linksRuins) avisos += '<div class="form-err" style="background:var(--warn-soft);color:var(--warn)">' + lido.linksRuins + " aluno(s) têm o mesmo link do Drive de outros alunos (fórmula arrastada na planilha): esses links não serão usados.</div>";
     $("jurImpRes").innerHTML = linhas.length
       ? "<p><b>" + esc(nome) + "</b>" + (lido.abas > 1 ? " (" + lido.abas + " abas)" : "") + ": " + linhas.length + " caso(s) — cerca de " + atual + " já estão no painel e serão atualizados com os dados do arquivo; " + (linhas.length - atual) + " são novos.</p>" +
         '<p class="meta" style="line-height:2">Status no arquivo: ' + (resumoSt || "nenhum") + (semSt ? " &nbsp; · " + semSt + " sem status (mantêm o status que já têm)" : "") + "</p>" + avisos +

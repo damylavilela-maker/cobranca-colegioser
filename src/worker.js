@@ -1543,7 +1543,7 @@ async function importarJuridico(req, env, eu) {
   let criados = 0, atualizados = 0, ignorados = 0;
   linhas.forEach((l0) => {
     const l = {};
-    Object.keys(l0 || {}).forEach((k) => { const v = l0[k]; if (v !== null && v !== undefined && String(v).trim() !== "") l[k] = v; });
+    Object.keys(l0 || {}).forEach((k) => { const v = l0[k]; if ((v !== null && v !== undefined && String(v).trim() !== "") || (k === "linkDrive" && v === "")) l[k] = v; }); // link vazio apaga link errado
     const ra = texto(l.ra, 30), nome = texto(l.aluno, 150);
     if (!ra && !nome) { ignorados++; return; }
     // mesmo RA só é o mesmo caso se o nome bater (a planilha tem RA repetido para alunos diferentes)
