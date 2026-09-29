@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v46";
+  var VERSAO = "30/09 · v47";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2470,7 +2470,7 @@
         '<td><div class="nome">' + esc(c.aluno || "—") + (c.flagConflito ? ' <span class="pill" style="color:var(--warn);background:var(--warn-soft)" title="' + esc(c.conferirMotivo || "Precisa de conferência") + '"><i></i>Conferir</span>' : "") + '</div><div class="meta">' +
         esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + (turma ? " · " + esc(turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + qtdParc(c.parcelas) + "</td>" +
-        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + money(c.valorNegociado || 0) + "</span>" + qtdParc(c.parcelasNegociado) + "</td>" +
+        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + money(c.valorNegociado || 0) + "</span>" + qtdParc(c.parcelasNegociado) + (c.acordo && c.acordo.tipo ? '<div class="meta">Acordo ' + esc(c.acordo.tipo) + "</div>" : "") + "</td>" +
         celParcelasJur(c, true) + celParcelasJur(c, false) +
         "<td>" + jpill(c.status) + "</td>" +
         "<td>" + esc(c.carteira || "—") + (c.ano ? '<div class="meta">ano letivo ' + esc(c.ano) + "</div>" : "") + "</td>" +
@@ -2603,7 +2603,16 @@
       ["Parcelas a vencer", celParcelasJur(c, false).replace(/^<td[^>]*>|<\/td>$/g, "")]
     ].map(function (x) { return '<div class="kpi"><div class="lbl">' + x[0] + '</div><div class="num tabular" style="font-size:16px">' + x[1] + "</div></div>"; }).join("");
     $("jcContato").innerHTML = '<div class="meta">Responsável: <b>' + esc(c.responsavel || "—") + "</b> · Telefone: " + esc(c.celular || "—") + " · E-mail: " + esc(c.email || "—") +
-      '</div><div class="meta">Conta(s) financeira(s) de origem: ' + esc(c.contaFinanceira || "—") + "</div>";
+      '</div><div class="meta">Conta(s) financeira(s) de origem: ' + esc(c.contaFinanceira || "—") + "</div>" +
+      '<div class="meta">' + (c.cpf ? "CPF: " + esc(c.cpf) + " · " : "") + (c.dataEnvio ? "Enviado ao jurídico em " + br(c.dataEnvio) + " · " : "") + (c.extrato != null ? "Extrato: " + money(c.extrato) + " · " : "") + (c.motivo ? "Motivo: " + esc(c.motivo) + " · " : "") +
+      (c.linkDrive ? '<a class="linkbtn" href="' + esc(c.linkDrive) + '" target="_blank" rel="noopener">Abrir documentos (Drive) ↗</a>' : "sem link do Drive") + "</div>";
+    // resumo do acordo GM (da planilha da carteira)
+    var a = c.acordo || {};
+    $("jcAcordoBox").hidden = !a.tipo;
+    $("jcAcordo").innerHTML = a.tipo ? '<div class="kpis k4" style="margin:0">' + [
+      ["Acordo", esc(a.tipo)], ["Valor do acordo", moneyOu(a.valor)], ["Pago", moneyOu(a.pago)],
+      ["Saldo em aberto · a vencer", moneyOu(a.saldoAberto) + " · " + moneyOu(a.saldoVencer) + (a.parcVencer ? '<div class="meta">' + a.parcVencer + " parcela(s) a vencer</div>" : "")]
+    ].map(function (x) { return '<div class="kpi"><div class="lbl">' + x[0] + '</div><div class="num tabular" style="font-size:15px">' + x[1] + "</div></div>"; }).join("") + "</div>" : "";
     renderObsJur(c);
     $("jcAtualizado").textContent = "Última atualização: " + (c.atualizadoEm ? dataHora(c.atualizadoEm) + (c.atualizadoPor ? " por " + c.atualizadoPor : "") : "nunca");
   }
@@ -2613,6 +2622,8 @@
     casoJur = c; mostrarErro($("jcErr"), "");
     fill($("jcStatus"), opcoesStatusJur()); $("jcStatus").value = c.status || "em_aberto";
     $("jcAluno").value = c.aluno || ""; $("jcRa").value = c.ra || ""; $("jcCarteira").value = c.carteira || ""; $("jcAno").value = c.ano || "";
+    $("jcCpf").value = c.cpf || ""; $("jcExtrato").value = c.extrato == null ? "" : c.extrato; $("jcDataEnvio").value = c.dataEnvio || ""; $("jcMotivo").value = c.motivo || ""; $("jcLink").value = c.linkDrive || "";
+    $("jcAcordoParc").innerHTML = "";
     $("jcNovaObs").value = "";
     var b = $("jcExcluir"); b.classList.remove("armed"); b.textContent = "Excluir caso";
     preencherFicha(c); carregarHistCaso(c.id);
@@ -2629,7 +2640,9 @@
   $("jcSalvarDados").addEventListener("click", function () {
     if (!$("jcAluno").value.trim()) return mostrarErro($("jcErr"), "Informe o nome do aluno.");
     var btn = this; btn.disabled = true; mostrarErro($("jcErr"), "");
-    salvarCasoJur({ aluno: $("jcAluno").value.trim(), ra: $("jcRa").value.trim(), carteira: $("jcCarteira").value.trim(), ano: $("jcAno").value.trim() })
+    var ex = parseFloat($("jcExtrato").value);
+    salvarCasoJur({ aluno: $("jcAluno").value.trim(), ra: $("jcRa").value.trim(), carteira: $("jcCarteira").value.trim(), ano: $("jcAno").value.trim(),
+      cpf: $("jcCpf").value.trim(), extrato: isNaN(ex) ? null : ex, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value.trim(), linkDrive: $("jcLink").value.trim() })
       .then(function () { toast("Dados do aluno salvos."); }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
   });
   $("jcAddObs").addEventListener("click", function () {
@@ -2663,6 +2676,15 @@
     var el = $("jcHist"); el.innerHTML = '<div class="meta">Carregando…</div>';
     api("GET", "/api/juridico/" + encodeURIComponent(id) + "/historico").then(function (d) {
       if (!casoJur || casoJur.id !== id) return;
+      // parcelas do acordo GM: a situação é recalculada pela data de hoje (paga, vencida ou a vencer)
+      var ap = d.acordoParcelas || [], hj = hoje();
+      $("jcAcordoParc").innerHTML = ap.length ? '<div class="table-wrap" style="max-height:240px;overflow:auto"><table class="data compacta"><thead><tr><th>Acordo</th><th>Parcela</th><th>Vencimento</th><th class="right">Valor</th><th class="right">Pago</th><th>Data pgto.</th><th class="right">Saldo</th><th>Situação</th></tr></thead><tbody>' +
+        ap.map(function (p) {
+          var sit = !(Number(p.saldo) > 0.009) && (Number(p.pago) > 0 || p.situacao === "Paga") ? ["Paga", "success"] : p.vencimento && p.vencimento < hj ? ["Vencida", "danger"] : ["A vencer", "info"];
+          return "<tr><td>" + esc(p.acordo || "—") + "</td><td>" + esc(p.parcela || "—") + "</td><td>" + (p.vencimento ? br(p.vencimento) : "—") + '</td><td class="tabular right">' + moneyOu(p.valor) + '</td><td class="tabular right">' + moneyOu(p.pago) +
+            "</td><td>" + (p.dataPagamento ? br(p.dataPagamento) : "—") + '</td><td class="tabular right">' + moneyOu(p.saldo) + '</td><td><span class="pill" style="color:var(--' + sit[1] + ");background:var(--" + sit[1] + '-soft)"><i></i>' + sit[0] + "</span></td></tr>";
+        }).join("") + "</tbody></table></div>" : "";
+      if (ap.length) $("jcAcordoBox").hidden = false;
       var h = d.historico || [];
       el.innerHTML = h.length ? '<div class="table-wrap" style="max-height:220px;overflow:auto"><table class="data compacta"><thead><tr><th>Mês</th><th class="right">Em aberto</th><th class="right">Negociado</th><th>Movimento</th><th>Contas financeiras</th></tr></thead><tbody>' +
         h.slice().reverse().map(function (x) {
@@ -2719,12 +2741,25 @@
     }).catch(function (x) { toast(x.message); });
   }
   $("btnJurModelo").addEventListener("click", function () {
-    baixarXLSX("modelo-carteira-juridica.xlsx", "Carteira", [["RA", "Aluno", "Carteira", "Ano letivo"], ["", "", "Carteira 2026", "2025"]]);
+    baixarXLSX("modelo-carteira-juridica.xlsx", "Carteira", [["RA", "Aluno", "Carteira", "Ano letivo", "Status", "CPF", "Link Drive", "Extrato (R$)", "Motivo pendência", "Data envio jurídico", "Última observação", "Acordo GM", "Valor negociado (R$)", "Valor pago do acordo (R$)", "Saldo do acordo em aberto (R$)", "Saldo do acordo a vencer (R$)", "Parcelas do acordo a vencer"], ["", "", "Carteira 2026", "2025", "Em aberto / Em negociação GM / Verificar / Quitado"]]);
   });
 
-  // ---- importação da carteira (planilha simples: RA, Aluno, Carteira, Ano letivo)
+  // ---- importação da carteira: RA, Aluno, Carteira e Ano letivo, e (se a planilha tiver) status,
+  // CPF, link do Drive, extrato, motivo, data de envio, observações e o acordo GM com as parcelas
   var JUR_COLUNAS = {
-    ra: ["ra", "matricula", "codigo"], aluno: ["aluno", "nome do aluno", "nome"], carteira: ["carteira"], ano: ["ano letivo", "ano", "ano de referencia"]
+    ra: ["ra", "matricula", "codigo"], aluno: ["aluno", "nome do aluno", "nome"], carteira: ["carteira"], ano: ["ano letivo", "ano", "ano de referencia"],
+    responsavel: ["responsavel", "responsavel financeiro", "nome do responsavel"], email: ["e-mail", "email"], celular: ["celular", "telefone"],
+    status: ["status", "situacao"], cpf: ["cpf", "cpf do responsavel"], linkDrive: ["link drive", "link do drive", "pasta do drive", "link dos documentos", "drive"],
+    extrato: ["extrato (r$)", "extrato"], motivo: ["motivo pendencia", "motivo"], dataEnvio: ["data envio juridico", "data de envio ao juridico"],
+    obsUlt: ["ultima observacao", "observacao"], hist: ["historico de observacoes"],
+    acordoTipo: ["acordo gm"], acordoValor: ["valor negociado (r$)", "valor negociado", "valor do acordo (r$)", "valor do acordo"],
+    acordoPago: ["valor pago do acordo (r$)", "valor pago do acordo"], acordoSaldoAberto: ["saldo do acordo em aberto (r$)", "saldo do acordo em aberto"],
+    acordoSaldoVencer: ["saldo do acordo a vencer (r$)", "saldo do acordo a vencer"], acordoParcVencer: ["parcelas do acordo a vencer"]
+  };
+  // aba com as parcelas do acordo GM (uma linha por parcela)
+  var ACORDO_COLUNAS = {
+    ra: ["ra", "codigo"], aluno: ["aluno", "nome"], acordo: ["acordo"], parcela: ["parcela", "parc."], vencimento: ["vencimento", "data vcto."],
+    valor: ["valor (r$)", "valor"], pago: ["pago (r$)", "pago"], dataPagamento: ["data pagamento", "data de pagamento"], saldo: ["saldo (r$)", "saldo"], situacao: ["situacao parcela", "situacao"]
   };
   // nome exato primeiro; parte do nome só para nomes longos ("ra" não pode casar com "carteira")
   function colunaJur(h, nomes) {
@@ -2751,44 +2786,114 @@
       });
     });
   }
+  // status escrito na planilha → um dos 4 status (null quando não reconhece)
+  function statusDaPlanilha(v) {
+    var t = normHeader(v); if (!t) return null;
+    for (var i = 0; i < JUR_STATUS.length; i++) if (normHeader(JUR_STATUS[i].l) === t || JUR_STATUS[i].k === t) return JUR_STATUS[i].k;
+    if (/quitad|liquidad|^pag[oa]s?$/.test(t)) return "quitado";
+    if (/verific|conferir|manual/.test(t)) return "verificar";
+    if (/em dia|acordo em dia|cumprindo|em negociac|negociado/.test(t)) return "em_negociacao";
+    if (/sem acordo|devendo|aberto|atras|inadimpl|pendent|vencid|parcial/.test(t)) return "em_aberto";
+    return null;
+  }
+  // "[25/09/2026] texto | [26/09/2026] texto" → [{ data, texto }]
+  function obsDaPlanilha(hist, ult) {
+    var out = [];
+    String(hist || "").split(/\s+\|\s+/).forEach(function (p) {
+      p = p.trim(); if (!p) return;
+      var m = /^\[(\d{2}\/\d{2}\/\d{4})\]\s*(.*)$/.exec(p);
+      out.push(m ? { data: parseDateBR(m[1]) || "", texto: m[2].trim() } : { data: "", texto: p });
+    });
+    if (!out.length && String(ult || "").trim()) out.push({ data: "", texto: String(ult).trim() });
+    return out.filter(function (o) { return o.texto; });
+  }
   // aba "Carteira 2026" sem coluna Carteira: a carteira é o nome da aba e o ano letivo é o anterior
-  function linhasCarteira(t) {
+  function linhasCarteira(t, stNao) {
     var ix = {}; Object.keys(JUR_COLUNAS).forEach(function (k) { ix[k] = colunaJur(t.headers, JUR_COLUNAS[k]); });
     if (ix.aluno === -1 && ix.ra === -1) return [];
+    var temAcordo = ix.acordoTipo !== -1;
     var mCart = /^carteira\s+(\d{4})$/i.exec(String(t.aba || "").trim());
     var out = [];
     t.rows.forEach(function (r) {
-      function cel(k) { return ix[k] === -1 ? "" : String(r[ix[k]] == null ? "" : r[ix[k]]).trim(); }
-      var l = { ra: cel("ra").replace(/\.0+$/, ""), aluno: cel("aluno"), carteira: cel("carteira"), ano: cel("ano").replace(/\.0+$/, "") };
+      function bruto(k) { return ix[k] === -1 ? "" : r[ix[k]]; }
+      function cel(k) { var v = bruto(k); return v instanceof Date ? v : String(v == null ? "" : v).trim(); }
+      var l = { ra: String(cel("ra")).replace(/\.0+$/, ""), aluno: cel("aluno"), carteira: cel("carteira"), ano: String(cel("ano")).replace(/\.0+$/, "") };
       if (!l.ra && !l.aluno) return;
       if (!l.ra && /^(total|soma|subtotal)\b/i.test(normHeader(l.aluno))) return;
       if (!l.carteira && mCart) l.carteira = "Carteira " + mCart[1];
       if (!l.ano && /^carteira\s+(\d{4})$/i.test(l.carteira)) l.ano = String(+/(\d{4})/.exec(l.carteira)[1] - 1);
+      var st = cel("status");
+      if (st) { l.status = statusDaPlanilha(st); l._stOrig = st; if (!l.status) { stNao[st] = (stNao[st] || 0) + 1; delete l.status; } }
+      var cpf = String(cel("cpf")).replace(/\.0+$/, ""); if (/^\d{8,10}$/.test(cpf)) cpf = ("00000000000" + cpf).slice(-11); if (cpf) l.cpf = cpf; // CPF salvo como número perde o zero da frente
+      // contato da planilha: só vale quando a Base de dados não tem o aluno
+      ["responsavel", "email", "celular"].forEach(function (k) { var v = String(cel(k)); if (v) l[k] = v; });
+      var link = cel("linkDrive"); if (/^https?:\/\//i.test(link)) l.linkDrive = link;
+      var ex = valorCelula(bruto("extrato")); if (ex != null) l.extrato = ex;
+      if (cel("motivo")) l.motivo = cel("motivo");
+      var de = dataCelula(bruto("dataEnvio")); if (de) l.dataEnvio = de;
+      var obs = obsDaPlanilha(cel("hist"), cel("obsUlt")); if (obs.length) l.obs = obs;
+      if (temAcordo) {
+        var parcV = parseInt(String(cel("acordoParcVencer")).replace(/\D/g, ""), 10) || 0;
+        l.acordo = { tipo: String(cel("acordoTipo")), valor: valorCelula(bruto("acordoValor")), pago: valorCelula(bruto("acordoPago")),
+          saldoAberto: valorCelula(bruto("acordoSaldoAberto")), saldoVencer: valorCelula(bruto("acordoSaldoVencer")), parcVencer: parcV };
+      }
       out.push(l);
     });
     return out;
   }
+  function parcelasAcordoDaTabela(t) {
+    var ix = {}; Object.keys(ACORDO_COLUNAS).forEach(function (k) { ix[k] = colunaJur(t.headers, ACORDO_COLUNAS[k]); });
+    var out = [];
+    t.rows.forEach(function (r) {
+      function bruto(k) { return ix[k] === -1 ? "" : r[ix[k]]; }
+      var ra = String(bruto("ra") == null ? "" : bruto("ra")).trim().replace(/\.0+$/, ""), aluno = String(bruto("aluno") || "").trim();
+      if (!ra && !aluno) return;
+      out.push({ ra: ra, aluno: aluno, acordo: String(bruto("acordo") || "").trim(), parcela: String(bruto("parcela") == null ? "" : bruto("parcela")).replace(/\.0+$/, ""),
+        vencimento: dataCelula(bruto("vencimento")) || "", valor: valorCelula(bruto("valor")), pago: valorCelula(bruto("pago")),
+        dataPagamento: dataCelula(bruto("dataPagamento")) || "", saldo: valorCelula(bruto("saldo")), situacao: String(bruto("situacao") || "").trim() });
+    });
+    return out;
+  }
+  function ehAbaAcordo(t) { return colunaJur(t.headers, ["acordo"]) !== -1 && colunaJur(t.headers, ["vencimento"]) !== -1 && colunaJur(t.headers, ["saldo (r$)", "saldo", "situacao parcela"]) !== -1 && colunaJur(t.headers, JUR_COLUNAS.carteira) === -1; }
+  var jurComAcordos = false;
   function receberCarteiraJur(f) {
     var res = $("jurImpRes"); res.innerHTML = '<div class="meta">Lendo ' + esc(f.name) + "…</div>";
-    jurPendentes = []; $("jurImpOk").disabled = true;
+    jurPendentes = []; jurComAcordos = false; $("jurImpOk").disabled = true;
     var r = new FileReader();
     r.onload = function () {
       var buf = new Uint8Array(r.result);
       var p = ehExcel(f) ? tabelaDoExcel(buf) : Promise.resolve([parseCSV(new TextDecoder("utf-8").decode(buf))]);
       p.then(function (ts) {
         // planilha com várias abas: se alguma aba tem a coluna Carteira (ou se chama "Carteira AAAA"),
-        // só essas contam; abas de parcelas (RA e Aluno repetidos em cada linha) ficam de fora
+        // só essas são a lista de alunos; a aba das parcelas do acordo GM entra como detalhe do acordo
         var comCart = ts.filter(function (t) { return colunaJur(t.headers, JUR_COLUNAS.carteira) !== -1 || /^carteira\s+\d{4}$/i.test(String(t.aba || "").trim()); });
-        var usar = comCart.length ? comCart : ts, linhas = [], vistos = {};
+        var usar = comCart.length ? comCart : ts.filter(function (t) { return !ehAbaAcordo(t); });
+        var abaAcordo = ts.filter(ehAbaAcordo)[0] || null;
+        var stNao = {}, linhas = [], vistos = {};
         usar.forEach(function (t) {
-          linhasCarteira(t).forEach(function (l) {
+          linhasCarteira(t, stNao).forEach(function (l) {
             // o mesmo aluno repetido na mesma carteira conta uma vez
             var k = (l.ra || normHeader(l.aluno)) + "|" + normHeader(l.carteira);
             if (!vistos[k]) { vistos[k] = 1; linhas.push(l); }
           });
         });
-        var abasFora = ts.length - usar.length;
         if (!linhas.length) throw new Error("Não achei as colunas RA ou Aluno. Use o modelo (botão “Baixar modelo”).");
+        // link do Drive repetido em alunos diferentes é fórmula arrastada: não vale para ninguém
+        var donos = {}, linksRuins = 0;
+        linhas.forEach(function (l) { if (l.linkDrive) (donos[l.linkDrive] = donos[l.linkDrive] || {})[l.ra || normHeader(l.aluno)] = 1; });
+        linhas.forEach(function (l) { if (l.linkDrive && Object.keys(donos[l.linkDrive]).length > 1) { delete l.linkDrive; linksRuins++; } });
+        // parcelas do acordo: vão para o caso do aluno que tem acordo (pelo RA ou pelo nome)
+        var nParcAcordo = 0, parcSemCaso = 0;
+        jurComAcordos = linhas.some(function (l) { return l.acordo; }) || !!abaAcordo;
+        if (abaAcordo) {
+          var ps = parcelasAcordoDaTabela(abaAcordo);
+          ps.forEach(function (pc) {
+            var alvo = linhas.filter(function (l) { return l.acordo && l.acordo.tipo && ((pc.ra && l.ra === pc.ra) || (!pc.ra && nomesIguaisJur(l.aluno, pc.aluno))); })[0] ||
+              linhas.filter(function (l) { return (pc.ra && l.ra === pc.ra) || (!pc.ra && nomesIguaisJur(l.aluno, pc.aluno)); })[0];
+            if (!alvo) { parcSemCaso++; return; }
+            (alvo.parcelasAcordo = alvo.parcelasAcordo || []).push(pc); nParcAcordo++;
+          });
+        }
         jurPendentes = linhas;
         var existe = function (l) { return casosJur.some(function (c) { return ((l.ra && c.ra === l.ra) || (!l.ra && normHeader(c.aluno) === normHeader(l.aluno))) && (!l.carteira || !c.carteira || normHeader(c.carteira) === normHeader(l.carteira)); }); };
         var ja = linhas.filter(existe).length, semCart = linhas.filter(function (l) { return !l.carteira; }).length;
@@ -2796,11 +2901,25 @@
         var destino = semCart ? '<div class="field"><label for="jurCartDest">Carteira destas linhas</label><select id="jurCartDest">' + jurCarteiras.map(function (c) {
           return '<option value="' + esc(c.nome) + '"' + (c.nome === jurCartSel ? " selected" : "") + ">" + esc(c.nome) + (c.ano ? " · ano letivo " + esc(c.ano) : "") + "</option>";
         }).join("") + '</select><span class="hint">' + semCart + " linha(s) sem a coluna Carteira vão para esta carteira. Não está na lista? Crie em “+ Nova carteira”.</span></div>" : "";
-        res.innerHTML = (abasFora ? '<div class="meta">' + abasFora + " aba(s) sem a coluna Carteira foram ignoradas (" + ts.filter(function (t) { return usar.indexOf(t) === -1; }).map(function (t) { return esc(t.aba || "sem nome"); }).join(", ") + "). Só RA, Aluno, Carteira e Ano letivo são importados.</div>" : "") +
-          "<p><b>" + esc(f.name) + "</b>: " + linhas.length + " aluno(s) — " + (linhas.length - ja) + " novo(s) na carteira e " + ja + " que já estão (têm o nome e o ano letivo atualizados).</p>" +
+        // resumo do que vem além de RA/Aluno/Carteira/Ano
+        var porSt = {}; linhas.forEach(function (l) { if (l.status) porSt[l.status] = (porSt[l.status] || 0) + 1; });
+        var conta = function (f) { return linhas.filter(f).length; };
+        var itens = [
+          ["Status", JUR_STATUS.filter(function (s) { return porSt[s.k]; }).map(function (s) { return jpill(s.k) + ' <b class="tabular">' + porSt[s.k] + "</b>"; }).join(" &nbsp; ") || "—"],
+          ["CPF", conta(function (l) { return l.cpf; })], ["Link do Drive", conta(function (l) { return l.linkDrive; }) + (linksRuins ? " (" + linksRuins + " repetido(s) em alunos diferentes, não usados)" : "")],
+          ["Acordo GM", conta(function (l) { return l.acordo && l.acordo.tipo; }) + " aluno(s)" + (abaAcordo ? " · " + nParcAcordo + " parcela(s) do acordo" + (parcSemCaso ? " (" + parcSemCaso + " sem aluno na lista, ignoradas)" : "") : "")],
+          ["Observações (viram tratativas)", conta(function (l) { return l.obs; })], ["Extrato", conta(function (l) { return l.extrato != null; })],
+          ["Motivo", conta(function (l) { return l.motivo; })], ["Data de envio", conta(function (l) { return l.dataEnvio; })]
+        ];
+        var nao = Object.keys(stNao);
+        res.innerHTML = "<p><b>" + esc(f.name) + "</b>: " + linhas.length + " aluno(s) — " + (linhas.length - ja) + " novo(s) na carteira e " + ja + " que já estão (são atualizados com os dados da planilha; célula vazia não apaga o que já está salvo).</p>" +
+          (abaAcordo ? '<div class="meta">Aba das parcelas do acordo GM: ' + esc(abaAcordo.aba || "—") + ".</div>" : "") +
           destino +
-          '<div class="table-wrap"><table class="data compacta"><thead><tr><th>RA</th><th>Aluno</th><th>Carteira</th><th>Ano letivo</th></tr></thead><tbody>' +
-          linhas.slice(0, 8).map(function (l) { return "<tr><td>" + esc(l.ra || "—") + "</td><td>" + esc(l.aluno || "—") + "</td><td>" + esc(l.carteira || "—") + "</td><td>" + esc(l.ano || "—") + "</td></tr>"; }).join("") +
+          '<div class="table-wrap"><table class="data compacta"><tbody>' + itens.map(function (x) { return "<tr><td>" + x[0] + '</td><td class="right">' + x[1] + "</td></tr>"; }).join("") + "</tbody></table></div>" +
+          (nao.length ? '<div class="form-err" style="background:var(--warn-soft);color:var(--warn)">Status que o site não reconheceu (o caso fica com o status atual, ou Em aberto): ' + nao.map(function (s) { return "“" + esc(s) + "” (" + stNao[s] + ")"; }).join(", ") + ".</div>" : "") +
+          '<div class="meta" style="margin:8px 0 4px">Os status da planilha viram os 4 do painel: Quitado → Quitado; Em dia → Em negociação GM; Sem acordo GM e Devendo novamente → Em aberto. Valores em aberto e parcelas vêm do relatório de inadimplência.</div>' +
+          '<div class="table-wrap"><table class="data compacta"><thead><tr><th>RA</th><th>Aluno</th><th>Carteira</th><th>Ano letivo</th><th>Status</th></tr></thead><tbody>' +
+          linhas.slice(0, 8).map(function (l) { return "<tr><td>" + esc(l.ra || "—") + "</td><td>" + esc(l.aluno || "—") + "</td><td>" + esc(l.carteira || "—") + "</td><td>" + esc(l.ano || "—") + "</td><td>" + (l.status ? jpill(l.status) : "—") + "</td></tr>"; }).join("") +
           "</tbody></table></div>" + (linhas.length > 8 ? '<div class="meta">…e mais ' + (linhas.length - 8) + " linha(s).</div>" : "");
         $("jurImpOk").disabled = semCart > 0 && !jurCarteiras.length; $("jurImpOk").textContent = "Importar " + linhas.length + " aluno(s)";
         if (semCart && !jurCarteiras.length) res.insertAdjacentHTML("beforeend", '<div class="form-err">Crie a carteira primeiro, em “+ Nova carteira”.</div>');
@@ -2816,14 +2935,21 @@
       if (!l.carteira && dest) l.carteira = dest;
       if (!l.ano) jurCarteiras.forEach(function (c) { if (normHeader(c.nome) === normHeader(l.carteira)) l.ano = c.ano || ""; });
     });
-    var partes = [], tot = { criados: 0, atualizados: 0, ignorados: 0 };
-    for (var i = 0; i < jurPendentes.length; i += 400) partes.push(jurPendentes.slice(i, i + 400));
+    var envio = jurPendentes.map(function (l) { var o = {}; Object.keys(l).forEach(function (k) { if (k.charAt(0) !== "_") o[k] = l[k]; }); return o; });
+    // lotes menores quando vêm as parcelas do acordo (mais dados por aluno)
+    var tam = jurComAcordos ? 100 : 400, partes = [], tot = { criados: 0, atualizados: 0, ignorados: 0, tratativas: 0, parcelasAcordo: 0 };
+    for (var i = 0; i < envio.length; i += tam) partes.push(envio.slice(i, i + tam));
     btn.disabled = true; btn.textContent = "Importando…";
     partes.reduce(function (p, parte) {
-      return p.then(function () { return api("POST", "/api/juridico/importar", { linhas: parte }).then(function (r) { tot.criados += r.criados; tot.atualizados += r.atualizados; tot.ignorados += r.ignorados; }); });
+      return p.then(function () {
+        return api("POST", "/api/juridico/importar", { linhas: parte, comAcordos: jurComAcordos }).then(function (r) {
+          Object.keys(tot).forEach(function (k) { tot[k] += r[k] || 0; });
+        });
+      });
     }, Promise.resolve()).then(function () {
       jurPendentes = []; btn.textContent = "Importado";
-      $("jurImpRes").innerHTML = '<p><b style="color:var(--success)">Concluído:</b> ' + tot.criados + " aluno(s) incluído(s) na carteira, " + tot.atualizados + " atualizado(s), " + tot.ignorados + " linha(s) ignorada(s).</p>";
+      $("jurImpRes").innerHTML = '<p><b style="color:var(--success)">Concluído:</b> ' + tot.criados + " aluno(s) incluído(s) na carteira, " + tot.atualizados + " atualizado(s), " + tot.ignorados + " linha(s) ignorada(s)" +
+        (jurComAcordos ? "; " + tot.parcelasAcordo + " parcela(s) do acordo GM gravadas" : "") + (tot.tratativas ? "; " + tot.tratativas + " observação(ões) viraram tratativas" : "") + ".</p>";
       toast("Carteira importada."); return carregarJuridico();
     }).catch(function (x) {
       btn.disabled = false; btn.textContent = "Tentar de novo";
@@ -2833,7 +2959,7 @@
 
   // ---- relatórios de inadimplência do mês
   var JUR_MODOS = {
-    carteira: { t: "Importar carteira", s: "Planilha com RA, Aluno, Carteira e Ano letivo (use “Baixar modelo”). Aluno novo entra na carteira; quem já está tem o nome e o ano letivo atualizados. Responsável e contato vêm da Base de dados. Os valores vêm do relatório de inadimplência.", b: "Importar alunos" },
+    carteira: { t: "Importar carteira", s: "Planilha da carteira (use “Baixar modelo”): RA, Aluno, Carteira e Ano letivo, e também Status, CPF, link do Drive, extrato, motivo, data de envio, observações e o acordo GM. Se a planilha tiver uma aba com as parcelas do acordo (Acordo, Parcela, Vencimento, Valor, Pago, Saldo), elas entram na ficha de cada aluno. Célula vazia não apaga o que já está salvo. Responsável e contato vêm da Base de dados; valores em aberto e parcelas vêm do relatório de inadimplência.", b: "Importar alunos" },
     inadimplencia: { t: "Importar relatórios de inadimplência do mês", s: "Envie os relatórios de inadimplência do mês (PDF do sistema com quebra por conta financeira, Excel ou CSV); pode mandar os dois juntos. Cada parcela vai para Valor em aberto ou Valor negociado conforme a conta financeira. Só os alunos que já estão na carteira entram; os outros são ignorados. O mês fica guardado no histórico e é comparado com o anterior. Quem não aparece no relatório mantém os valores e fica marcado para conferência. Nada é gravado antes de você conferir o resumo.", b: "Gravar competência" }
   };
   function abrirJurImp(modo) {

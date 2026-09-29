@@ -517,6 +517,11 @@
       <div class="form-err" id="jcConflito" style="background:var(--warn-soft);color:var(--warn)" hidden><b>Conferir:</b> <span id="jcConflitoTxt"></span> <button type="button" class="btn ghost small" id="jcConferido" style="margin-left:8px">Marcar como conferido</button></div>
       <div class="kpis k4" id="jcResumo" style="margin-bottom:10px"></div>
       <div id="jcContato" style="margin-bottom:12px"></div>
+      <div class="field" id="jcAcordoBox" hidden>
+        <label>Acordo GM</label>
+        <div id="jcAcordo"></div>
+        <div id="jcAcordoParc" style="margin-top:8px"></div>
+      </div>
       <div class="field"><label for="jcStatus">Status</label><select id="jcStatus" style="max-width:260px"></select><span class="hint">Salva sozinho e fica registrado nas tratativas.</span></div>
       <div class="field">
         <label>Evolução por competência (relatórios de inadimplência)</label>
@@ -534,7 +539,12 @@
           <div class="field"><label for="jcRa">RA</label><input id="jcRa"></div>
           <div class="field"><label for="jcCarteira">Carteira</label><input id="jcCarteira" list="ncCarteiras"></div>
           <div class="field"><label for="jcAno">Ano letivo do débito</label><input id="jcAno"></div>
+          <div class="field"><label for="jcCpf">CPF</label><input id="jcCpf" inputmode="numeric"></div>
+          <div class="field"><label for="jcExtrato">Extrato (R$)</label><input id="jcExtrato" type="number" step="0.01" min="0"></div>
+          <div class="field"><label for="jcDataEnvio">Data de envio ao jurídico</label><input id="jcDataEnvio" type="date"></div>
+          <div class="field"><label for="jcMotivo">Motivo de pendência</label><input id="jcMotivo" maxlength="200"></div>
         </div>
+        <div class="field"><label for="jcLink">Link dos documentos (Drive)</label><input id="jcLink" type="url" placeholder="https://drive.google.com/…"></div>
         <div><button type="button" class="btn ghost small" id="jcSalvarDados">Salvar dados do aluno</button></div>
       </details>
       <div class="meta" id="jcAtualizado" style="margin-top:10px"></div>

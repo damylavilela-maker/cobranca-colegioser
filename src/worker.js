@@ -170,6 +170,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS jur_competencias (mes TEXT PRIMARY KEY, data_relatorio TEXT NOT NULL DEFAULT '', importado_em TEXT NOT NULL, importado_por TEXT NOT NULL DEFAULT '', arquivos TEXT NOT NULL DEFAULT '', resumo TEXT NOT NULL DEFAULT '{}')`,
   `CREATE TABLE IF NOT EXISTS jur_hist (mes TEXT NOT NULL, caso_id TEXT NOT NULL, valor_aberto REAL, valor_negociado REAL, parcelas_aberto INTEGER NOT NULL DEFAULT 0, parcelas_negociado INTEGER NOT NULL DEFAULT 0, contas TEXT NOT NULL DEFAULT '{}', ausente INTEGER NOT NULL DEFAULT 0, movimento TEXT NOT NULL DEFAULT '', conferir TEXT NOT NULL DEFAULT '', PRIMARY KEY (mes, caso_id))`,
   `CREATE INDEX IF NOT EXISTS idx_jur_hist_caso ON jur_hist(caso_id)`,
+  // parcelas do acordo GM de cada caso (vindas da planilha da carteira)
+  `CREATE TABLE IF NOT EXISTS jur_acordo_parcelas (id TEXT PRIMARY KEY, caso_id TEXT NOT NULL, acordo TEXT NOT NULL DEFAULT '', parcela TEXT NOT NULL DEFAULT '', vencimento TEXT NOT NULL DEFAULT '', valor REAL, pago REAL, data_pagamento TEXT NOT NULL DEFAULT '', saldo REAL, situacao TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_jur_acordo_caso ON jur_acordo_parcelas(caso_id)`,
   // carteiras anuais do jurídico (nome e ano letivo do débito)
   `CREATE TABLE IF NOT EXISTS jur_carteiras (id TEXT PRIMARY KEY, nome TEXT NOT NULL UNIQUE, ano TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`
 ];
@@ -232,6 +235,8 @@ export default {
         // mês de referência do último relatório em que o caso apareceu e motivo da conferência manual
         // parcelas do valor negociado e vencimento/valor de cada parcela do último relatório (vencidas × a vencer)
         if (!colsJur.includes("parcelas_negociado")) await env.DB.batch(["ALTER TABLE jur_casos ADD COLUMN parcelas_negociado INTEGER NOT NULL DEFAULT 0", "ALTER TABLE jur_casos ADD COLUMN parcelas_venc TEXT NOT NULL DEFAULT '[]'"].map((s) => env.DB.prepare(s)));
+        // resumo do acordo GM (planilha da carteira)
+        if (!colsJur.includes("acordo_tipo")) await env.DB.batch(["acordo_tipo TEXT NOT NULL DEFAULT ''", "acordo_valor REAL", "acordo_pago REAL", "acordo_saldo_aberto REAL", "acordo_saldo_vencer REAL", "acordo_parc_vencer INTEGER NOT NULL DEFAULT 0"].map((c) => env.DB.prepare("ALTER TABLE jur_casos ADD COLUMN " + c)));
         if (!colsJur.includes("competencia")) await env.DB.batch(["ALTER TABLE jur_casos ADD COLUMN competencia TEXT NOT NULL DEFAULT ''", "ALTER TABLE jur_casos ADD COLUMN conferir_motivo TEXT NOT NULL DEFAULT ''"].map((s) => env.DB.prepare(s)));
         // Cria os períodos da planilha uma única vez (se forem apagados, não voltam).
         // Só quem conseguir gravar a marca "periodos_iniciais" cria os períodos (evita duplicar
@@ -1446,9 +1451,10 @@ async function duplicadasSerasa(env, eu, remover) {
 const JUR_STATUS = ["em_aberto", "em_negociacao", "verificar", "quitado"];
 const JUR_ST_ROTULO = { em_aberto: "Em aberto", em_negociacao: "Em negociação GM", verificar: "Verificar", quitado: "Quitado" };
 // todas as colunas da tabela (gravação com INSERT OR REPLACE); as que a aba não usa mais ficam vazias
-const JUR_COLS = ["id", "ra", "carteira", "ano", "aluno", "responsavel", "cpf", "email", "celular", "valor_negociado", "valor_aberto", "status", "enviado_juridico", "data_envio_juridico", "motivo_pendencia", "flag_conflito", "arquivado", "arquivado_em", "criado_em", "atualizado_em", "atualizado_por", "parcelas", "extrato", "conta_financeira", "link_drive", "competencia", "conferir_motivo", "parcelas_negociado", "parcelas_venc"];
+const JUR_COLS = ["id", "ra", "carteira", "ano", "aluno", "responsavel", "cpf", "email", "celular", "valor_negociado", "valor_aberto", "status", "enviado_juridico", "data_envio_juridico", "motivo_pendencia", "flag_conflito", "arquivado", "arquivado_em", "criado_em", "atualizado_em", "atualizado_por", "parcelas", "extrato", "conta_financeira", "link_drive", "competencia", "conferir_motivo", "parcelas_negociado", "parcelas_venc", "acordo_tipo", "acordo_valor", "acordo_pago", "acordo_saldo_aberto", "acordo_saldo_vencer", "acordo_parc_vencer"];
 
 function jurStatusValido(v) { return JUR_STATUS.includes(v) ? v : "em_aberto"; }
+function valorOuNull(v) { return v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : numero(v); }
 // Nome igual, ou um é o começo do outro (nome cortado no relatório).
 function nomesCompativeis(a, b) { const x = normNome(a), y = normNome(b); return !x || !y || x === y || x.startsWith(y) || y.startsWith(x); }
 
@@ -1458,7 +1464,10 @@ function casoSaida(r, obs) {
     valorNegociado: r.valor_negociado, valorAberto: r.valor_aberto, status: jurStatusValido(r.status),
     flagConflito: !!r.flag_conflito, conferirMotivo: r.conferir_motivo || "", criadoEm: r.criado_em, atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por,
     parcelas: r.parcelas || 0, parcelasNegociado: r.parcelas_negociado || 0, parcelasVenc: lerParcelasVenc(r.parcelas_venc),
-    contaFinanceira: r.conta_financeira || "", competencia: r.competencia || "", obs: obs || []
+    contaFinanceira: r.conta_financeira || "", competencia: r.competencia || "",
+    cpf: r.cpf || "", linkDrive: r.link_drive || "", extrato: r.extrato, motivo: r.motivo_pendencia || "", dataEnvio: r.data_envio_juridico || "",
+    acordo: { tipo: r.acordo_tipo || "", valor: r.acordo_valor, pago: r.acordo_pago, saldoAberto: r.acordo_saldo_aberto, saldoVencer: r.acordo_saldo_vencer, parcVencer: r.acordo_parc_vencer || 0 },
+    obs: obs || []
   };
 }
 
@@ -1475,17 +1484,26 @@ function casoValores(o, atual, eu) {
     ano: tem("ano") ? texto(o.ano, 10) : a.ano || "",
     aluno: tem("aluno") ? texto(o.aluno, 150) : a.aluno || "",
     responsavel: tem("responsavel") ? texto(o.responsavel, 150) : a.responsavel || "",
-    cpf: "", email: tem("email") ? texto(o.email, 150) : a.email || "", celular: tem("celular") ? texto(o.celular, 40) : a.celular || "",
+    cpf: tem("cpf") ? texto(o.cpf, 20) : a.cpf || "", email: tem("email") ? texto(o.email, 150) : a.email || "", celular: tem("celular") ? texto(o.celular, 40) : a.celular || "",
     valor_negociado: a.valor_negociado ?? null, valor_aberto: a.valor_aberto ?? null,
     status: tem("status") ? jurStatusValido(o.status) : jurStatusValido(a.status),
-    enviado_juridico: 1, data_envio_juridico: "", motivo_pendencia: "",
+    enviado_juridico: 1, data_envio_juridico: tem("dataEnvio") ? dataISO(o.dataEnvio) : a.data_envio_juridico || "",
+    motivo_pendencia: tem("motivo") ? texto(o.motivo, 200) : a.motivo_pendencia || "",
     flag_conflito: tem("flagConflito") ? (o.flagConflito ? 1 : 0) : (a.flag_conflito || 0),
     arquivado: 0, arquivado_em: "", criado_em: a.criado_em || agora, atualizado_em: agora, atualizado_por: eu ? eu.nome : "",
-    parcelas: a.parcelas || 0, extrato: null, conta_financeira: a.conta_financeira || "", link_drive: "",
+    parcelas: a.parcelas || 0, extrato: tem("extrato") ? valorOuNull(o.extrato) : (a.extrato ?? null), conta_financeira: a.conta_financeira || "",
+    link_drive: tem("linkDrive") ? (/^https?:\/\//i.test(texto(o.linkDrive, 500)) ? texto(o.linkDrive, 500) : "") : a.link_drive || "",
     competencia: a.competencia || "",
     // "conferido" (aviso desligado) apaga o motivo da conferência
     conferir_motivo: tem("flagConflito") && !o.flagConflito ? "" : a.conferir_motivo || "",
-    parcelas_negociado: a.parcelas_negociado || 0, parcelas_venc: a.parcelas_venc || "[]"
+    parcelas_negociado: a.parcelas_negociado || 0, parcelas_venc: a.parcelas_venc || "[]",
+    // acordo GM: só a planilha da carteira muda (objeto "acordo")
+    acordo_tipo: tem("acordo") ? texto(o.acordo && o.acordo.tipo, 80) : a.acordo_tipo || "",
+    acordo_valor: tem("acordo") ? valorOuNull(o.acordo && o.acordo.valor) : (a.acordo_valor ?? null),
+    acordo_pago: tem("acordo") ? valorOuNull(o.acordo && o.acordo.pago) : (a.acordo_pago ?? null),
+    acordo_saldo_aberto: tem("acordo") ? valorOuNull(o.acordo && o.acordo.saldoAberto) : (a.acordo_saldo_aberto ?? null),
+    acordo_saldo_vencer: tem("acordo") ? valorOuNull(o.acordo && o.acordo.saldoVencer) : (a.acordo_saldo_vencer ?? null),
+    acordo_parc_vencer: tem("acordo") ? Math.max(0, parseInt(o.acordo && o.acordo.parcVencer, 10) || 0) : (a.acordo_parc_vencer || 0)
   };
   return JUR_COLS.map((c) => v[c]);
 }
@@ -1597,7 +1615,7 @@ async function criarCasoJur(req, env, eu) {
 async function alterarCasoJur(req, env, eu, id) {
   const atual = await buscarCasoJur(env, id);
   const b0 = await corpo(req), b = {};
-  ["aluno", "ra", "carteira", "ano", "status", "flagConflito"].forEach((k) => { if (Object.prototype.hasOwnProperty.call(b0, k)) b[k] = b0[k]; });
+  ["aluno", "ra", "carteira", "ano", "status", "flagConflito", "cpf", "linkDrive", "extrato", "motivo", "dataEnvio"].forEach((k) => { if (Object.prototype.hasOwnProperty.call(b0, k)) b[k] = b0[k]; });
   if (Object.prototype.hasOwnProperty.call(b, "aluno") && !texto(b.aluno)) throw new HttpError(400, "Informe o nome do aluno.");
   const vals = casoValores(b, atual, eu);
   const stmts = [env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals)];
@@ -1613,6 +1631,7 @@ async function excluirCasoJur(env, id) {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM jur_obs WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_hist WHERE caso_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM jur_acordo_parcelas WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_casos WHERE id = ?").bind(id)
   ]);
   return json({ ok: true });
@@ -1665,17 +1684,46 @@ async function importarJuridico(req, env, eu) {
   const base = await carregarBase(env);
   const stmts = [];
   let criados = 0, atualizados = 0, ignorados = 0;
+  // tratativas que já existem (o mesmo texto não entra duas vezes no mesmo caso)
+  const obsExist = new Set((await env.DB.prepare("SELECT caso_id, texto FROM jur_obs").all()).results.map((o) => o.caso_id + "|" + o.texto));
+  const agora = agoraISO();
+  let tratativas = 0, parcelasAcordo = 0;
   linhas.forEach((l0) => {
-    const l = { ra: texto(l0 && l0.ra, 30), aluno: texto(l0 && l0.aluno, 150), carteira: texto(l0 && l0.carteira, 60), ano: texto(l0 && l0.ano, 10) };
+    l0 = l0 || {};
+    const l = { ra: texto(l0.ra, 30), aluno: texto(l0.aluno, 150), carteira: texto(l0.carteira, 60), ano: texto(l0.ano, 10) };
     if (!l.ra && !l.aluno) { ignorados++; return; }
+    // demais campos da planilha da carteira (só os que vieram preenchidos)
+    if (l0.status && JUR_STATUS.includes(l0.status)) l.status = l0.status;
+    ["cpf", "linkDrive", "motivo", "dataEnvio", "responsavel", "email", "celular"].forEach((k) => { if (texto(l0[k], 500)) l[k] = l0[k]; });
+    if (valorOuNull(l0.extrato) != null) l.extrato = l0.extrato;
+    if (b.comAcordos && l0.acordo && typeof l0.acordo === "object") l.acordo = l0.acordo;
     const cart = normNome(l.carteira);
     const mesma = (c) => !cart || !normNome(c.carteira) || normNome(c.carteira) === cart;
     const atual = (l.ra && (porRa[l.ra.toLowerCase()] || []).find((c) => nomesCompativeis(c.aluno, l.aluno) && mesma(c))) ||
       (l.aluno && (porNome[normNome(l.aluno)] || []).find((c) => (!l.ra || !c.ra) && mesma(c))) || null;
     const o = completarJurComBase(l, base);
     Object.keys(o).forEach((k) => { if (o[k] === "") delete o[k]; }); // célula vazia não apaga o que já está salvo
+    if (l.acordo) o.acordo = l.acordo; // objeto (a limpeza de vazios acima não o afeta)
     const vals = casoValores(atual ? o : { status: "em_aberto", ...o, aluno: o.aluno || "Sem nome" }, atual, eu);
     stmts.push(env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals));
+    const id = vals[0];
+    // observações da planilha viram tratativas (com a data de cada uma, quando houver)
+    (Array.isArray(l0.obs) ? l0.obs : []).slice(0, 200).forEach((ob) => {
+      const t = texto(ob && ob.texto, 4000); if (!t || obsExist.has(id + "|" + t)) return;
+      obsExist.add(id + "|" + t); tratativas++;
+      stmts.push(insertObsJur(env, id, dataISO(ob.data) ? ob.data + "T12:00:00.000Z" : agora, t, eu));
+    });
+    // parcelas do acordo GM: a planilha substitui as que já estavam gravadas neste caso
+    if (b.comAcordos) {
+      stmts.push(env.DB.prepare("DELETE FROM jur_acordo_parcelas WHERE caso_id = ?").bind(id));
+      const ps = (Array.isArray(l0.parcelasAcordo) ? l0.parcelasAcordo : []).slice(0, 400);
+      parcelasAcordo += ps.length;
+      emLotes(ps, 9).forEach((lote) => {
+        const v = [];
+        lote.forEach((p) => v.push(novoId(), id, texto(p.acordo, 80), texto(p.parcela, 10), dataISO(p.vencimento), valorOuNull(p.valor), valorOuNull(p.pago), dataISO(p.dataPagamento), valorOuNull(p.saldo), texto(p.situacao, 40)));
+        stmts.push(env.DB.prepare("INSERT INTO jur_acordo_parcelas (id, caso_id, acordo, parcela, vencimento, valor, pago, data_pagamento, saldo, situacao) VALUES " + lote.map(() => "(?,?,?,?,?,?,?,?,?,?)").join(",")).bind(...v));
+      });
+    }
     if (atual) atualizados++;
     else {
       criados++;
@@ -1684,7 +1732,7 @@ async function importarJuridico(req, env, eu) {
     }
   });
   await executarEmLotes(env, stmts);
-  return json({ criados, atualizados, ignorados });
+  return json({ criados, atualizados, ignorados, tratativas, parcelasAcordo });
 }
 
 // ---------------------------------------------------------------- Painel jurídico: comparação com relatórios
@@ -1824,7 +1872,8 @@ async function quitarSemValorJur(req, env, eu) {
 async function historicoCasoJur(env, id) {
   await buscarCasoJur(env, id);
   const r = (await env.DB.prepare("SELECT * FROM jur_hist WHERE caso_id = ? ORDER BY mes").bind(id).all()).results;
-  return json({ historico: r.map((h) => {
+  const ap = (await env.DB.prepare("SELECT * FROM jur_acordo_parcelas WHERE caso_id = ? ORDER BY acordo, vencimento").bind(id).all()).results;
+  return json({ acordoParcelas: ap.map((p) => ({ acordo: p.acordo, parcela: p.parcela, vencimento: p.vencimento, valor: p.valor, pago: p.pago, dataPagamento: p.data_pagamento, saldo: p.saldo, situacao: p.situacao })), historico: r.map((h) => {
     let contas = {};
     try { contas = JSON.parse(h.contas || "{}"); } catch (e) { contas = {}; }
     return { mes: h.mes, valorAberto: h.valor_aberto, valorNegociado: h.valor_negociado, parcelasAberto: h.parcelas_aberto, parcelasNegociado: h.parcelas_negociado, contas, ausente: !!h.ausente, movimento: h.movimento, conferir: h.conferir };
