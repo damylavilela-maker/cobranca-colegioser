@@ -1529,7 +1529,11 @@ async function listarJuridico(env) {
   const comps = (await env.DB.prepare("SELECT mes, resumo FROM jur_competencias ORDER BY mes DESC LIMIT 2").all()).results.map(compSaida);
   const movimentos = {};
   if (comps.length) (await env.DB.prepare("SELECT caso_id, movimento FROM jur_hist WHERE mes = ?").bind(comps[0].mes).all()).results.forEach((h) => { movimentos[h.caso_id] = h.movimento; });
-  return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])), competencias: comps, movimentos, carteiras: await carteirasJur(env, casos) });
+  // parcelas do acordo GM ainda com saldo (vencimento e saldo), para as colunas vencidas × a vencer
+  const acordoParc = {};
+  (await env.DB.prepare("SELECT caso_id, vencimento, saldo FROM jur_acordo_parcelas WHERE saldo > 0.009").all()).results
+    .forEach((p) => { if (p.vencimento) (acordoParc[p.caso_id] = acordoParc[p.caso_id] || []).push([p.vencimento, p.saldo]); });
+  return json({ casos: casos.map((c) => ({ ...casoSaida(c, porCaso[c.id]), acordoParc: acordoParc[c.id] || [] })), competencias: comps, movimentos, carteiras: await carteirasJur(env, casos) });
 }
 
 // Carteiras cadastradas. Carteira que só existe nos casos (importada antes do cadastro) entra

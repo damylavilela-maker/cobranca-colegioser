@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v47";
+  var VERSAO = "30/09 · v48";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2375,6 +2375,8 @@
   }
   function trocarCaso(c) {
     var i = casosJur.findIndex(function (x) { return x.id === c.id; });
+    // a resposta de um caso só não traz as parcelas do acordo: mantém as que já estavam
+    if (i !== -1 && !c.acordoParc) c.acordoParc = casosJur[i].acordoParc;
     if (i === -1) casosJur.push(c); else casosJur[i] = c;
   }
   function tirarCaso(id) { casosJur = casosJur.filter(function (x) { return x.id !== id; }); }
@@ -2450,10 +2452,22 @@
     }).sort(function (a, b) { return (Number(b.valorAberto) || 0) - (Number(a.valorAberto) || 0) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
   }
   // parcelas do último relatório (em aberto e negociado juntas), pelo vencimento em relação a hoje
+  // junta as parcelas do relatório com as do acordo GM ainda com saldo (a mesma parcela nas duas
+  // fontes, mesmo vencimento e valor parecido, conta uma vez)
+  function parcelasDoCaso(c) {
+    var lista = (c.parcelasVenc || []).map(function (p) { return [p[0], Number(p[1]) || 0]; });
+    (c.acordoParc || []).forEach(function (p) {
+      var s = Number(p[1]) || 0;
+      if (!lista.some(function (x) { return x[0] === p[0] && Math.abs(x[1] - s) <= Math.max(1, s * 0.3); })) lista.push([p[0], s]);
+    });
+    return lista;
+  }
   function celParcelasJur(c, vencidas) {
-    var hj = hoje(), n = 0, v = 0;
-    if (!(c.parcelasVenc || []).length) return '<td class="muted">—</td>';
-    c.parcelasVenc.forEach(function (p) { if ((p[0] < hj) === vencidas) { n++; v += Number(p[1]) || 0; } });
+    // vencidas: o relatório de inadimplência é a fonte (as datas do acordo podem não bater com as do
+    // sistema); o acordo só entra quando ainda não há relatório. A vencer: relatório + acordo.
+    var hj = hoje(), n = 0, v = 0, lista = vencidas && (c.parcelasVenc || []).length ? c.parcelasVenc.map(function (p) { return [p[0], Number(p[1]) || 0]; }) : parcelasDoCaso(c);
+    if (!lista.length) return '<td class="muted">—</td>';
+    lista.forEach(function (p) { if ((p[0] < hj) === vencidas) { n++; v += p[1]; } });
     return "<td>" + (n ? '<span class="tabular">' + n + (n === 1 ? " parcela" : " parcelas") + '</span><div class="meta tabular">' + money(v) + "</div>" : '<span class="muted">0</span>') + "</td>";
   }
   function qtdParc(n) { return n ? '<div class="meta">' + n + (n === 1 ? " parcela" : " parcelas") + "</div>" : ""; }
@@ -2470,7 +2484,7 @@
         '<td><div class="nome">' + esc(c.aluno || "—") + (c.flagConflito ? ' <span class="pill" style="color:var(--warn);background:var(--warn-soft)" title="' + esc(c.conferirMotivo || "Precisa de conferência") + '"><i></i>Conferir</span>' : "") + '</div><div class="meta">' +
         esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + (turma ? " · " + esc(turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + qtdParc(c.parcelas) + "</td>" +
-        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + money(c.valorNegociado || 0) + "</span>" + qtdParc(c.parcelasNegociado) + (c.acordo && c.acordo.tipo ? '<div class="meta">Acordo ' + esc(c.acordo.tipo) + "</div>" : "") + "</td>" +
+        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + money(c.valorNegociado || 0) + "</span>" + qtdParc(c.parcelasNegociado) + (c.acordo && c.acordo.tipo ? '<div class="meta">Acordo ' + esc(c.acordo.tipo) + (c.acordo.valor != null ? ": " + money(c.acordo.valor) : "") + (c.acordo.saldoAberto != null ? " · saldo " + money(c.acordo.saldoAberto) : "") + "</div>" : "") + "</td>" +
         celParcelasJur(c, true) + celParcelasJur(c, false) +
         "<td>" + jpill(c.status) + "</td>" +
         "<td>" + esc(c.carteira || "—") + (c.ano ? '<div class="meta">ano letivo ' + esc(c.ano) + "</div>" : "") + "</td>" +
