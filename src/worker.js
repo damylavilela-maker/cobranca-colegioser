@@ -259,6 +259,12 @@ export default {
         // Uma vez: todos os casos do Painel jurídico ficam como já enviados ao jurídico.
         const envj = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('jur_todos_enviados', ?)").bind(agora).run();
         if (!envj.meta || envj.meta.changes > 0) await env.DB.prepare("UPDATE jur_casos SET enviado_juridico = 1").run();
+        // Uma vez: status antigos do Painel jurídico viram os 4 da aba nova.
+        const stj = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('jur_status_simples', ?)").bind(agora).run();
+        if (!stj.meta || stj.meta.changes > 0) await env.DB.batch([
+          "UPDATE jur_casos SET status = 'em_negociacao' WHERE status IN ('em_dia', 'parcial')",
+          "UPDATE jur_casos SET status = 'em_aberto' WHERE status NOT IN ('em_aberto', 'em_negociacao', 'verificar', 'quitado')"
+        ].map((s) => env.DB.prepare(s)));
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -369,22 +375,19 @@ async function rotear(req, env, url) {
   }
 
   if (partes[0] === "juridico") {
-    if (partes.length === 1 && m === "GET") return listarJuridico(env, url);
+    if (partes.length === 1 && m === "GET") return listarJuridico(env);
     if (partes.length === 1 && m === "POST") return criarCasoJur(req, env, eu);
     if (partes[1] === "importar" && m === "POST") return importarJuridico(req, env, eu);
-    if (partes[1] === "evolucao" && m === "GET") return evolucaoJuridico(env);
     if (partes[1] === "inadimplencia" && m === "POST") return inadimplenciaJuridico(req, env, eu);
     if (partes[1] === "competencias" && m === "GET") return competenciasJuridico(env);
     if (partes[1] === "quitar-sem-valor" && m === "POST") return quitarSemValorJur(req, env, eu);
     if (partes.length === 3 && partes[2] === "historico" && m === "GET") return historicoCasoJur(env, partes[1]);
-    if (partes[1] === "recebimento" && partes[2] === "desfazer" && m === "POST") { exigirAdmin(eu); return desfazerRecebimentos(req, env, eu); }
-    if (partes[1] === "recebimento" && m === "POST") return recebimentoJuridico(req, env, eu);
     if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
+    if (partes.length === 2 && m === "DELETE") { exigirAdmin(eu); return excluirCasoJur(env, partes[1]); }
     if (partes.length === 3 && partes[2] === "obs" && m === "POST") return novaObsJur(req, env, eu, partes[1]);
     if (partes.length === 4 && partes[2] === "obs" && m === "PATCH") return editarObsJur(req, env, eu, partes[1], partes[3]);
     if (partes.length === 4 && partes[2] === "obs" && m === "DELETE") return excluirObsJur(env, eu, partes[1], partes[3]);
   }
-
   if (partes[0] === "atendimentos") {
     if (partes.length === 1 && m === "GET") return listarAtendimentos(env, url);
     if (partes.length === 1 && m === "POST") return criarAtendimento(req, env, eu);
@@ -1432,67 +1435,54 @@ async function duplicadasSerasa(env, eu, remover) {
 }
 
 // ---------------------------------------------------------------- Painel jurídico
+// Carteira jurídica (GM Carvalho e Fraia): alunos entram pela carteira anual (importar carteira
+// ou novo caso); valores, parcelas e movimentação vêm dos relatórios mensais de inadimplência.
 
-const JUR_STATUS = ["sem_negociacao", "nao_classificado", "verificar", "em_aberto", "parcial", "em_dia", "quitado"];
-const JUR_MOTIVOS = ["Aguardando negociação com a família", "Aguardando documentação", "Aguardando aprovação interna", "Em análise financeira", "Contato não localizado", "Acordo em cumprimento", "Outro (ver observação)"];
+const JUR_STATUS = ["em_aberto", "em_negociacao", "verificar", "quitado"];
+const JUR_ST_ROTULO = { em_aberto: "Em aberto", em_negociacao: "Em negociação GM", verificar: "Verificar", quitado: "Quitado" };
+// todas as colunas da tabela (gravação com INSERT OR REPLACE); as que a aba não usa mais ficam vazias
 const JUR_COLS = ["id", "ra", "carteira", "ano", "aluno", "responsavel", "cpf", "email", "celular", "valor_negociado", "valor_aberto", "status", "enviado_juridico", "data_envio_juridico", "motivo_pendencia", "flag_conflito", "arquivado", "arquivado_em", "criado_em", "atualizado_em", "atualizado_por", "parcelas", "extrato", "conta_financeira", "link_drive", "competencia", "conferir_motivo", "parcelas_negociado", "parcelas_venc"];
 
-function jurStatusValido(v) { return JUR_STATUS.includes(v) ? v : "nao_classificado"; }
-// Nome igual, ou um é o começo do outro (nome cortado em alguma aba da planilha).
+function jurStatusValido(v) { return JUR_STATUS.includes(v) ? v : "em_aberto"; }
+// Nome igual, ou um é o começo do outro (nome cortado no relatório).
 function nomesCompativeis(a, b) { const x = normNome(a), y = normNome(b); return !x || !y || x === y || x.startsWith(y) || y.startsWith(x); }
-function valorOuNull(v) { return v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : numero(v); }
 
 function casoSaida(r, obs) {
   return {
-    id: r.id, ra: r.ra, carteira: r.carteira, ano: r.ano, aluno: r.aluno, responsavel: r.responsavel, cpf: r.cpf,
-    email: r.email, celular: r.celular, valorNegociado: r.valor_negociado, valorAberto: r.valor_aberto, status: r.status,
-    enviadoJuridico: !!r.enviado_juridico, dataEnvio: r.data_envio_juridico, motivo: r.motivo_pendencia,
-    flagConflito: !!r.flag_conflito, arquivado: !!r.arquivado, arquivadoEm: r.arquivado_em, criadoEm: r.criado_em,
-    atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por, parcelas: r.parcelas || 0, extrato: r.extrato, contaFinanceira: r.conta_financeira || "", linkDrive: r.link_drive || "",
-    competencia: r.competencia || "", conferirMotivo: r.conferir_motivo || "",
-    parcelasNegociado: r.parcelas_negociado || 0, parcelasVenc: lerParcelasVenc(r.parcelas_venc), obs: obs || []
+    id: r.id, ra: r.ra, carteira: r.carteira, ano: r.ano, aluno: r.aluno, responsavel: r.responsavel, email: r.email, celular: r.celular,
+    valorNegociado: r.valor_negociado, valorAberto: r.valor_aberto, status: jurStatusValido(r.status),
+    flagConflito: !!r.flag_conflito, conferirMotivo: r.conferir_motivo || "", criadoEm: r.criado_em, atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por,
+    parcelas: r.parcelas || 0, parcelasNegociado: r.parcelas_negociado || 0, parcelasVenc: lerParcelasVenc(r.parcelas_venc),
+    contaFinanceira: r.conta_financeira || "", competencia: r.competencia || "", obs: obs || []
   };
 }
 
-// Junta o que veio da tela com o registro salvo: só muda o campo que foi enviado.
+// Junta o que veio da tela com o registro salvo: só muda o campo enviado. Valores e parcelas só
+// mudam pelo relatório de inadimplência.
 function casoValores(o, atual, eu) {
   const a = atual || {};
   const agora = agoraISO();
   const tem = (k) => Object.prototype.hasOwnProperty.call(o, k);
-  const arq = tem("arquivado") ? (o.arquivado ? 1 : 0) : (a.arquivado || 0);
-  return [
-    a.id || novoId(),
-    tem("ra") ? texto(o.ra, 30) : a.ra || "",
-    tem("carteira") ? texto(o.carteira, 60) : a.carteira || "",
-    tem("ano") ? texto(o.ano, 10) : a.ano || "",
-    tem("aluno") ? texto(o.aluno, 150) : a.aluno || "",
-    tem("responsavel") ? texto(o.responsavel, 150) : a.responsavel || "",
-    tem("cpf") ? texto(o.cpf, 20) : a.cpf || "",
-    tem("email") ? texto(o.email, 150) : a.email || "",
-    tem("celular") ? texto(o.celular, 40) : a.celular || "",
-    tem("valorNegociado") ? valorOuNull(o.valorNegociado) : (a.valor_negociado ?? null),
-    tem("valorAberto") ? valorOuNull(o.valorAberto) : (a.valor_aberto ?? null),
-    tem("status") ? jurStatusValido(o.status) : a.status || "nao_classificado",
-    // a carteira jurídica inteira já foi enviada ao jurídico: caso novo entra como enviado
-    tem("enviadoJuridico") ? (o.enviadoJuridico ? 1 : 0) : (atual ? (a.enviado_juridico ? 1 : 0) : 1),
-    tem("dataEnvio") ? dataISO(o.dataEnvio) : a.data_envio_juridico || "",
-    tem("motivo") ? texto(o.motivo, 120) : a.motivo_pendencia || "",
-    tem("flagConflito") ? (o.flagConflito ? 1 : 0) : (a.flag_conflito || 0),
-    arq,
-    arq ? (a.arquivado ? a.arquivado_em : agora) : "",
-    a.criado_em || agora,
-    agora,
-    eu ? eu.nome : "",
-    tem("parcelas") ? Math.max(0, Math.min(999, parseInt(o.parcelas, 10) || 0)) : (a.parcelas || 0),
-    tem("extrato") ? valorOuNull(o.extrato) : (a.extrato ?? null),
-    tem("contaFinanceira") ? texto(o.contaFinanceira, 200) : a.conta_financeira || "",
-    tem("linkDrive") ? (/^https?:\/\//i.test(texto(o.linkDrive, 500)) ? texto(o.linkDrive, 500) : "") : a.link_drive || "",
-    a.competencia || "",
-    // "conferido" (flag desligada) apaga o motivo da conferência
-    tem("flagConflito") && !o.flagConflito ? "" : a.conferir_motivo || "",
-    tem("parcelasNegociado") ? Math.max(0, Math.min(999, parseInt(o.parcelasNegociado, 10) || 0)) : (a.parcelas_negociado || 0),
-    a.parcelas_venc || "[]"
-  ];
+  const v = {
+    id: a.id || novoId(),
+    ra: tem("ra") ? texto(o.ra, 30) : a.ra || "",
+    carteira: tem("carteira") ? texto(o.carteira, 60) : a.carteira || "",
+    ano: tem("ano") ? texto(o.ano, 10) : a.ano || "",
+    aluno: tem("aluno") ? texto(o.aluno, 150) : a.aluno || "",
+    responsavel: tem("responsavel") ? texto(o.responsavel, 150) : a.responsavel || "",
+    cpf: "", email: tem("email") ? texto(o.email, 150) : a.email || "", celular: tem("celular") ? texto(o.celular, 40) : a.celular || "",
+    valor_negociado: a.valor_negociado ?? null, valor_aberto: a.valor_aberto ?? null,
+    status: tem("status") ? jurStatusValido(o.status) : jurStatusValido(a.status),
+    enviado_juridico: 1, data_envio_juridico: "", motivo_pendencia: "",
+    flag_conflito: tem("flagConflito") ? (o.flagConflito ? 1 : 0) : (a.flag_conflito || 0),
+    arquivado: 0, arquivado_em: "", criado_em: a.criado_em || agora, atualizado_em: agora, atualizado_por: eu ? eu.nome : "",
+    parcelas: a.parcelas || 0, extrato: null, conta_financeira: a.conta_financeira || "", link_drive: "",
+    competencia: a.competencia || "",
+    // "conferido" (aviso desligado) apaga o motivo da conferência
+    conferir_motivo: tem("flagConflito") && !o.flagConflito ? "" : a.conferir_motivo || "",
+    parcelas_negociado: a.parcelas_negociado || 0, parcelas_venc: a.parcelas_venc || "[]"
+  };
+  return JUR_COLS.map((c) => v[c]);
 }
 
 async function buscarCasoJur(env, id) {
@@ -1500,41 +1490,35 @@ async function buscarCasoJur(env, id) {
   if (!r) throw new HttpError(404, "Caso não encontrado.");
   return r;
 }
-
 async function obsDoCaso(env, id) {
   return (await env.DB.prepare("SELECT id, data, texto, autor, editado_em, editado_por FROM jur_obs WHERE caso_id = ? ORDER BY data DESC").bind(id).all()).results;
 }
-
 async function casoCompleto(env, id) {
   return json({ caso: casoSaida(await buscarCasoJur(env, id), await obsDoCaso(env, id)) });
 }
 
-async function listarJuridico(env, url) {
-  const arq = url.searchParams.get("arquivados") === "1" ? 1 : 0;
-  const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = ? ORDER BY " + (arq ? "arquivado_em DESC" : "aluno")).bind(arq).all()).results;
+async function listarJuridico(env) {
+  const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0 ORDER BY aluno").all()).results;
   const porCaso = {};
-  if (!arq) {
-    const obs = (await env.DB.prepare("SELECT o.caso_id, o.id, o.data, o.texto, o.autor, o.editado_em, o.editado_por FROM jur_obs o JOIN jur_casos c ON c.id = o.caso_id WHERE c.arquivado = 0 ORDER BY o.data DESC").all()).results;
-    obs.forEach((o) => { (porCaso[o.caso_id] = porCaso[o.caso_id] || []).push({ id: o.id, data: o.data, texto: o.texto, autor: o.autor, editado_em: o.editado_em, editado_por: o.editado_por }); });
-  }
-  const inad = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'jur_inad_data'").first();
+  (await env.DB.prepare("SELECT caso_id, id, data, texto, autor, editado_em, editado_por FROM jur_obs ORDER BY data DESC").all()).results
+    .forEach((o) => { (porCaso[o.caso_id] = porCaso[o.caso_id] || []).push({ id: o.id, data: o.data, texto: o.texto, autor: o.autor, editado_em: o.editado_em, editado_por: o.editado_por }); });
   // indicadores das duas últimas competências e o movimento de cada caso na última
   const comps = (await env.DB.prepare("SELECT mes, resumo FROM jur_competencias ORDER BY mes DESC LIMIT 2").all()).results.map(compSaida);
   const movimentos = {};
   if (comps.length) (await env.DB.prepare("SELECT caso_id, movimento FROM jur_hist WHERE mes = ?").bind(comps[0].mes).all()).results.forEach((h) => { movimentos[h.caso_id] = h.movimento; });
-  return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])), inadData: inad ? inad.valor : "", competencias: comps, movimentos });
+  return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])), competencias: comps, movimentos });
 }
 
-// Dados cadastrais que faltarem vêm da Base de dados (pelo RA ou pelo nome).
+// Responsável e contato vêm sempre da Base de dados (pelo RA ou pelo nome); o nome também, se faltar.
 function completarJurComBase(o, base) {
   const bx = acharNaBase(base, { ra: o.ra, nome: o.aluno });
   if (!bx) return o;
   const r = { ...o };
   if (!texto(r.ra)) r.ra = bx.ra;
   if (!texto(r.aluno)) r.aluno = bx.nome;
-  if (!texto(r.responsavel)) r.responsavel = bx.responsavel;
-  if (!texto(r.email)) r.email = bx.email;
-  if (!texto(r.celular)) r.celular = bx.telefone;
+  r.responsavel = bx.responsavel || r.responsavel || "";
+  r.email = bx.email || r.email || "";
+  r.celular = bx.telefone || r.celular || "";
   return r;
 }
 
@@ -1543,43 +1527,48 @@ function insertObsJur(env, casoId, data, t, eu) {
 }
 
 async function criarCasoJur(req, env, eu) {
-  const b = completarJurComBase(await corpo(req), await carregarBase(env));
-  if (!texto(b.aluno)) throw new HttpError(400, "Informe o nome do aluno antes de adicionar.");
-  const ra = texto(b.ra, 30);
-  if (ra && await env.DB.prepare("SELECT id FROM jur_casos WHERE ra = ? AND arquivado = 0").bind(ra).first())
-    throw new HttpError(400, "Já existe um caso com esse RA. Edite o caso existente em vez de duplicá-lo.");
-  const vals = casoValores({ status: "nao_classificado", ...b, arquivado: false }, null, eu);
-  const stmts = [env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals)];
-  const obs = texto(b.obs, 4000);
-  if (obs) stmts.push(insertObsJur(env, vals[0], agoraISO(), obs, eu));
-  await env.DB.batch(stmts);
+  const b0 = await corpo(req);
+  const b = completarJurComBase({ ra: b0.ra, aluno: b0.aluno, carteira: b0.carteira, ano: b0.ano }, await carregarBase(env));
+  if (!texto(b.aluno)) throw new HttpError(400, "Informe o nome do aluno.");
+  const ra = texto(b.ra, 30), cart = normNome(b.carteira);
+  if (ra && (await env.DB.prepare("SELECT carteira FROM jur_casos WHERE ra = ? AND arquivado = 0").bind(ra).all()).results.some((c) => normNome(c.carteira) === cart))
+    throw new HttpError(400, "Esse aluno já está nessa carteira.");
+  const vals = casoValores({ status: "em_aberto", ...b }, null, eu);
+  await env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals).run();
   return casoCompleto(env, vals[0]);
 }
 
 async function alterarCasoJur(req, env, eu, id) {
   const atual = await buscarCasoJur(env, id);
-  const b = await corpo(req);
+  const b0 = await corpo(req), b = {};
+  ["aluno", "ra", "carteira", "ano", "status", "flagConflito"].forEach((k) => { if (Object.prototype.hasOwnProperty.call(b0, k)) b[k] = b0[k]; });
+  if (Object.prototype.hasOwnProperty.call(b, "aluno") && !texto(b.aluno)) throw new HttpError(400, "Informe o nome do aluno.");
   const vals = casoValores(b, atual, eu);
   const stmts = [env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals)];
-  // mudança de valor negociado ou de status fica no histórico de tratativas
-  const iNeg = JUR_COLS.indexOf("valor_negociado"), iSt = JUR_COLS.indexOf("status");
-  const brl = (v) => v == null ? "—" : "R$ " + numero(v).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  const partesTxt = [];
-  if ((atual.valor_negociado ?? null) !== (vals[iNeg] ?? null)) partesTxt.push(`valor negociado ${brl(atual.valor_negociado)} → ${brl(vals[iNeg])}`);
-  if (atual.status !== vals[iSt]) partesTxt.push(`status ${JUR_ST_ROTULO[atual.status] || atual.status} → ${JUR_ST_ROTULO[vals[iSt]] || vals[iSt]}`);
-  if (partesTxt.length) stmts.push(insertObsJur(env, id, agoraISO(), "Atualizado: " + partesTxt.join("; ") + ".", eu));
+  const st = vals[JUR_COLS.indexOf("status")], stAntes = jurStatusValido(atual.status);
+  if (st !== stAntes) stmts.push(insertObsJur(env, id, agoraISO(), `Status ${JUR_ST_ROTULO[stAntes]} → ${JUR_ST_ROTULO[st]}.`, eu));
   await env.DB.batch(stmts);
   return casoCompleto(env, id);
+}
+
+// Excluir de vez (administrador): o caso, as tratativas e o histórico mensal dele.
+async function excluirCasoJur(env, id) {
+  await buscarCasoJur(env, id);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM jur_obs WHERE caso_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM jur_hist WHERE caso_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM jur_casos WHERE id = ?").bind(id)
+  ]);
+  return json({ ok: true });
 }
 
 async function novaObsJur(req, env, eu, id) {
   await buscarCasoJur(env, id);
   const t = texto((await corpo(req)).texto, 4000);
-  if (!t) throw new HttpError(400, "Escreva uma observação antes de adicionar.");
+  if (!t) throw new HttpError(400, "Escreva a tratativa antes de adicionar.");
   const agora = agoraISO();
   await env.DB.batch([
     insertObsJur(env, id, agora, t, eu),
-    // registrar a tratativa também atualiza o "atualizado em" do caso
     env.DB.prepare("UPDATE jur_casos SET atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agora, eu.nome, id)
   ]);
   return casoCompleto(env, id);
@@ -1605,60 +1594,41 @@ async function excluirObsJur(env, eu, casoId, obsId) {
   return casoCompleto(env, casoId);
 }
 
-// Casos com o mesmo RA são atualizados (sem RA, pelo nome do aluno); os outros são criados.
-// Célula vazia na planilha não apaga o que já está salvo.
+// Carteira (RA, Aluno, Carteira, Ano letivo): aluno com o mesmo RA (e nome compatível) na mesma
+// carteira é atualizado; os outros entram na carteira. Contato vem da Base de dados.
 async function importarJuridico(req, env, eu) {
   const b = await corpo(req);
   const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 3000) : [];
-  const todos = (await env.DB.prepare("SELECT * FROM jur_casos ORDER BY arquivado").all()).results;
-  const porRa = {}, porNome = {}; // porRa: lista de casos por RA
+  const todos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0").all()).results;
+  const porRa = {}, porNome = {};
   function indexar(c) {
     if (c.ra) (porRa[c.ra.toLowerCase()] = porRa[c.ra.toLowerCase()] || []).push(c);
-    const n = normNome(c.aluno); if (n && !porNome[n]) porNome[n] = c;
+    const n = normNome(c.aluno); if (n) (porNome[n] = porNome[n] || []).push(c);
   }
   todos.forEach(indexar);
   const base = await carregarBase(env);
-  const agora = agoraISO();
   const stmts = [];
   let criados = 0, atualizados = 0, ignorados = 0;
   linhas.forEach((l0) => {
-    const l = {};
-    Object.keys(l0 || {}).forEach((k) => { const v = l0[k]; if ((v !== null && v !== undefined && String(v).trim() !== "") || (k === "linkDrive" && v === "")) l[k] = v; }); // link vazio apaga link errado
-    const ra = texto(l.ra, 30), nome = texto(l.aluno, 150);
-    if (!ra && !nome) { ignorados++; return; }
-    // mesmo RA só é o mesmo caso se o nome bater (a planilha tem RA repetido para alunos diferentes)
-    // e o mesmo aluno em duas carteiras são dois casos
+    const l = { ra: texto(l0 && l0.ra, 30), aluno: texto(l0 && l0.aluno, 150), carteira: texto(l0 && l0.carteira, 60), ano: texto(l0 && l0.ano, 10) };
+    if (!l.ra && !l.aluno) { ignorados++; return; }
     const cart = normNome(l.carteira);
-    const mesmaCarteira = (c) => !cart || !normNome(c.carteira) || normNome(c.carteira) === cart;
-    const atual = (ra && (porRa[ra.toLowerCase()] || []).find((c) => nomesCompativeis(c.aluno, nome) && mesmaCarteira(c))) ||
-      (nome && [porNome[normNome(nome)]].find((c) => c && (!ra || !c.ra) && mesmaCarteira(c))) || null;
+    const mesma = (c) => !cart || !normNome(c.carteira) || normNome(c.carteira) === cart;
+    const atual = (l.ra && (porRa[l.ra.toLowerCase()] || []).find((c) => nomesCompativeis(c.aluno, l.aluno) && mesma(c))) ||
+      (l.aluno && (porNome[normNome(l.aluno)] || []).find((c) => (!l.ra || !c.ra) && mesma(c))) || null;
     const o = completarJurComBase(l, base);
-    delete o.enviadoJuridico; // toda a carteira jurídica já foi enviada ao jurídico
-    const vals = casoValores(atual ? o : { status: "nao_classificado", ...o, aluno: o.aluno || "Sem nome" }, atual, eu);
+    Object.keys(o).forEach((k) => { if (o[k] === "") delete o[k]; }); // célula vazia não apaga o que já está salvo
+    const vals = casoValores(atual ? o : { status: "em_aberto", ...o, aluno: o.aluno || "Sem nome" }, atual, eu);
     stmts.push(env.DB.prepare(insertSQL("jur_casos", JUR_COLS)).bind(...vals));
-    const obs = texto(l.obs, 4000);
-    if (obs) stmts.push(insertObsJur(env, vals[0], agora, obs, eu));
     if (atual) atualizados++;
     else {
       criados++;
       const novo = {}; JUR_COLS.forEach((c, i) => { novo[c] = vals[i]; });
-      indexar(novo); // a mesma pessoa repetida no arquivo não vira dois casos
+      indexar(novo); // o mesmo aluno repetido no arquivo não vira dois casos
     }
   });
   await executarEmLotes(env, stmts);
   return json({ criados, atualizados, ignorados });
-}
-
-// Gráfico de evolução: grava a leitura de hoje (casos por status e valores) e devolve o histórico.
-async function evolucaoJuridico(env) {
-  const r = (await env.DB.prepare("SELECT status, COUNT(*) AS n, SUM(COALESCE(valor_negociado,0)) AS neg, SUM(COALESCE(valor_aberto,0)) AS ab FROM jur_casos WHERE arquivado = 0 GROUP BY status").all()).results;
-  const snap = { negociado: 0, aberto: 0 };
-  JUR_STATUS.forEach((s) => { snap[s] = 0; });
-  r.forEach((x) => { snap[jurStatusValido(x.status)] += x.n; snap.negociado += x.neg || 0; snap.aberto += x.ab || 0; });
-  await env.DB.prepare("INSERT OR REPLACE INTO jur_kpi (data, dados) VALUES (?, ?)").bind(hojeISO(), JSON.stringify(snap)).run();
-  const h = (await env.DB.prepare("SELECT * FROM jur_kpi ORDER BY data").all()).results;
-  const comps = (await env.DB.prepare("SELECT * FROM jur_competencias ORDER BY mes").all()).results.map(compSaida);
-  return json({ historico: h.map((x) => { let d = {}; try { d = JSON.parse(x.dados); } catch (e) { d = {}; } return { data: x.data, ...d }; }), competencias: comps });
 }
 
 // ---------------------------------------------------------------- Painel jurídico: comparação com relatórios
@@ -1718,11 +1688,6 @@ function acharCasosJur(idx, ra, nome) {
   }
   return [];
 }
-const JUR_ST_ROTULO = { sem_negociacao: "Sem negociação", nao_classificado: "Não classificado", verificar: "Verificar manualmente", em_aberto: "Em aberto", parcial: "Parcialmente pago", em_dia: "Em dia", quitado: "Quitado" };
-function mudancaSaida(c, novo, motivo) {
-  return { id: c.id, ra: c.ra, aluno: c.aluno, carteira: c.carteira, statusAntes: c.status, statusDepois: novo.status, valorAntes: c.valor_aberto, valorDepois: novo.valor_aberto, parcelasDepois: novo.parcelas, motivo };
-}
-
 // Contas financeiras do relatório de inadimplência. Grupo "aberto": débitos que ainda não foram
 // negociados com a GM; grupo "negociado": renegociações da GM (extrajudicial ou judicial). Conta
 // fora destas listas não entra em coluna nenhuma até alguém classificar na prévia da importação
@@ -1969,15 +1934,21 @@ async function inadimplenciaJuridico(req, env, eu) {
         const mudouValor = m.ab !== c.valor_aberto || m.neg !== c.valor_negociado || m.pAb !== (c.parcelas || 0);
         const mudouParcelas = m.pNeg !== (c.parcelas_negociado || 0) || m.vencTxt !== (c.parcelas_venc || "[]");
         const novoConf = m.conferir && m.conferir !== c.conferir_motivo;
-        if (!mudouValor && !mudouParcelas && !novoConf && m.contaTxt === c.conta_financeira && c.competencia === mes) return;
+        // status sugerido pelo relatório (Verificar é escolha manual e fica como está):
+        // tem valor em aberto = Em aberto; só valor negociado = Em negociação GM
+        const stAntes = jurStatusValido(c.status);
+        const st = stAntes === "verificar" ? stAntes : m.ab > 0 ? "em_aberto" : m.neg > 0 ? "em_negociacao" : stAntes;
+        const mudouStatus = st !== stAntes;
+        if (!mudouValor && !mudouParcelas && !mudouStatus && !novoConf && m.contaTxt === c.conta_financeira && c.competencia === mes) return;
         alterados++;
-        stmts.push(env.DB.prepare("UPDATE jur_casos SET valor_aberto = ?, valor_negociado = ?, parcelas = ?, parcelas_negociado = ?, parcelas_venc = ?, conta_financeira = ?, competencia = ?, flag_conflito = CASE WHEN ? THEN 1 ELSE flag_conflito END, conferir_motivo = CASE WHEN ? THEN ? ELSE conferir_motivo END, atualizado_em = ?, atualizado_por = ? WHERE id = ?")
-          .bind(m.ab, m.neg, m.pAb, m.pNeg, m.vencTxt, m.contaTxt, mes, m.conferir ? 1 : 0, m.conferir ? 1 : 0, m.conferir, agora, eu.nome, c.id));
-        if (!mudouValor && !novoConf) return;
+        stmts.push(env.DB.prepare("UPDATE jur_casos SET status = ?, valor_aberto = ?, valor_negociado = ?, parcelas = ?, parcelas_negociado = ?, parcelas_venc = ?, conta_financeira = ?, competencia = ?, flag_conflito = CASE WHEN ? THEN 1 ELSE flag_conflito END, conferir_motivo = CASE WHEN ? THEN ? ELSE conferir_motivo END, atualizado_em = ?, atualizado_por = ? WHERE id = ?")
+          .bind(st, m.ab, m.neg, m.pAb, m.pNeg, m.vencTxt, m.contaTxt, mes, m.conferir ? 1 : 0, m.conferir ? 1 : 0, m.conferir, agora, eu.nome, c.id));
+        if (!mudouValor && !mudouStatus && !novoConf) return;
         let t = `${ref}: valor em aberto ${reais(m.ab)} (${m.pAb} parcela(s)) · valor negociado GM ${reais(m.neg)}${m.pNeg ? ` (${m.pNeg} parcela(s))` : ""}.`;
         if (m.tipo === "reclassificado") t += ` Movimentação: parte do débito passou para renegociação GM (em aberto ${reais(m.h.valor_aberto)} → ${reais(m.ab)}; negociado ${reais(m.h.valor_negociado)} → ${reais(m.neg)}).`;
         else if (m.tipo === "alterado") t += ` Em relação a ${mesBR(mesAnt)}: em aberto ${reais(m.h.valor_aberto)} → ${reais(m.ab)}; negociado ${reais(m.h.valor_negociado)} → ${reais(m.neg)}.`;
         else if (m.tipo === "novo") t += ` Não constava no relatório de ${mesBR(mesAnt)}.`;
+        if (mudouStatus) t += ` Status ${JUR_ST_ROTULO[stAntes]} → ${JUR_ST_ROTULO[st]}.`;
         if (m.conferir) t += " Conferir: " + m.conferir;
         stmts.push(insertObsJur(env, c.id, agora, t, eu));
       } else if (m.conferir && m.conferir !== c.conferir_motivo) {
@@ -1991,116 +1962,4 @@ async function inadimplenciaJuridico(req, env, eu) {
   await executarEmLotes(env, stmts);
   const inad = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'jur_inad_data'").first();
   return json({ ...saida, gravado: true, alterados, inadData: inad ? inad.valor : "" });
-}
-
-// Relatório de recebimento: cada pagamento é abatido do valor em aberto do caso e registrado
-// como tratativa. Zerou: Quitado; sobrou: Em dia se o caso tem acordo (valor negociado),
-// senão Parcialmente pago. O mesmo pagamento (caso + data + valor) nunca é abatido duas vezes.
-async function recebimentoJuridico(req, env, eu) {
-  const b = await corpo(req);
-  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 5000) : [];
-  if (!linhas.length) throw new HttpError(400, "Nenhum pagamento encontrado no relatório.");
-  const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0").all()).results;
-  const idx = indiceCasosJur(casos);
-  const jaLancados = new Set((await env.DB.prepare("SELECT chave FROM jur_pagamentos").all()).results.map((r) => r.chave));
-  const porCaso = {}, foraDoPainel = [], repetidos = [];
-  const vistos = {};
-  for (const l of linhas) {
-    const nome = texto(l.aluno || l.nome, 150), ra = texto(l.ra, 30), valor = numero(l.valor), data = dataISO(l.data);
-    if ((!nome && !ra) || !(valor > 0)) continue;
-    const achados = acharCasosJur(idx, ra, nome);
-    if (!achados.length) { foraDoPainel.push({ ra, aluno: nome, data, valor }); continue; }
-    // entre os casos do aluno, o que ainda tem valor em aberto (carteira mais recente primeiro)
-    const c = achados.find((x) => Number(x.valor_aberto) > 0) || achados[0];
-    // a mesma linha repetida no próprio arquivo conta uma vez por ocorrência
-    const base = [c.id, data, valor.toFixed(2)].join("|");
-    vistos[base] = (vistos[base] || 0) + 1;
-    const chave = base + "|" + vistos[base];
-    if (jaLancados.has(chave)) { repetidos.push({ ra: c.ra, aluno: c.aluno, data, valor }); continue; }
-    const p = porCaso[c.id] || (porCaso[c.id] = { c, pagamentos: [], total: 0 });
-    p.pagamentos.push({ data, valor, chave }); p.total += valor;
-  }
-  const mudancas = Object.values(porCaso).map(({ c, pagamentos, total }) => {
-    const antes = c.valor_aberto;
-    let valor = antes == null ? null : Math.round((Number(antes) - total) * 100) / 100;
-    if (valor != null && valor < 0) valor = 0;
-    // Com acordo (valor negociado), pagar parcela deixa o caso Em dia: o acordo ainda pode ter
-    // parcelas a vencer, então não vira Quitado sozinho. Sem acordo: zerou é Quitado, sobrou é
-    // Parcialmente pago. Caso já Quitado continua Quitado.
-    let status;
-    if (c.status === "quitado") status = "quitado";
-    else if (Number(c.valor_negociado) > 0) status = "em_dia";
-    else status = valor === 0 ? "quitado" : "parcial";
-    const m = mudancaSaida(c, { status, valor_aberto: valor, parcelas: c.parcelas }, "pagamento");
-    m.pagamentos = pagamentos; m.totalPago = Math.round(total * 100) / 100;
-    return m;
-  });
-  if (!b.simular && mudancas.length) {
-    const agora = agoraISO(), stmts = [];
-    mudancas.forEach((m) => {
-      // como o caso estava antes do primeiro recebimento (para "Desfazer recebimentos")
-      stmts.push(env.DB.prepare("INSERT OR IGNORE INTO jur_receb_antes (caso_id, status, valor_aberto, criado_em) VALUES (?,?,?,?)").bind(m.id, m.statusAntes, m.valorAntes ?? null, agora));
-      stmts.push(env.DB.prepare("UPDATE jur_casos SET status = ?, valor_aberto = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?")
-        .bind(m.statusDepois, m.valorDepois, agora, eu.nome, m.id));
-      m.pagamentos.forEach((pg) => {
-        stmts.push(env.DB.prepare("INSERT OR IGNORE INTO jur_pagamentos (chave, caso_id, data, valor, criado_em, criado_por) VALUES (?,?,?,?,?,?)").bind(pg.chave, m.id, pg.data, pg.valor, agora, eu.nome));
-        stmts.push(insertObsJur(env, m.id, agora, `Pagamento recebido${pg.data ? " em " + pg.data.split("-").reverse().join("/") : ""}: R$ ${pg.valor.toFixed(2).replace(".", ",")} (relatório de recebimento).`, eu));
-      });
-      if (m.statusAntes !== m.statusDepois) stmts.push(insertObsJur(env, m.id, agora, `Status ${JUR_ST_ROTULO[m.statusAntes] || m.statusAntes} → ${JUR_ST_ROTULO[m.statusDepois]} pelo relatório de recebimento` + (m.valorDepois != null ? ` (valor em aberto R$ ${numero(m.valorDepois).toFixed(2).replace(".", ",")}).` : "."), eu));
-    });
-    await executarEmLotes(env, stmts);
-  }
-  return json({ mudancas, foraDoPainel, repetidos, gravado: !b.simular });
-}
-
-// Desfaz tudo o que veio do relatório de recebimento: apaga os pagamentos lançados e as
-// tratativas que eles criaram, e volta status e valor em aberto de cada caso para como estavam
-// antes do primeiro recebimento. Recebimentos aplicados antes desta função existir não têm a
-// "foto" do antes: o status volta pela tratativa "Status X → Y" e o valor soma de volta o que foi
-// abatido (se tinha zerado, usa o valor do último relatório de inadimplência).
-async function desfazerRecebimentos(req, env, eu) {
-  const b = await corpo(req);
-  const pagos = (await env.DB.prepare("SELECT caso_id, SUM(valor) AS total, COUNT(*) AS n FROM jur_pagamentos GROUP BY caso_id").all()).results;
-  const antes = {};
-  (await env.DB.prepare("SELECT * FROM jur_receb_antes").all()).results.forEach((r) => { antes[r.caso_id] = r; });
-  const rotuloParaChave = {};
-  Object.keys(JUR_ST_ROTULO).forEach((k) => { rotuloParaChave[JUR_ST_ROTULO[k]] = k; });
-  // poucas consultas no total (o Workers limita quantas cabem numa chamada): tudo de uma vez
-  const casosPorId = {};
-  (await env.DB.prepare("SELECT * FROM jur_casos").all()).results.forEach((c) => { casosPorId[c.id] = c; });
-  const primeiroStatus = {}, ultimaInad = {};
-  (await env.DB.prepare("SELECT caso_id, texto FROM jur_obs WHERE instr(texto, 'Status ') = 1 AND instr(texto, ' pelo relatório de recebimento') > 0 ORDER BY data ASC").all()).results
-    .forEach((o) => { if (!primeiroStatus[o.caso_id]) primeiroStatus[o.caso_id] = o.texto; });
-  (await env.DB.prepare("SELECT caso_id, texto FROM jur_obs WHERE instr(texto, 'Relatório de inadimplência de ') = 1 AND instr(texto, 'valor em aberto R$ ') > 0 ORDER BY data DESC").all()).results
-    .forEach((o) => { if (!ultimaInad[o.caso_id]) ultimaInad[o.caso_id] = o.texto; });
-  const mudancas = [];
-  for (const p of pagos) {
-    const c = casosPorId[p.caso_id];
-    if (!c) continue;
-    let status = c.status, valor = c.valor_aberto;
-    const a = antes[c.id];
-    if (a) { status = a.status; valor = a.valor_aberto; }
-    else {
-      const m = primeiroStatus[c.id] && /^Status (.+?) → /.exec(primeiroStatus[c.id]);
-      if (m && rotuloParaChave[m[1]]) status = rotuloParaChave[m[1]];
-      if (valor != null) {
-        valor = Math.round((Number(valor) + Number(p.total)) * 100) / 100;
-        if (Number(c.valor_aberto) === 0) {
-          const mv = ultimaInad[c.id] && /valor em aberto R\$ ([\d.]+,\d{2})/.exec(ultimaInad[c.id]);
-          if (mv) valor = Math.min(valor, Number(mv[1].replace(/\./g, "").replace(",", ".")));
-        }
-      }
-    }
-    mudancas.push({ id: c.id, ra: c.ra, aluno: c.aluno, carteira: c.carteira, statusAntes: c.status, statusDepois: status, valorAntes: c.valor_aberto, valorDepois: valor, pagamentos: p.n, totalPago: Math.round(p.total * 100) / 100 });
-  }
-  const obs = await env.DB.prepare("SELECT COUNT(*) AS n FROM jur_obs WHERE (instr(texto, 'Pagamento recebido') = 1 AND instr(texto, '(relatório de recebimento).') > 0) OR (instr(texto, 'Status ') = 1 AND instr(texto, ' pelo relatório de recebimento') > 0)").first();
-  if (!b.simular) {
-    const agora = agoraISO(), stmts = mudancas.map((m) => env.DB.prepare("UPDATE jur_casos SET status = ?, valor_aberto = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(m.statusDepois, m.valorDepois, agora, eu.nome, m.id));
-    stmts.push(env.DB.prepare("DELETE FROM jur_obs WHERE (instr(texto, 'Pagamento recebido') = 1 AND instr(texto, '(relatório de recebimento).') > 0) OR (instr(texto, 'Status ') = 1 AND instr(texto, ' pelo relatório de recebimento') > 0)"));
-    stmts.push(env.DB.prepare("DELETE FROM jur_pagamentos"));
-    stmts.push(env.DB.prepare("DELETE FROM jur_receb_antes"));
-    await executarEmLotes(env, stmts);
-  }
-  const np = pagos.reduce((t, p) => t + p.n, 0);
-  return json({ mudancas, pagamentos: np, tratativas: obs ? obs.n : 0, gravado: !b.simular });
 }
