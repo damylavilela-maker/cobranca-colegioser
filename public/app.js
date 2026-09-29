@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "28/09 · v30";
+  var VERSAO = "29/09 · v31";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2435,8 +2435,8 @@
         esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + (turma ? " · " + esc(turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" +
         (c.parcelas ? '<div class="meta">' + c.parcelas + (c.parcelas === 1 ? " parcela" : " parcelas") + "</div>" : "") + "</td>" +
+        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + moneyOu(c.valorNegociado) + "</span></td>" +
         "<td>" + jpill(c.status) + "</td>" +
-        '<td class="tabular">' + moneyOu(c.valorNegociado) + "</td>" +
         "<td>" + esc(c.carteira || "—") + (c.ano ? '<div class="meta">ano letivo ' + esc(c.ano) + "</div>" : "") + "</td>" +
         '<td><span class="yn ' + (c.enviadoJuridico ? "sim" : "nao") + '">' + (c.enviadoJuridico ? "Sim" : "Não") + "</span></td>" +
         '<td class="muted obs-cell">' + esc(ob ? (ob.length > 60 ? ob.slice(0, 60).trim() + "…" : ob) : "—") + "</td>" +
