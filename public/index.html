@@ -83,6 +83,7 @@
       <button type="button" data-view="serasa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>Serasa</button>
       <button type="button" data-view="base"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>Base de dados</button>
       <button type="button" data-view="juridico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M7 21h10M5 7h14"/><path d="M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg>Painel jurídico</button>
+      <button type="button" data-view="cheques"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 14h5M6 10.5h3M14.5 14.5c1.5-2 3-3 4-2"/></svg>Cheques</button>
       <div class="nav-lbl" data-admin>Administração</div>
       <button type="button" data-view="usuarios" data-admin><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.7 3 2.4 3.5 5.2"/></svg>Usuários e acessos</button>
     </nav>
@@ -328,6 +329,36 @@
       </div>
     </div>
 
+    <!-- CHEQUES -->
+    <div id="v-cheques" class="view" hidden>
+      <div class="page-head">
+        <div><h1>Cheques</h1><div class="sub">Cheques devolvidos e cheques recebidos — Colégio Ser</div></div>
+        <div class="actions">
+          <span class="sync" title="Os dados são atualizados automaticamente a cada 30 segundos"><i></i><span class="sync-lbl">—</span></span>
+          <button type="button" class="btn ghost small" id="btnChqImportar" title="Planilha CHEQUES_SER (abas SER_DEVOLVIDOS e SER_RECEBIDOS)">Importar planilha</button>
+          <button type="button" class="btn primary small" id="btnChqNovo">+ Novo cheque</button>
+        </div>
+      </div>
+      <div class="subtabs" role="tablist">
+        <button type="button" class="active" data-ctab="devolvido">Cheques devolvidos</button>
+        <button type="button" data-ctab="recebido">Cheques recebidos</button>
+      </div>
+      <div class="kpis k4" id="chqKpis"></div>
+      <div class="filters">
+        <input type="search" id="cBusca" placeholder="Buscar aluno, RA, responsável, emitente, CPF ou nº do cheque" aria-label="Buscar">
+        <select id="cSituacao" aria-label="Situação"></select>
+        <select id="cAno" aria-label="Ano de vencimento"></select>
+      </div>
+      <div class="count" id="chqCount"></div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead id="chqHead"></thead>
+          <tbody id="chqTbody"></tbody>
+        </table>
+        <div class="empty muted" id="chqVazio" hidden>Nenhum cheque.</div>
+      </div>
+      <div class="row-end" style="justify-content:center;margin-top:12px"><button type="button" class="btn ghost small" id="chqMais" hidden>Mostrar mais</button></div>
+    </div>
     <!-- USUÁRIOS -->
     <div id="v-usuarios" class="view" hidden>
       <div class="page-head">
@@ -575,6 +606,57 @@
   </div>
 </div>
 
+<div class="overlay" id="mCheque" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="chTitulo">
+    <div class="m-head"><div><h2 id="chTitulo">Novo cheque</h2><div class="sub" id="chSub"></div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <form class="m-body" id="formCheque" novalidate>
+      <div class="field"><label for="chTipo">Tipo</label><select id="chTipo" style="max-width:260px"><option value="devolvido">Cheque devolvido</option><option value="recebido">Cheque recebido</option></select></div>
+      <div class="grid3">
+        <div class="field"><label for="chRa">RA</label><input id="chRa"></div>
+        <div class="field"><label for="chAluno">Aluno</label><input id="chAluno"></div>
+        <div class="field"><label for="chResp">Responsável financeiro</label><input id="chResp"></div>
+        <div class="field"><label for="chEmitente">Emitente</label><input id="chEmitente"></div>
+        <div class="field"><label for="chCpf">CPF/CNPJ do emitente</label><input id="chCpf"></div>
+        <div class="field"><label for="chValor">Valor (R$) *</label><input id="chValor" type="number" step="0.01" min="0"></div>
+        <div class="field"><label for="chBanco">Banco</label><input id="chBanco"></div>
+        <div class="field"><label for="chAgencia">Agência</label><input id="chAgencia"></div>
+        <div class="field"><label for="chConta">Conta</label><input id="chConta"></div>
+        <div class="field"><label for="chNumero">Nº do cheque</label><input id="chNumero"></div>
+        <div class="field"><label for="chVenc">Vencimento</label><input id="chVenc" type="date"></div>
+        <div class="field" data-chq="recebido"><label for="chRecebido">Data de recebimento</label><input id="chRecebido" type="date"></div>
+      </div>
+      <div class="grid3" data-chq="devolvido">
+        <div class="field"><label for="chMotivo">Motivo</label><input id="chMotivo" list="chMotivos" placeholder="Ex: DEVOLVIDO, 12"><datalist id="chMotivos"></datalist></div>
+        <div class="field"><label for="chPagamento">Pagamento</label><input id="chPagamento" list="chPagamentos" placeholder="Ex: PAGO, NEGOCIADO"><datalist id="chPagamentos"></datalist></div>
+        <div class="field"><label for="chMentor">Geração no Mentor</label><input id="chMentor" placeholder="Ex: OK"></div>
+      </div>
+      <div class="grid2" data-chq="recebido">
+        <div class="field"><label for="chMotDev">Motivo da devolução</label><input id="chMotDev"></div>
+        <div class="field"><label for="chDataDev">Data da devolução</label><input id="chDataDev" type="date"></div>
+        <div class="field"><label for="chDataForm">Data do formulário</label><input id="chDataForm" type="date"></div>
+        <div class="field"><label for="chIdent">Identificação</label><input id="chIdent"></div>
+      </div>
+      <div class="field"><label for="chObs">Observações</label><textarea id="chObs" rows="2"></textarea></div>
+      <div class="meta" id="chInfo"></div>
+      <div class="form-err" id="chErr" hidden></div>
+      <div class="m-foot spread">
+        <button type="button" class="btn danger small" id="chExcluir" hidden>Excluir cheque</button>
+        <span class="row-end"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary">Salvar cheque</button></span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="mChqImp" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="ciTitulo">
+    <div class="m-head"><div><h2 id="ciTitulo">Importar planilha de cheques</h2><div class="sub">Baixe a planilha CHEQUES_SER em Excel (.xlsx) ou CSV. As abas com “DEVOLVIDO” no nome vão para Cheques devolvidos e as com “RECEBIDO” para Cheques recebidos. O mesmo cheque nunca entra duas vezes: se já estiver cadastrado, é atualizado.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div class="dropzone" id="chqDrop">Arraste o arquivo .xlsx, .xls ou .csv aqui, ou clique para escolher<input type="file" id="chqFile" accept=".xlsx,.xls,.csv,.txt" hidden></div>
+      <div id="chqImpRes"></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" id="chqImpOk" disabled>Importar</button></div>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="mJurImp" hidden>
   <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="jiTitulo">
     <div class="m-head"><div><h2 id="jiTitulo">Importar</h2><div class="sub" id="jiSub"></div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>

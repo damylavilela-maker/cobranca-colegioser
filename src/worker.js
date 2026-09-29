@@ -173,6 +173,18 @@ const SCHEMA = [
   // parcelas do acordo GM de cada caso (vindas da planilha da carteira)
   `CREATE TABLE IF NOT EXISTS jur_acordo_parcelas (id TEXT PRIMARY KEY, caso_id TEXT NOT NULL, acordo TEXT NOT NULL DEFAULT '', parcela TEXT NOT NULL DEFAULT '', vencimento TEXT NOT NULL DEFAULT '', valor REAL, pago REAL, data_pagamento TEXT NOT NULL DEFAULT '', saldo REAL, situacao TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_jur_acordo_caso ON jur_acordo_parcelas(caso_id)`,
+  // aba Cheques: cheques devolvidos e cheques recebidos (tipo), como nas abas da planilha CHEQUES_SER
+  `CREATE TABLE IF NOT EXISTS cheques (
+    id TEXT PRIMARY KEY, tipo TEXT NOT NULL, chave TEXT NOT NULL DEFAULT '',
+    ra TEXT NOT NULL DEFAULT '', aluno TEXT NOT NULL DEFAULT '', responsavel TEXT NOT NULL DEFAULT '',
+    emitente TEXT NOT NULL DEFAULT '', cpf_emitente TEXT NOT NULL DEFAULT '',
+    banco TEXT NOT NULL DEFAULT '', agencia TEXT NOT NULL DEFAULT '', conta TEXT NOT NULL DEFAULT '', numero TEXT NOT NULL DEFAULT '',
+    valor REAL, vencimento TEXT NOT NULL DEFAULT '', data_recebimento TEXT NOT NULL DEFAULT '',
+    motivo TEXT NOT NULL DEFAULT '', pagamento TEXT NOT NULL DEFAULT '', geracao_mentor TEXT NOT NULL DEFAULT '', observacao TEXT NOT NULL DEFAULT '',
+    motivo_devolucao TEXT NOT NULL DEFAULT '', data_devolucao TEXT NOT NULL DEFAULT '', data_formulario TEXT NOT NULL DEFAULT '', identificacao TEXT NOT NULL DEFAULT '',
+    criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '', atualizado_em TEXT NOT NULL, atualizado_por TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_cheques_chave ON cheques(tipo, chave)`,
   // carteiras anuais do jurídico (nome e ano letivo do débito)
   `CREATE TABLE IF NOT EXISTS jur_carteiras (id TEXT PRIMARY KEY, nome TEXT NOT NULL UNIQUE, ano TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`
 ];
@@ -398,6 +410,14 @@ async function rotear(req, env, url) {
     if (partes.length === 4 && partes[2] === "obs" && m === "PATCH") return editarObsJur(req, env, eu, partes[1], partes[3]);
     if (partes.length === 4 && partes[2] === "obs" && m === "DELETE") return excluirObsJur(env, eu, partes[1], partes[3]);
   }
+  if (partes[0] === "cheques") {
+    if (partes.length === 1 && m === "GET") return listarCheques(env);
+    if (partes.length === 1 && m === "POST") return salvarCheque(req, env, eu, null);
+    if (partes[1] === "importar" && m === "POST") return importarCheques(req, env, eu);
+    if (partes.length === 2 && m === "PATCH") return salvarCheque(req, env, eu, partes[1]);
+    if (partes.length === 2 && m === "DELETE") return excluirCheque(env, partes[1]);
+  }
+
   if (partes[0] === "atendimentos") {
     if (partes.length === 1 && m === "GET") return listarAtendimentos(env, url);
     if (partes.length === 1 && m === "POST") return criarAtendimento(req, env, eu);
@@ -2071,4 +2091,97 @@ async function inadimplenciaJuridico(req, env, eu) {
   await executarEmLotes(env, stmts);
   const inad = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'jur_inad_data'").first();
   return json({ ...saida, gravado: true, alterados, inadData: inad ? inad.valor : "" });
+}
+
+// ---------------------------------------------------------------- Cheques
+// Cheques devolvidos e cheques recebidos (as duas abas da planilha CHEQUES_SER). O mesmo cheque
+// (tipo + banco + agência + conta + número + vencimento + valor) nunca entra duas vezes.
+
+const CHQ_TIPOS = ["devolvido", "recebido"];
+const CHQ_CAMPOS = {
+  ra: ["ra", 30], aluno: ["aluno", 150], responsavel: ["responsavel", 150], emitente: ["emitente", 150], cpfEmitente: ["cpf_emitente", 25],
+  banco: ["banco", 20], agencia: ["agencia", 20], conta: ["conta", 30], numero: ["numero", 30],
+  motivo: ["motivo", 120], pagamento: ["pagamento", 60], geracaoMentor: ["geracao_mentor", 60], observacao: ["observacao", 1000],
+  motivoDevolucao: ["motivo_devolucao", 120], identificacao: ["identificacao", 200]
+};
+const CHQ_DATAS = { vencimento: "vencimento", dataRecebimento: "data_recebimento", dataDevolucao: "data_devolucao", dataFormulario: "data_formulario" };
+const CHQ_COLS = ["id", "tipo", "chave", "ra", "aluno", "responsavel", "emitente", "cpf_emitente", "banco", "agencia", "conta", "numero", "valor", "vencimento", "data_recebimento", "motivo", "pagamento", "geracao_mentor", "observacao", "motivo_devolucao", "data_devolucao", "data_formulario", "identificacao", "criado_em", "criado_por", "atualizado_em", "atualizado_por"];
+
+function chequeSaida(r) {
+  return {
+    id: r.id, tipo: r.tipo, ra: r.ra, aluno: r.aluno, responsavel: r.responsavel, emitente: r.emitente, cpfEmitente: r.cpf_emitente,
+    banco: r.banco, agencia: r.agencia, conta: r.conta, numero: r.numero, valor: r.valor, vencimento: r.vencimento, dataRecebimento: r.data_recebimento,
+    motivo: r.motivo, pagamento: r.pagamento, geracaoMentor: r.geracao_mentor, observacao: r.observacao,
+    motivoDevolucao: r.motivo_devolucao, dataDevolucao: r.data_devolucao, dataFormulario: r.data_formulario, identificacao: r.identificacao,
+    criadoEm: r.criado_em, criadoPor: r.criado_por, atualizadoEm: r.atualizado_em, atualizadoPor: r.atualizado_por
+  };
+}
+// só os números de banco/agência/conta/cheque contam (000419 = 419; 22734-2 = 227342)
+function chaveCheque(tipo, o) {
+  const dig = (v) => String(v || "").replace(/\D/g, "").replace(/^0+/, "");
+  return [tipo, dig(o.banco), dig(o.agencia), dig(o.conta), dig(o.numero), o.vencimento || "", o.valor == null ? "" : numero(o.valor).toFixed(2)].join("|");
+}
+// junta o que veio (tela ou planilha) com o registro salvo: campo que não veio fica como está
+function chequeValores(o, atual, eu) {
+  const a = atual || {}, agora = agoraISO();
+  const tem = (k) => Object.prototype.hasOwnProperty.call(o, k);
+  const v = { id: a.id || novoId(), tipo: CHQ_TIPOS.includes(o.tipo) ? o.tipo : (a.tipo || "devolvido") };
+  Object.keys(CHQ_CAMPOS).forEach((k) => { const [col, max] = CHQ_CAMPOS[k]; v[col] = tem(k) ? texto(o[k], max) : a[col] || ""; });
+  Object.keys(CHQ_DATAS).forEach((k) => { const col = CHQ_DATAS[k]; v[col] = tem(k) ? dataISO(o[k]) : a[col] || ""; });
+  v.valor = tem("valor") ? valorOuNull(o.valor) : (a.valor ?? null);
+  v.chave = chaveCheque(v.tipo, { banco: v.banco, agencia: v.agencia, conta: v.conta, numero: v.numero, vencimento: v.vencimento, valor: v.valor });
+  v.criado_em = a.criado_em || agora; v.criado_por = a.criado_por || (eu ? eu.nome : "");
+  v.atualizado_em = agora; v.atualizado_por = eu ? eu.nome : "";
+  return CHQ_COLS.map((c) => v[c]);
+}
+async function listarCheques(env) {
+  const r = (await env.DB.prepare("SELECT * FROM cheques ORDER BY vencimento DESC, aluno").all()).results;
+  return json({ cheques: r.map(chequeSaida) });
+}
+async function salvarCheque(req, env, eu, id) {
+  const b = await corpo(req);
+  const atual = id ? await env.DB.prepare("SELECT * FROM cheques WHERE id = ?").bind(id).first() : null;
+  if (id && !atual) throw new HttpError(404, "Cheque não encontrado.");
+  if (!id && !CHQ_TIPOS.includes(b.tipo)) throw new HttpError(400, "Tipo do cheque inválido.");
+  const vals = chequeValores(b, atual, eu);
+  const r = {}; CHQ_COLS.forEach((c, i) => { r[c] = vals[i]; });
+  if (!r.aluno && !r.emitente) throw new HttpError(400, "Informe o aluno ou o emitente do cheque.");
+  if (!(Number(r.valor) > 0)) throw new HttpError(400, "Informe o valor do cheque.");
+  const igual = await env.DB.prepare("SELECT id FROM cheques WHERE tipo = ? AND chave = ? AND id <> ?").bind(r.tipo, r.chave, r.id).first();
+  if (igual && r.numero) throw new HttpError(400, "Esse cheque já está cadastrado (mesmo banco, agência, conta, número, vencimento e valor).");
+  await env.DB.prepare(insertSQL("cheques", CHQ_COLS)).bind(...vals).run();
+  return json({ cheque: chequeSaida(r) });
+}
+async function excluirCheque(env, id) {
+  const r = await env.DB.prepare("SELECT id FROM cheques WHERE id = ?").bind(id).first();
+  if (!r) throw new HttpError(404, "Cheque não encontrado.");
+  await env.DB.prepare("DELETE FROM cheques WHERE id = ?").bind(id).run();
+  return json({ ok: true });
+}
+// Importação da planilha: cheque novo é criado; o que já existe (mesma chave) é atualizado com
+// as células preenchidas (vazia não apaga o que está salvo).
+async function importarCheques(req, env, eu) {
+  const b = await corpo(req);
+  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 3000) : [];
+  const existentes = {};
+  (await env.DB.prepare("SELECT * FROM cheques").all()).results.forEach((c) => { existentes[c.tipo + "#" + c.chave] = c; });
+  const stmts = [];
+  let criados = 0, atualizados = 0, ignorados = 0;
+  linhas.forEach((l0) => {
+    if (!l0 || !CHQ_TIPOS.includes(l0.tipo)) { ignorados++; return; }
+    const o = { tipo: l0.tipo };
+    Object.keys(CHQ_CAMPOS).concat(Object.keys(CHQ_DATAS), ["valor"]).forEach((k) => { if (l0[k] !== undefined && l0[k] !== null && String(l0[k]).trim() !== "") o[k] = l0[k]; });
+    if (!o.aluno && !o.emitente) { ignorados++; return; }
+    const chave = chaveCheque(o.tipo, { banco: texto(o.banco, 20), agencia: texto(o.agencia, 20), conta: texto(o.conta, 30), numero: texto(o.numero, 30), vencimento: dataISO(o.vencimento), valor: valorOuNull(o.valor) });
+    const atual = existentes[o.tipo + "#" + chave] || null;
+    // o mesmo cheque repetido na planilha com outra observação: junta as observações
+    if (atual && o.observacao && atual.observacao && !atual.observacao.includes(texto(o.observacao, 1000))) o.observacao = atual.observacao + " | " + o.observacao;
+    const vals = chequeValores(o, atual, eu);
+    stmts.push(env.DB.prepare(insertSQL("cheques", CHQ_COLS)).bind(...vals));
+    const r = {}; CHQ_COLS.forEach((c, i) => { r[c] = vals[i]; });
+    existentes[o.tipo + "#" + chave] = r;
+    if (atual) atualizados++; else criados++;
+  });
+  await executarEmLotes(env, stmts);
+  return json({ criados, atualizados, ignorados });
 }

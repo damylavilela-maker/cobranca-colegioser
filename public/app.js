@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v50";
+  var VERSAO = "30/09 · v51";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -190,6 +190,7 @@
   var ultimaCarga = 0;
   function carregar() {
     if (view === "juridico" && jurCarregado) carregarJuridico();
+    if (view === "cheques" && chqCarregado) carregarCheques();
     return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa"), api("GET", "/api/serasa/periodos")])
       .then(function (r) {
         alunos = {}; r[0].alunos.forEach(function (a) { alunos[a.id] = a; });
@@ -217,7 +218,7 @@
       if (document.hidden || !eu) return;
       // as janelas abertas não são redesenhadas (quem está preenchendo não perde nada); só a
       // importação em andamento espera
-      if (!$("mImportar").hidden || !$("mJurImp").hidden) return;
+      if (!$("mImportar").hidden || !$("mJurImp").hidden || !$("mChqImp").hidden) return;
       carregar();
     }, 30000);
   }
@@ -230,6 +231,7 @@
     if (view === "serasa") renderSerasa();
     if (view === "base") renderBase();
     if (view === "juridico") renderJuridico();
+    if (view === "cheques" && chqCarregado) renderCheques();
     if (view === "usuarios") renderUsuarios();
     atualizarBadge();
   }
@@ -263,6 +265,7 @@
     document.querySelectorAll("#nav button").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-view") === v); });
     if (v === "usuarios") carregarUsuarios();
     if (v === "juridico" && !jurCarregado) carregarJuridico();
+    if (v === "cheques" && !chqCarregado) carregarCheques();
     if (v === "juridico" && !baseCarregada) carregarBaseDados().then(function () { if (view === "juridico") renderJuridico(); }); // turma dos alunos vem da base
     // ao trocar de aba, busca o que foi registrado por todos desde a última atualização
     if (eu && Date.now() - ultimaCarga > 5000) carregar();
@@ -3272,6 +3275,266 @@
       $("jCompVazio").hidden = comps.length > 0;
     }).catch(function (x) { toast(x.message); });
   }
+
+  // ---------------------------------------------------------------- Cheques
+  // Duas listas, como as abas da planilha CHEQUES_SER: cheques devolvidos e cheques recebidos.
+  // Os registros antigos vêm da planilha (importar); os novos são cadastrados aqui.
+  var cheques = [], chqCarregado = false, chqTab = "devolvido", chqLimite = 300, chqEdit = null, chqPendentes = [];
+  function carregarCheques() {
+    return api("GET", "/api/cheques").then(function (d) {
+      cheques = d.cheques; chqCarregado = true; marcarSync(true);
+      if (view === "cheques") renderCheques();
+    }).catch(function (x) { marcarSync(false); if (x.status !== 401 && x.status !== 403) toast(x.message); });
+  }
+  function trocarCheque(c) { var i = cheques.findIndex(function (x) { return x.id === c.id; }); if (i === -1) cheques.push(c); else cheques[i] = c; }
+  document.querySelectorAll("[data-ctab]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      chqTab = b.getAttribute("data-ctab"); chqLimite = 300;
+      document.querySelectorAll("[data-ctab]").forEach(function (x) { x.classList.toggle("active", x === b); });
+      $("cSituacao").value = ""; renderCheques();
+    });
+  });
+  // situação do cheque para o filtro: devolvidos pela coluna Pagamento; recebidos pela devolução
+  function situacaoChq(c) {
+    if (c.tipo === "devolvido") return (c.pagamento || "").trim().toUpperCase() || "SEM PAGAMENTO";
+    return c.motivoDevolucao || c.dataDevolucao ? "DEVOLVIDO" : "SEM DEVOLUÇÃO";
+  }
+  function pagoChq(c) { return /^(pago|quitad)/i.test((c.pagamento || "").trim()); }
+  function renderCheques() {
+    var doTipo = cheques.filter(function (c) { return c.tipo === chqTab; });
+    // filtros: situação e ano de vencimento
+    var sits = {}, anos = {};
+    doTipo.forEach(function (c) { sits[situacaoChq(c)] = (sits[situacaoChq(c)] || 0) + 1; if (c.vencimento) anos[c.vencimento.slice(0, 4)] = 1; });
+    prepararSelect($("cSituacao"), [{ v: "", l: chqTab === "devolvido" ? "Pagamento: todos" : "Devolução: todos" }].concat(Object.keys(sits).sort().map(function (s) { return { v: esc(s), l: esc(s) + " (" + sits[s] + ")" }; })), "");
+    prepararSelect($("cAno"), [{ v: "", l: "Vencimento: todos os anos" }].concat(Object.keys(anos).sort().reverse().map(function (a) { return { v: a, l: a }; })), "");
+    var q = $("cBusca").value.trim().toLowerCase(), si = $("cSituacao").value, an = $("cAno").value;
+    var vis = doTipo.filter(function (c) {
+      if (si && situacaoChq(c) !== si) return false;
+      if (an && (c.vencimento || "").slice(0, 4) !== an) return false;
+      if (q && [c.aluno, c.ra, c.responsavel, c.emitente, c.cpfEmitente, c.numero].join(" ").toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    }).sort(function (a, b) { return (b.vencimento || "").localeCompare(a.vencimento || "") || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
+    // indicadores
+    var tot = 0, hj = hoje(); vis.forEach(function (c) { tot += Number(c.valor) || 0; });
+    var tiles;
+    if (chqTab === "devolvido") {
+      var pend = vis.filter(function (c) { return !pagoChq(c); }), vPend = pend.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0);
+      tiles = [{ n: vis.length, l: "Cheques devolvidos" }, { n: money(tot), l: "Valor total", c: "danger" }, { n: pend.length, l: "Ainda não pagos", c: "warn" }, { n: money(vPend), l: "Valor não pago", c: "warn" }];
+    } else {
+      var aVencer = vis.filter(function (c) { return c.vencimento && c.vencimento >= hj; }), dev = vis.filter(function (c) { return situacaoChq(c) === "DEVOLVIDO"; });
+      tiles = [{ n: vis.length, l: "Cheques recebidos" }, { n: money(tot), l: "Valor total", c: "info" },
+        { n: aVencer.length + " · " + money(aVencer.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0)), l: "A vencer" }, { n: dev.length, l: "Com devolução", c: "warn" }];
+    }
+    $("chqKpis").innerHTML = tiles.map(function (t) { return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ">" + t.n + '</div><div class="lbl">' + t.l + "</div></div>"; }).join("");
+    $("chqCount").textContent = vis.length + " de " + doTipo.length + " cheques · " + money(tot);
+    $("chqVazio").hidden = vis.length > 0;
+    $("chqVazio").textContent = doTipo.length ? "Nenhum cheque com estes filtros." : "Nenhum cheque cadastrado. Use “Importar planilha” ou “+ Novo cheque”.";
+    $("chqHead").innerHTML = chqTab === "devolvido"
+      ? "<tr><th>Aluno</th><th>Emitente</th><th>Banco · Agência · Conta · Nº</th><th class=\"right\">Valor</th><th>Vencimento</th><th>Motivo</th><th>Pagamento</th><th>Mentor</th><th>Observações</th></tr>"
+      : "<tr><th>Aluno</th><th>Recebido em</th><th>Emitente</th><th>Banco · Agência · Conta · Nº</th><th class=\"right\">Valor</th><th>Vencimento</th><th>Obs</th><th>Devolução</th><th>Formulário · Identificação</th></tr>";
+    function obsCurta(t) { return esc(t ? (t.length > 60 ? t.slice(0, 60).trim() + "…" : t) : "—"); }
+    $("chqTbody").innerHTML = vis.slice(0, chqLimite).map(function (c) {
+      var aluno = '<td><div class="nome">' + esc(c.aluno || "—") + '</div><div class="meta">' + esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + "</div></td>";
+      var emit = "<td>" + esc(c.emitente || "—") + (c.cpfEmitente ? '<div class="meta">' + esc(c.cpfEmitente) + "</div>" : "") + "</td>";
+      var banco = '<td class="tabular">' + esc([c.banco, c.agencia, c.conta].filter(Boolean).join(" · ") || "—") + (c.numero ? '<div class="meta">nº ' + esc(c.numero) + "</div>" : "") + "</td>";
+      var valor = '<td class="tabular right"><b>' + moneyOu(c.valor) + "</b></td>", venc = '<td class="tabular">' + (c.vencimento ? br(c.vencimento) : "—") + "</td>";
+      if (c.tipo === "devolvido") {
+        var pg = (c.pagamento || "").trim(), cor = pagoChq(c) ? "success" : /negoci/i.test(pg) ? "info" : "warn";
+        return '<tr class="click" data-chq="' + esc(c.id) + '">' + aluno + emit + banco + valor + venc + "<td>" + esc(c.motivo || "—") + "</td>" +
+          "<td>" + (pg ? '<span class="pill" style="color:var(--' + cor + ");background:var(--" + cor + '-soft)"><i></i>' + esc(pg) + "</span>" : '<span class="muted">—</span>') + "</td>" +
+          "<td>" + esc(c.geracaoMentor || "—") + '</td><td class="muted obs-cell">' + obsCurta(c.observacao) + "</td></tr>";
+      }
+      return '<tr class="click" data-chq="' + esc(c.id) + '">' + aluno + '<td class="tabular">' + (c.dataRecebimento ? br(c.dataRecebimento) : "—") + "</td>" + emit + banco + valor + venc +
+        '<td class="muted obs-cell">' + obsCurta(c.observacao) + "</td><td>" + (c.motivoDevolucao || c.dataDevolucao ? esc(c.motivoDevolucao || "devolvido") + (c.dataDevolucao ? '<div class="meta">' + br(c.dataDevolucao) + "</div>" : "") : '<span class="muted">—</span>') + "</td>" +
+        "<td>" + (c.dataFormulario ? br(c.dataFormulario) : "—") + (c.identificacao ? '<div class="meta">' + esc(c.identificacao) + "</div>" : "") + "</td></tr>";
+    }).join("");
+    $("chqMais").hidden = vis.length <= chqLimite;
+  }
+  ["cBusca", "cSituacao", "cAno"].forEach(function (id) { $(id).addEventListener("input", function () { chqLimite = 300; renderCheques(); }); });
+  $("chqMais").addEventListener("click", function () { chqLimite += 300; renderCheques(); });
+  $("chqTbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-chq]"); if (tr) abrirCheque(tr.getAttribute("data-chq")); });
+
+  // cadastro e edição (janela)
+  var CHQ_FORM = [["chRa", "ra"], ["chAluno", "aluno"], ["chResp", "responsavel"], ["chEmitente", "emitente"], ["chCpf", "cpfEmitente"], ["chBanco", "banco"], ["chAgencia", "agencia"],
+    ["chConta", "conta"], ["chNumero", "numero"], ["chVenc", "vencimento"], ["chRecebido", "dataRecebimento"], ["chMotivo", "motivo"], ["chPagamento", "pagamento"], ["chMentor", "geracaoMentor"],
+    ["chMotDev", "motivoDevolucao"], ["chDataDev", "dataDevolucao"], ["chDataForm", "dataFormulario"], ["chIdent", "identificacao"], ["chObs", "observacao"]];
+  function camposPorTipo() { var t = $("chTipo").value; document.querySelectorAll("#formCheque [data-chq]").forEach(function (el) { el.hidden = el.getAttribute("data-chq") !== t; }); }
+  $("chTipo").addEventListener("change", camposPorTipo);
+  function abrirCheque(id) {
+    var c = null; cheques.forEach(function (x) { if (x.id === id) c = x; });
+    chqEdit = c; mostrarErro($("chErr"), "");
+    $("chTitulo").textContent = c ? "Editar cheque" : "Novo cheque";
+    $("chSub").textContent = c ? (c.tipo === "devolvido" ? "Cheque devolvido" : "Cheque recebido") : "Cadastro manual";
+    $("chTipo").value = c ? c.tipo : chqTab; $("chTipo").disabled = !!c;
+    CHQ_FORM.forEach(function (p) { $(p[0]).value = c ? c[p[1]] || "" : ""; });
+    $("chValor").value = c && c.valor != null ? c.valor : "";
+    // sugestões com o que já foi usado
+    var mot = {}, pag = {}; cheques.forEach(function (x) { if (x.motivo) mot[x.motivo] = 1; if (x.pagamento) pag[x.pagamento] = 1; });
+    $("chMotivos").innerHTML = Object.keys(mot).sort().map(function (v) { return '<option value="' + esc(v) + '"></option>'; }).join("");
+    $("chPagamentos").innerHTML = Object.keys(pag).sort().map(function (v) { return '<option value="' + esc(v) + '"></option>'; }).join("");
+    $("chInfo").textContent = c ? "Cadastrado em " + dataHora(c.criadoEm) + (c.criadoPor ? " por " + c.criadoPor : "") + (c.atualizadoEm && c.atualizadoEm !== c.criadoEm ? " · atualizado em " + dataHora(c.atualizadoEm) + (c.atualizadoPor ? " por " + c.atualizadoPor : "") : "") : "";
+    var bx = $("chExcluir"); bx.hidden = !c; bx.classList.remove("armed"); bx.textContent = "Excluir cheque";
+    camposPorTipo(); abrir("mCheque");
+    setTimeout(function () { $("chRa").focus(); }, 30);
+  }
+  // RA digitado: aluno e responsável vêm da Base de dados
+  $("chRa").addEventListener("change", function () {
+    var ra = this.value.trim().toLowerCase(); if (!ra) return;
+    var b = null; baseAlunos.forEach(function (x) { if (String(x.ra || "").trim().toLowerCase() === ra) b = x; });
+    if (!b) return;
+    if (!$("chAluno").value.trim()) $("chAluno").value = b.nome || "";
+    if (!$("chResp").value.trim()) $("chResp").value = b.responsavel || "";
+  });
+  $("btnChqNovo").addEventListener("click", function () { if (!baseCarregada) carregarBaseDados(); abrirCheque(null); });
+  $("formCheque").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var dados = { tipo: $("chTipo").value };
+    CHQ_FORM.forEach(function (p) { var el = $(p[0]); if (!el.closest("[data-chq]") || !el.closest("[data-chq]").hidden) dados[p[1]] = el.value.trim(); });
+    var v = parseFloat($("chValor").value); dados.valor = isNaN(v) ? null : v;
+    if (!(dados.valor > 0)) return mostrarErro($("chErr"), "Informe o valor do cheque.");
+    if (!dados.aluno && !dados.emitente) return mostrarErro($("chErr"), "Informe o aluno ou o emitente.");
+    var req = chqEdit ? api("PATCH", "/api/cheques/" + encodeURIComponent(chqEdit.id), dados) : api("POST", "/api/cheques", dados);
+    req.then(function (d) { trocarCheque(d.cheque); fecharModais(); renderCheques(); toast(chqEdit ? "Cheque atualizado." : "Cheque cadastrado."); })
+      .catch(function (x) { mostrarErro($("chErr"), x.message); });
+  });
+  $("chExcluir").addEventListener("click", function () {
+    var b = this;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
+    api("DELETE", "/api/cheques/" + encodeURIComponent(chqEdit.id)).then(function () {
+      cheques = cheques.filter(function (x) { return x.id !== chqEdit.id; }); fecharModais(); renderCheques(); toast("Cheque excluído.");
+    }).catch(function (x) { mostrarErro($("chErr"), x.message); });
+  });
+
+  // importação da planilha CHEQUES_SER
+  var CHQ_COLUNAS = {
+    ra: ["ra"], aluno: ["aluno"], responsavel: ["responsavel financeiro", "responsavel"], dataRecebimento: ["dt recebimento", "data recebimento", "data de recebimento"],
+    emitente: ["emitente"], cpfEmitente: ["cpf emitente", "cpf/cnpj emitente", "cpf"], banco: ["banco"], agencia: ["agencia"], conta: ["conta"],
+    numero: ["n", "no", "numero", "n cheque", "numero do cheque"], valor: ["valor"], vencimento: ["vencimento"], motivo: ["motivo"], pagamento: ["pagamento"],
+    geracaoMentor: ["geracao no mentor", "mentor"], observacao: ["observacoes", "observacao", "obs"], motivoDevolucao: ["motivo devolucao", "motivo da devolucao"],
+    dataDevolucao: ["data devolucao", "data da devolucao"], dataFormulario: ["data formulario", "data do formulario"], identificacao: ["identificacao do cheque", "identificacao"]
+  };
+  function cabChq(v) { return normHeader(v).replace(/[^a-z0-9/ ]+/g, " ").replace(/\s+/g, " ").trim(); }
+  function colChq(h, nomes) {
+    for (var n = 0; n < nomes.length; n++) { var i = h.indexOf(nomes[n]); if (i !== -1) return i; }
+    // começo do título ("identificacao do respon..." cortado)
+    for (var j = 0; j < h.length; j++) for (var m = 0; m < nomes.length; m++) if (nomes[m].length >= 8 && h[j] && h[j].indexOf(nomes[m]) === 0) return j;
+    return -1;
+  }
+  // "1,349.30" e "$ 600.00" (planilha em formato americano) ou "1.349,30"
+  function valorChq(v) {
+    if (typeof v === "number") return v;
+    var s = String(v || "").replace(/[R$\s]/g, ""); if (!/\d/.test(s)) return null;
+    if (/^-?\d{1,3}(,\d{3})*(\.\d{1,2})?$/.test(s) || /^-?\d+\.\d{1,2}$/.test(s)) return parseFloat(s.replace(/,/g, ""));
+    return parseMoneyBR(s);
+  }
+  // datas como aparecem na planilha: dia/mês/ano (12/7/2017 = 12 de julho)
+  function dataChq(v) {
+    if (v instanceof Date) return isoLocal(new Date(v.getTime() + 12 * 3600000));
+    var m = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(String(v || "").trim()); if (!m) return "";
+    var d = +m[1], me = +m[2], a = +m[3]; if (a < 100) a += 2000;
+    if (d < 1 || d > 31 || me < 1 || me > 12) return "";
+    return a + "-" + pad2(me) + "-" + pad2(d);
+  }
+  function tabelasChq(f, buf) {
+    if (!ehExcel(f)) return Promise.resolve([{ nome: f.name, aoa: parseCSVBruto(new TextDecoder("utf-8").decode(buf)) }]);
+    return carregarXLSX().then(function (X) {
+      var wb = X.read(buf, { type: "array" });
+      // texto como aparece na planilha (datas e valores formatados)
+      return wb.SheetNames.map(function (n) { return { nome: n, aoa: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "", raw: false }) }; });
+    });
+  }
+  function parseCSVBruto(txt) {
+    var sep = (txt.split("\n")[0].match(/;/g) || []).length > (txt.split("\n")[0].match(/,/g) || []).length ? ";" : ",";
+    var linhas = [], cel = "", lin = [], aspas = false;
+    for (var i = 0; i < txt.length; i++) {
+      var ch = txt[i];
+      if (aspas) { if (ch === '"' && txt[i + 1] === '"') { cel += '"'; i++; } else if (ch === '"') aspas = false; else cel += ch; continue; }
+      if (ch === '"') aspas = true; else if (ch === sep) { lin.push(cel); cel = ""; } else if (ch === "\n") { lin.push(cel.replace(/\r$/, "")); linhas.push(lin); lin = []; cel = ""; } else cel += ch;
+    }
+    if (cel || lin.length) { lin.push(cel); linhas.push(lin); }
+    return linhas;
+  }
+  function linhasChq(t, tipoPadrao) {
+    // linha de títulos: a que tiver mais nomes de coluna conhecidos
+    var melhor = -1, nota = 0;
+    for (var i = 0; i < Math.min(t.aoa.length, 8); i++) {
+      var h0 = t.aoa[i].map(cabChq), sc = 0;
+      Object.keys(CHQ_COLUNAS).forEach(function (k) { if (colChq(h0, CHQ_COLUNAS[k]) !== -1) sc++; });
+      if (sc > nota) { nota = sc; melhor = i; }
+    }
+    if (melhor === -1 || nota < 4) return null;
+    var h = t.aoa[melhor].map(cabChq), ix = {};
+    Object.keys(CHQ_COLUNAS).forEach(function (k) { ix[k] = colChq(h, CHQ_COLUNAS[k]); });
+    if (ix.ra === -1 && ix.aluno > 0) ix.ra = 0; // coluna do RA sem título (ou com título errado)
+    if (ix.motivoDevolucao !== -1 && ix.motivo === ix.motivoDevolucao) ix.motivo = -1;
+    var nomeAba = normHeader(t.nome);
+    var tipo = /devolv/.test(nomeAba) ? "devolvido" : /receb/.test(nomeAba) ? "recebido" : ix.dataRecebimento !== -1 ? "recebido" : ix.pagamento !== -1 ? "devolvido" : tipoPadrao;
+    var out = [];
+    t.aoa.slice(melhor + 1).forEach(function (r) {
+      function cel(k) { return ix[k] === -1 ? "" : String(r[ix[k]] == null ? "" : r[ix[k]]).trim(); }
+      // linhas de total ("Total:", "Qtde.:") e linhas vazias ficam de fora
+      if (r.some(function (x) { return /^(total|qtde|subtotal)\b/i.test(String(x || "").trim()); })) return;
+      var l = { tipo: tipo };
+      ["ra", "aluno", "responsavel", "emitente", "cpfEmitente", "banco", "agencia", "conta", "numero", "motivo", "pagamento", "geracaoMentor", "observacao", "motivoDevolucao", "identificacao"].forEach(function (k) { var v = cel(k); if (v) l[k] = v; });
+      ["vencimento", "dataRecebimento", "dataDevolucao", "dataFormulario"].forEach(function (k) { var v = dataChq(cel(k)); if (v) l[k] = v; });
+      var v = valorChq(cel("valor")); if (v != null) l.valor = Math.round(v * 100) / 100;
+      if (!l.aluno && !l.emitente) return;
+      if (!(l.valor > 0)) return;
+      out.push(l);
+    });
+    return { tipo: tipo, aba: t.nome, linhas: out };
+  }
+  $("btnChqImportar").addEventListener("click", function () {
+    chqPendentes = []; $("chqImpRes").innerHTML = ""; $("chqFile").value = ""; $("chqImpOk").disabled = true; $("chqImpOk").textContent = "Importar"; abrir("mChqImp");
+  });
+  function receberPlanilhaChq(f) {
+    var res = $("chqImpRes"); res.innerHTML = '<div class="meta">Lendo ' + esc(f.name) + "…</div>";
+    chqPendentes = []; $("chqImpOk").disabled = true;
+    var r = new FileReader();
+    r.onload = function () {
+      tabelasChq(f, new Uint8Array(r.result)).then(function (ts) {
+        var partes = ts.map(function (t) { return linhasChq(t, chqTab); }).filter(function (p) { return p && p.linhas.length; });
+        if (!partes.length) throw new Error("Não achei as colunas dos cheques (Aluno, Emitente, Banco, Valor, Vencimento…).");
+        // chave igual à do servidor: conta quantos já estão cadastrados
+        function dig(v) { return String(v || "").replace(/\D/g, "").replace(/^0+/, ""); }
+        function chave(c) { return [c.tipo, dig(c.banco), dig(c.agencia), dig(c.conta), dig(c.numero), c.vencimento || "", c.valor == null ? "" : Number(c.valor).toFixed(2)].join("|"); }
+        var ja = {}; cheques.forEach(function (c) { ja[chave(c)] = 1; });
+        var html = "<p><b>" + esc(f.name) + "</b>:</p>", todas = [];
+        partes.forEach(function (p) {
+          var vistos = {}, novos = 0, rep = 0, tot = 0;
+          p.linhas.forEach(function (l) { var k = chave(l); if (vistos[k]) rep++; else { vistos[k] = 1; if (!ja[k]) novos++; } tot += l.valor || 0; });
+          html += '<div class="arq-linha"><div><b>' + (p.tipo === "devolvido" ? "Cheques devolvidos" : "Cheques recebidos") + '</b><div class="meta">aba ' + esc(p.aba) + " · " + p.linhas.length + " cheque(s) · " + money(tot) +
+            " · " + novos + " novo(s), " + (p.linhas.length - rep - novos) + " já cadastrado(s) (serão atualizados)" + (rep ? ", " + rep + " repetido(s) na planilha (contam uma vez)" : "") + "</div></div></div>";
+          todas = todas.concat(p.linhas);
+        });
+        chqPendentes = todas;
+        var ex = todas.slice(0, 6);
+        html += '<div class="table-wrap" style="margin-top:8px"><table class="data compacta"><thead><tr><th>Tipo</th><th>Aluno</th><th>Emitente</th><th>Nº</th><th class="right">Valor</th><th>Vencimento</th></tr></thead><tbody>' +
+          ex.map(function (l) { return "<tr><td>" + (l.tipo === "devolvido" ? "Devolvido" : "Recebido") + "</td><td>" + esc(l.aluno || "—") + "</td><td>" + esc(l.emitente || "—") + "</td><td>" + esc(l.numero || "—") + '</td><td class="tabular right">' + money(l.valor) + "</td><td>" + (l.vencimento ? br(l.vencimento) : "—") + "</td></tr>"; }).join("") +
+          "</tbody></table></div>";
+        res.innerHTML = html;
+        $("chqImpOk").disabled = false; $("chqImpOk").textContent = "Importar " + todas.length + " cheque(s)";
+      }).catch(function (x) { res.innerHTML = '<div class="form-err">Não foi possível ler o arquivo: ' + esc(x.message) + "</div>"; });
+    };
+    r.readAsArrayBuffer(f);
+  }
+  ligarDropzone($("chqDrop"), $("chqFile"), null, receberPlanilhaChq);
+  $("chqImpOk").addEventListener("click", function () {
+    if (!chqPendentes.length) return;
+    var btn = this, partes = [], tot = { criados: 0, atualizados: 0, ignorados: 0 };
+    for (var i = 0; i < chqPendentes.length; i += 400) partes.push(chqPendentes.slice(i, i + 400));
+    btn.disabled = true; btn.textContent = "Importando…";
+    partes.reduce(function (p, parte) {
+      return p.then(function () { return api("POST", "/api/cheques/importar", { linhas: parte }).then(function (r) { tot.criados += r.criados; tot.atualizados += r.atualizados; tot.ignorados += r.ignorados; }); });
+    }, Promise.resolve()).then(function () {
+      chqPendentes = []; btn.textContent = "Importado";
+      $("chqImpRes").innerHTML = '<p><b style="color:var(--success)">Concluído:</b> ' + tot.criados + " cheque(s) novo(s), " + tot.atualizados + " atualizado(s)" + (tot.ignorados ? ", " + tot.ignorados + " linha(s) ignorada(s)" : "") + ".</p>";
+      toast("Cheques importados."); return carregarCheques();
+    }).catch(function (x) {
+      btn.disabled = false; btn.textContent = "Tentar de novo";
+      $("chqImpRes").insertAdjacentHTML("afterbegin", '<div class="form-err">Não foi possível importar: ' + esc(x.message) + "</div>");
+    });
+  });
 
   // backup do painel antigo
   ligarDropzone($("backupDrop"), $("backupFile"), function (txt) {
