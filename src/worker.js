@@ -1670,15 +1670,45 @@ function indiceCasosJur(casos) {
   Object.values(porNome).forEach((l) => l.sort(ordem));
   return { porRa, porNome };
 }
+// Diferença de uma letra (GAYOTO × GAYOTTO, LUIZ × LUIS) conta como a mesma palavra.
+function palavrasParecidas(a, b) {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 4 || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, dif = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++dif > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return dif + (a.length - i) + (b.length - j) <= 1;
+}
+// Mesmo aluno com grafia um pouco diferente e/ou nome cortado no relatório: primeiro nome igual e
+// as palavras do nome mais curto batem, na ordem, com no máximo uma letra de diferença cada.
+// A última palavra do nome cortado pode estar pela metade ("GAYOTTO DE" × "GAYOTO DE CASTRO").
+function nomesParecidos(a, b) {
+  if (nomesCompativeis(a, b)) return true;
+  const x = normNome(a).split(" ").filter(Boolean), y = normNome(b).split(" ").filter(Boolean);
+  if (!x.length || !y.length || x[0] !== y[0]) return false;
+  const [cur, lon] = x.length <= y.length ? [x, y] : [y, x];
+  if (cur.length < 2) return false;
+  return cur.every((p, i) => palavrasParecidas(p, lon[i]) || (i === cur.length - 1 && p.length >= 3 && lon[i].startsWith(p)));
+}
 function acharCasosJur(idx, ra, nome) {
   ra = texto(ra, 30).toLowerCase();
-  if (ra && idx.porRa[ra]) { const l = idx.porRa[ra].filter((c) => nomesCompativeis(c.aluno, nome)); if (l.length) return l; }
+  if (ra && idx.porRa[ra]) {
+    const l = idx.porRa[ra].filter((c) => nomesCompativeis(c.aluno, nome)); if (l.length) return l;
+    // RA igual e nome quase igual (erro de digitação em um dos dois lados)
+    const p = idx.porRa[ra].filter((c) => nomesParecidos(c.aluno, nome)); if (p.length) return p;
+  }
   const n = normNome(nome);
   if (n && idx.porNome[n]) return idx.porNome[n].filter((c) => !ra || !c.ra || c.ra.toLowerCase() === ra);
   // nome cortado no relatório (PDF): começo do nome, se só um aluno bater
   if (n && n.length >= 12) {
     const k = Object.keys(idx.porNome).filter((x) => x.startsWith(n) || n.startsWith(x));
     if (k.length === 1) return idx.porNome[k[0]];
+    // sem RA na base: nome quase igual, se só um aluno bater (e o RA não contradiz)
+    const q = Object.keys(idx.porNome).filter((x) => nomesParecidos(x, n)).map((x) => idx.porNome[x].filter((c) => !ra || !c.ra || c.ra.toLowerCase() === ra)).filter((l) => l.length);
+    if (q.length === 1) return q[0];
   }
   return [];
 }
