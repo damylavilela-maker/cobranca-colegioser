@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v41";
+  var VERSAO = "29/09 · v42";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2405,8 +2405,9 @@
       { n: tot, l: "Casos na carteira" },
       { n: money(neg), l: "Valor negociado", c: "info" },
       { n: money(ab), l: "Valor em aberto", c: "danger" },
-      { n: (tot ? Math.round(emDia / tot * 100) : 0) + "%", l: "Em dia ou quitados", c: "success" },
-      { n: semPos, l: "Sem posicionamento", c: "warn" }
+      // uma casa decimal: com ~200 casos, cada caso vale meio ponto e o arredondamento escondia a mudança
+      { n: (tot ? (emDia / tot * 100).toFixed(1).replace(".", ",") : "0") + "%", l: "Em dia ou quitados", c: "success", s: emDia + " de " + tot + " casos" },
+      { n: semPos, l: "Sem posicionamento", c: "warn", s: "Sem negociação ou não classificado" }
     ];
     function kpiHtml(t) {
       return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ' title="' + esc(t.n) + '">' + t.n + '</div><div class="lbl">' + t.l + "</div>" + (t.s ? '<div class="kpi-sub muted">' + t.s + "</div>" : "") + "</div>";
