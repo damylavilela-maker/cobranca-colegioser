@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v33";
+  var VERSAO = "29/09 · v34";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -890,7 +890,7 @@
         linhas.forEach(function (l) {
           // as parcelas vêm separadas por "Conta financeira: <nome>"
           var mc = /^conta\s+financeira\s*:?\s*(.*)$/i.exec(l.texto.trim());
-          if (mc) { conta = mc[1].replace(/^\d+\s*[-–]\s*/, "").trim(); return; }
+          if (mc) { conta = mc[1].trim(); return; } // código e/ou nome da conta (o servidor reconhece os dois)
           var cab = l.cels.filter(function (c) { return /^devido$/i.test(c.s); })[0];
           if (cab && l.cels.some(function (c) { return /^c[oó]digo$/i.test(c.s); })) { colDevido = cab.cx; achouCabecalho = true; return; }
           var m = l.texto.match(/^(\d{1,12})\s+(.+?)\s+(\d{2}\/\d{2}\/\d{4})\s+(.*)$/);
@@ -2935,6 +2935,8 @@
         if (/^conta financeira/.test(normHeader(r[i]))) {
           var resto = String(r[i]).split(":").slice(1).join(":").trim();
           for (var j = i + 1; !resto && j < r.length; j++) resto = String(r[j] == null ? "" : r[j]).trim();
+          // código numa célula e descrição na seguinte: junta os dois ("14 - Prestação de Serviço")
+          if (/^\d{1,4}$/.test(resto)) for (var k2 = j; k2 < r.length; k2++) { var prox = String(r[k2] == null ? "" : r[k2]).trim(); if (prox) { if (!/^[\d.,\/-]+$/.test(prox)) resto += " - " + prox; break; } }
           conta = resto; return;
         }
       }
@@ -3183,7 +3185,7 @@
         var cel = c.semConta ? (c.grupo ? ROTULO_GRUPO[c.grupo] + ' <span class="meta">(tipo do relatório)</span>' : '<span style="color:var(--danger)">Escolha acima o tipo do relatório</span>')
           : c.grupo && !R.regras[c.conta] ? ROTULO_GRUPO[c.grupo]
           : '<select data-conta="' + esc(c.conta) + '"><option value="">— classificar —</option>' + ["aberto", "negociado", "ignorar"].map(function (g) { return '<option value="' + g + '"' + (escolha === g ? " selected" : "") + ">" + ROTULO_GRUPO[g] + "</option>"; }).join("") + "</select>";
-        return "<tr><td>" + esc(c.conta || "(sem conta financeira)") + "</td><td>" + cel + '</td><td class="tabular right">' + c.registros + '</td><td class="tabular right">' + money(c.valor) + '</td><td class="tabular right">' + c.casos + "</td></tr>";
+        return "<tr><td>" + esc(c.rotulo || c.conta || "(sem conta financeira)") + "</td><td>" + cel + '</td><td class="tabular right">' + c.registros + '</td><td class="tabular right">' + money(c.valor) + '</td><td class="tabular right">' + c.casos + "</td></tr>";
       }).join("") + "</tbody></table></div>";
     // movimentação por caso
     var ms = d.movimentos.filter(function (m) { return m.tipo !== "sem_movimento" && (m.tipo !== "ausente" || m.saiu); })

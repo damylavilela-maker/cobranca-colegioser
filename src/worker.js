@@ -1690,14 +1690,36 @@ function mudancaSaida(c, novo, motivo) {
 // Contas financeiras do relatório de inadimplência. Grupo "aberto": débitos que ainda não foram
 // negociados com a GM; grupo "negociado": renegociações da GM (extrajudicial ou judicial). Conta
 // fora destas listas não entra em coluna nenhuma até alguém classificar na prévia da importação
-// (a escolha fica salva para os próximos meses).
+// (a escolha fica salva para os próximos meses). O relatório pode trazer a conta pelo código do
+// sistema ("14"), pelo nome ou pelos dois ("14 - Prestação de Serviço"): vale o código primeiro.
 const GRUPOS_CONTA = ["aberto", "negociado", "ignorar"];
 const CONTAS_PADRAO = [
-  ["Cheque devolvido", "aberto"], ["Mensalidade 1", "aberto"], ["Negociação de parcela a vencer", "aberto"],
-  ["Prestação de serviço", "aberto"], ["Prestação de serviço extracurricular contraturno", "aberto"],
-  ["Renegociação 30 dias", "aberto"], ["Renegociação acima 30 dias", "aberto"], ["Taxas diversas", "aberto"],
-  ["Renegociação extrajudicial - GM Carvalho e Fraia", "negociado"], ["Renegociação judicial - GM Carvalho e Fraia", "negociado"]
+  ["8", "Cheque devolvido", "aberto"], ["9", "Mensalidade 1", "aberto"], ["26", "Negociação de parcela a vencer", "aberto"],
+  ["14", "Prestação de serviço", "aberto"], ["15", "Prestação de serviço extracurricular contraturno", "aberto"],
+  ["11", "Renegociação 30 dias", "aberto"], ["4", "Renegociação acima 30 dias", "aberto"], ["5", "Taxas diversas", "aberto"],
+  ["44", "Renegociação extrajudicial - GM Carvalho e Fraia", "negociado"], ["45", "Renegociação judicial - GM Carvalho e Fraia", "negociado"]
 ];
+// "14", "14 - Prestação de Serviço", "Prestação de Serviço (14)" → { codigo: "14", nome: "Prestação de Serviço" }
+function partesConta(s) {
+  const t = String(s || "").trim();
+  let m = /^(\d{1,4})(?:\s*[-–.:)]\s*|\s+|$)(.*)$/.exec(t);
+  if (m) return { codigo: String(+m[1]), nome: m[2].trim() };
+  m = /^(.*?)\s*\((\d{1,4})\)$/.exec(t);
+  if (m) return { codigo: String(+m[2]), nome: m[1].trim() };
+  return { codigo: "", nome: t };
+}
+function regraConta(conta, ...fontes) {
+  const p = partesConta(conta), kc = p.codigo ? "cod:" + p.codigo : "", kn = chaveConta(p.nome);
+  for (const f of fontes) if (kc && f[kc]) return f[kc];
+  for (const f of fontes) if (kn && f[kn]) return f[kn];
+  return null;
+}
+// nome que aparece no painel: descrição e código da conta, quando conhecidos
+function rotuloConta(conta, ...fontes) {
+  const p = partesConta(conta), r = regraConta(conta, ...fontes);
+  const nome = (r && r.nome) || p.nome || "", cod = p.codigo || (r && r.codigo) || "";
+  return nome ? (cod ? `${nome} (${cod})` : nome) : (cod ? `Conta ${cod}` : conta);
+}
 // "Negociação Parcelas a Vencer" = "Negociação de parcela a vencer"; "&" = "e"; plural = singular
 function chaveConta(s) {
   return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/&/g, " e ")
@@ -1706,7 +1728,7 @@ function chaveConta(s) {
 }
 async function regrasContas(env) {
   const regras = {};
-  CONTAS_PADRAO.forEach(([nome, grupo]) => { regras[chaveConta(nome)] = { grupo, nome, padrao: true }; });
+  CONTAS_PADRAO.forEach(([codigo, nome, grupo]) => { regras["cod:" + codigo] = regras[chaveConta(nome)] = { grupo, nome, codigo, padrao: true }; });
   const m = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'jur_contas_regras'").first();
   let salvas = {};
   try { salvas = JSON.parse(m ? m.valor : "{}") || {}; } catch (e) { salvas = {}; }
@@ -1751,10 +1773,10 @@ async function inadimplenciaJuridico(req, env, eu) {
   // classificação escolhida agora, na prévia, para as contas que não estão nas regras
   const novas = {};
   Object.keys(b.regras || {}).forEach((nome) => {
-    const g = b.regras[nome], k = chaveConta(nome);
-    if (k && !regras[k] && GRUPOS_CONTA.includes(g)) novas[k] = { grupo: g, nome: texto(nome, 120) };
+    const g = b.regras[nome], p = partesConta(nome), k = p.codigo ? "cod:" + p.codigo : chaveConta(p.nome);
+    if (k && !regraConta(nome, regras) && GRUPOS_CONTA.includes(g)) novas[k] = { grupo: g, nome: texto(p.nome, 120), codigo: p.codigo };
   });
-  const grupoDe = (conta) => { const k = chaveConta(conta), r = regras[k] || novas[k]; return r ? r.grupo : null; };
+  const grupoDe = (conta) => { const r = regraConta(conta, regras, novas); return r ? r.grupo : null; };
 
   const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0").all()).results;
   const idx = indiceCasosJur(casos);
@@ -1785,8 +1807,8 @@ async function inadimplenciaJuridico(req, env, eu) {
     // escolhido para o arquivo inteiro
     const gArq = ["aberto", "negociado"].includes(l.grupoArquivo) ? l.grupoArquivo : null;
     const g = conta ? grupoDe(conta) : gArq;
-    const chave = conta || (gArq ? `(relatório de ${gArq === "aberto" ? "valor em aberto" : "valor negociado"}, sem conta)` : "");
-    const ct = contas[chave] || (contas[chave] = { conta: chave, grupo: g, registros: 0, valor: 0, casos: new Set(), semConta: !conta });
+    const chave = conta ? rotuloConta(conta, regras, novas) : (gArq ? `(relatório de ${gArq === "aberto" ? "valor em aberto" : "valor negociado"}, sem conta)` : "");
+    const ct = contas[chave] || (contas[chave] = { conta: conta ? conta : chave, rotulo: chave, grupo: g, registros: 0, valor: 0, casos: new Set(), semConta: !conta });
     ct.registros += n; ct.valor = r2(ct.valor + valor); ct.casos.add(c.id);
     registros += n;
     if (!conta) semConta += n;
@@ -1796,7 +1818,7 @@ async function inadimplenciaJuridico(req, env, eu) {
     if (g === "aberto") { p.aberto += valor; p.pAb += n; }
     else if (g === "negociado") { p.negociado += valor; p.pNeg += n; }
   }
-  const pendentes = Object.values(contas).filter((c) => !c.grupo).map((c) => c.conta);
+  const pendentes = Object.values(contas).filter((c) => !c.grupo).map((c) => c.rotulo || c.conta);
 
   // movimento de cada caso em relação ao mês anterior
   const movs = [];
@@ -1841,7 +1863,7 @@ async function inadimplenciaJuridico(req, env, eu) {
     reclassificados: contar("reclassificado"), semMovimento: contar("sem_movimento"), novos: contar("novo"), alterados: contar("alterado"),
     ausentes: contar("ausente"), sairam: movs.filter((m) => m.saiu).length, conferir: movs.filter((m) => m.conferir).length,
     foraDoPainel: Object.keys(fora).length,
-    porConta: Object.values(contas).map((c) => ({ conta: c.conta, grupo: c.grupo, registros: c.registros, valor: c.valor, casos: c.casos.size, semConta: c.semConta })).sort((x, y) => y.valor - x.valor)
+    porConta: Object.values(contas).map((c) => ({ conta: c.conta, rotulo: c.rotulo, grupo: c.grupo, registros: c.registros, valor: c.valor, casos: c.casos.size, semConta: c.semConta })).sort((x, y) => y.valor - x.valor)
   };
   const saida = {
     mes, mesAnt, anterior: compAnt ? compSaida(compAnt) : null, jaImportada: jaImportada ? jaImportada.importado_em : "", atualizaPainel, ultima,
