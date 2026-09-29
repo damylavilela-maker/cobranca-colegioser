@@ -169,7 +169,9 @@ const SCHEMA = [
   // do histórico; importar de novo o mesmo mês substitui só aquele mês
   `CREATE TABLE IF NOT EXISTS jur_competencias (mes TEXT PRIMARY KEY, data_relatorio TEXT NOT NULL DEFAULT '', importado_em TEXT NOT NULL, importado_por TEXT NOT NULL DEFAULT '', arquivos TEXT NOT NULL DEFAULT '', resumo TEXT NOT NULL DEFAULT '{}')`,
   `CREATE TABLE IF NOT EXISTS jur_hist (mes TEXT NOT NULL, caso_id TEXT NOT NULL, valor_aberto REAL, valor_negociado REAL, parcelas_aberto INTEGER NOT NULL DEFAULT 0, parcelas_negociado INTEGER NOT NULL DEFAULT 0, contas TEXT NOT NULL DEFAULT '{}', ausente INTEGER NOT NULL DEFAULT 0, movimento TEXT NOT NULL DEFAULT '', conferir TEXT NOT NULL DEFAULT '', PRIMARY KEY (mes, caso_id))`,
-  `CREATE INDEX IF NOT EXISTS idx_jur_hist_caso ON jur_hist(caso_id)`
+  `CREATE INDEX IF NOT EXISTS idx_jur_hist_caso ON jur_hist(caso_id)`,
+  // carteiras anuais do jurídico (nome e ano letivo do débito)
+  `CREATE TABLE IF NOT EXISTS jur_carteiras (id TEXT PRIMARY KEY, nome TEXT NOT NULL UNIQUE, ano TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`
 ];
 
 // Períodos que já existiam na planilha "SERASA - SER", criados uma única vez. O nome é o
@@ -378,6 +380,9 @@ async function rotear(req, env, url) {
     if (partes.length === 1 && m === "GET") return listarJuridico(env);
     if (partes.length === 1 && m === "POST") return criarCasoJur(req, env, eu);
     if (partes[1] === "importar" && m === "POST") return importarJuridico(req, env, eu);
+    if (partes[1] === "carteiras" && partes.length === 2 && m === "POST") return salvarCarteiraJur(req, env, eu, null);
+    if (partes[1] === "carteiras" && partes.length === 3 && m === "PATCH") return salvarCarteiraJur(req, env, eu, partes[2]);
+    if (partes[1] === "carteiras" && partes.length === 3 && m === "DELETE") return excluirCarteiraJur(env, partes[2]);
     if (partes[1] === "inadimplencia" && m === "POST") return inadimplenciaJuridico(req, env, eu);
     if (partes[1] === "competencias" && m === "GET") return competenciasJuridico(env);
     if (partes[1] === "quitar-sem-valor" && m === "POST") return quitarSemValorJur(req, env, eu);
@@ -1506,7 +1511,58 @@ async function listarJuridico(env) {
   const comps = (await env.DB.prepare("SELECT mes, resumo FROM jur_competencias ORDER BY mes DESC LIMIT 2").all()).results.map(compSaida);
   const movimentos = {};
   if (comps.length) (await env.DB.prepare("SELECT caso_id, movimento FROM jur_hist WHERE mes = ?").bind(comps[0].mes).all()).results.forEach((h) => { movimentos[h.caso_id] = h.movimento; });
-  return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])), competencias: comps, movimentos });
+  return json({ casos: casos.map((c) => casoSaida(c, porCaso[c.id])), competencias: comps, movimentos, carteiras: await carteirasJur(env, casos) });
+}
+
+// Carteiras cadastradas. Carteira que só existe nos casos (importada antes do cadastro) entra
+// sozinha, com o ano letivo mais comum dos casos dela.
+async function carteirasJur(env, casos) {
+  let lista = (await env.DB.prepare("SELECT * FROM jur_carteiras").all()).results;
+  const tem = new Set(lista.map((c) => normNome(c.nome))), faltam = {};
+  casos.forEach((c) => {
+    const n = texto(c.carteira, 60); if (!n || tem.has(normNome(n))) return;
+    const f = faltam[normNome(n)] || (faltam[normNome(n)] = { nome: n, anos: {} });
+    if (c.ano) f.anos[c.ano] = (f.anos[c.ano] || 0) + 1;
+  });
+  const novas = Object.values(faltam);
+  if (novas.length) {
+    const agora = agoraISO();
+    await env.DB.batch(novas.map((f) => env.DB.prepare("INSERT OR IGNORE INTO jur_carteiras (id, nome, ano, criado_em, criado_por) VALUES (?,?,?,?, 'casos')")
+      .bind(novoId(), f.nome, Object.keys(f.anos).sort((a, b) => f.anos[b] - f.anos[a])[0] || "", agora)));
+    lista = (await env.DB.prepare("SELECT * FROM jur_carteiras").all()).results;
+  }
+  return lista.map((c) => ({ id: c.id, nome: c.nome, ano: c.ano })).sort((a, b) => b.nome.localeCompare(a.nome, "pt-BR", { numeric: true }));
+}
+// Criar ou editar carteira. Trocar o nome ou o ano letivo muda também os casos dela.
+async function salvarCarteiraJur(req, env, eu, id) {
+  const b = await corpo(req);
+  const nome = texto(b.nome, 60), ano = texto(b.ano, 10);
+  if (!nome) throw new HttpError(400, "Informe o nome da carteira (ex.: Carteira 2027).");
+  if (ano && !/^\d{4}$/.test(ano)) throw new HttpError(400, "O ano letivo deve ter 4 números (ex.: 2026).");
+  const outra = (await env.DB.prepare("SELECT id, nome FROM jur_carteiras").all()).results.find((c) => normNome(c.nome) === normNome(nome) && c.id !== id);
+  if (outra) throw new HttpError(400, "Já existe uma carteira com esse nome.");
+  const agora = agoraISO();
+  if (!id) {
+    const novo = novoId();
+    await env.DB.prepare("INSERT INTO jur_carteiras (id, nome, ano, criado_em, criado_por) VALUES (?,?,?,?,?)").bind(novo, nome, ano, agora, eu.nome).run();
+    return json({ carteira: { id: novo, nome, ano } });
+  }
+  const atual = await env.DB.prepare("SELECT * FROM jur_carteiras WHERE id = ?").bind(id).first();
+  if (!atual) throw new HttpError(404, "Carteira não encontrada.");
+  await env.DB.batch([
+    env.DB.prepare("UPDATE jur_carteiras SET nome = ?, ano = ? WHERE id = ?").bind(nome, ano, id),
+    env.DB.prepare("UPDATE jur_casos SET carteira = ?, ano = CASE WHEN ? <> '' THEN ? ELSE ano END WHERE carteira = ?").bind(nome, ano, ano, atual.nome)
+  ]);
+  return json({ carteira: { id, nome, ano } });
+}
+// Só carteira vazia pode ser excluída (os casos nunca são apagados junto).
+async function excluirCarteiraJur(env, id) {
+  const c = await env.DB.prepare("SELECT * FROM jur_carteiras WHERE id = ?").bind(id).first();
+  if (!c) throw new HttpError(404, "Carteira não encontrada.");
+  const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM jur_casos WHERE carteira = ?").bind(c.nome).first();
+  if (n && n.n) throw new HttpError(400, `A carteira tem ${n.n} caso(s). Exclua ou mude a carteira dos casos antes.`);
+  await env.DB.prepare("DELETE FROM jur_carteiras WHERE id = ?").bind(id).run();
+  return json({ ok: true });
 }
 
 // Responsável e contato vêm sempre da Base de dados (pelo RA ou pelo nome); o nome também, se faltar.

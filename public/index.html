@@ -277,7 +277,11 @@
         <div class="filters">
           <input type="search" id="jBusca" placeholder="Buscar aluno, responsável ou RA" aria-label="Buscar">
           <select id="jStatus" aria-label="Status"></select>
-          <select id="jCarteira" aria-label="Carteira"></select>
+          <span class="periodo-filtro">
+            <select id="jCarteira" aria-label="Carteira"></select>
+            <button type="button" class="btn ghost small icone" id="btnEditarCarteira" title="Editar ou excluir esta carteira" aria-label="Editar carteira" hidden>✎</button>
+            <button type="button" class="btn ghost small" id="btnNovaCarteira">+ Nova carteira</button>
+          </span>
           <select id="jConferir" aria-label="Movimentação no último relatório">
             <option value="">Movimentação: todas</option>
             <option value="conferir">Para conferir</option>
@@ -308,8 +312,8 @@
           <div class="grid2">
             <div class="field"><label for="ncRa">RA</label><input id="ncRa" placeholder="Registro do aluno"></div>
             <div class="field"><label for="ncAluno">Nome do aluno *</label><input id="ncAluno" placeholder="Nome completo do aluno"></div>
-            <div class="field"><label for="ncCarteira">Carteira</label><input id="ncCarteira" placeholder="Ex: Carteira 2026" list="ncCarteiras"><datalist id="ncCarteiras"></datalist></div>
-            <div class="field"><label for="ncAno">Ano letivo do débito</label><input id="ncAno" placeholder="Ex: 2025"></div>
+            <div class="field"><label for="ncCarteira">Carteira</label><select id="ncCarteira"></select><datalist id="ncCarteiras"></datalist><span class="hint">Não está na lista? Crie em “+ Nova carteira”, no Painel.</span></div>
+            <div class="field"><label for="ncAno">Ano letivo do débito</label><input id="ncAno" placeholder="Ex: 2025"><span class="hint">Vem da carteira escolhida.</span></div>
           </div>
           <div class="form-err" id="ncErr" hidden></div>
           <div class="row-end"><button type="button" class="btn ghost" id="ncCancelar">Cancelar</button><button type="submit" class="btn primary" id="ncSalvar">Incluir na carteira</button></div>
@@ -540,6 +544,24 @@
         <span class="row-end"><button type="button" class="btn ghost" data-close>Fechar</button></span>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="mCarteira" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="carTitulo">
+    <div class="m-head"><div><h2 id="carTitulo">Nova carteira</h2><div class="sub">Carteira anual enviada à GM Carvalho e Fraia. O ano letivo é o ano dos débitos dessa carteira.</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <form class="m-body" id="formCarteira" novalidate>
+      <div class="grid2">
+        <div class="field"><label for="carNome">Nome da carteira</label><input id="carNome" maxlength="60" placeholder="Carteira 2027"></div>
+        <div class="field"><label for="carAno">Ano letivo do débito</label><input id="carAno" inputmode="numeric" maxlength="4" placeholder="2026"><span class="hint">Sugerido pelo nome (ano anterior); pode mudar.</span></div>
+      </div>
+      <div class="meta" id="carInfo"></div>
+      <div class="form-err" id="carErr" hidden></div>
+      <div class="m-foot spread">
+        <button type="button" class="btn danger small" id="carExcluir" hidden>Excluir carteira</button>
+        <span class="row-end"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="submit" class="btn primary">Salvar carteira</button></span>
+      </div>
+    </form>
   </div>
 </div>
 

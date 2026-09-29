@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v44";
+  var VERSAO = "30/09 · v45";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2350,6 +2350,8 @@
   ];
   var casosJur = [], jurCarregado = false, jurTab = "painel", jurLimite = 300, casoJur = null, jurComps = [], jurMovs = {};
   var jurModo = "inadimplencia", jurRelatorio = null, jurPendentes = [], jurLendo = 0, jurSemValor = [];
+  var jurCarteiras = [], jurCartSel = "";
+  try { jurCartSel = localStorage.getItem("jur_carteira") || ""; } catch (x) { /* navegador sem armazenamento */ }
 
   function jst(k) { for (var i = 0; i < JUR_STATUS.length; i++) if (JUR_STATUS[i].k === k) return JUR_STATUS[i]; return JUR_STATUS[0]; }
   function jpill(k) { var s = jst(k); return '<span class="pill" style="color:var(--' + s.c + ');background:var(--' + s.c + '-soft)"><i></i>' + s.l + "</span>"; }
@@ -2367,7 +2369,7 @@
 
   function carregarJuridico() {
     return api("GET", "/api/juridico").then(function (d) {
-      casosJur = d.casos; jurCarregado = true; jurComps = d.competencias || []; jurMovs = d.movimentos || {}; marcarSync(true);
+      casosJur = d.casos; jurCarregado = true; jurComps = d.competencias || []; jurMovs = d.movimentos || {}; jurCarteiras = d.carteiras || []; marcarSync(true);
       if (view === "juridico") renderJuridico();
     }).catch(function (x) { marcarSync(false); if (x.status !== 401 && x.status !== 403) toast(x.message); });
   }
@@ -2434,8 +2436,8 @@
 
   function filtrarJur() {
     prepararSelect($("jStatus"), [{ v: "", l: "Todos os status" }].concat(opcoesStatusJur()), "");
-    prepararSelect($("jCarteira"), [{ v: "", l: "Todas as carteiras" }].concat(unicos("carteira").map(function (c) { return { v: esc(c), l: esc(c) }; })), "");
-    var q = $("jBusca").value.trim().toLowerCase(), s = $("jStatus").value, ca = $("jCarteira").value, cf = $("jConferir").value;
+    renderCarteirasJur();
+    var q = $("jBusca").value.trim().toLowerCase(), s = $("jStatus").value, ca = jurCartSel, cf = $("jConferir").value;
     return casosJur.filter(function (c) {
       if (s && c.status !== s) return false;
       if (ca && c.carteira !== ca) return false;
@@ -2481,7 +2483,7 @@
     var bq = $("jurQuitarLote"); bq.hidden = !jurSemValor.length; bq.classList.remove("armed");
     bq.textContent = "Marcar como Quitado os " + jurSemValor.length + " caso(s) sem valor";
   }
-  ["jBusca", "jStatus", "jCarteira", "jConferir"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; renderTabelaJur(); }); });
+  ["jBusca", "jStatus", "jConferir"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; renderTabelaJur(); }); });
   $("jurMais").addEventListener("click", function () { jurLimite += 300; renderTabelaJur(); });
   $("jurTbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirCasoJur(tr.getAttribute("data-id")); });
   $("jurQuitarLote").addEventListener("click", function () {
@@ -2492,6 +2494,64 @@
     api("POST", "/api/juridico/quitar-sem-valor", { ids: ids }).then(function (d) {
       toast(d.quitados + " caso(s) marcados como Quitado."); return carregarJuridico();
     }).catch(function (x) { toast(x.message); }).then(function () { b.disabled = false; });
+  });
+
+  // ---- carteiras (mesmo modelo dos períodos da Serasa): seletor com a quantidade de casos,
+  // editar (✎) e "+ Nova carteira"
+  function carteiraAtual() { for (var i = 0; i < jurCarteiras.length; i++) if (jurCarteiras[i].nome === jurCartSel) return jurCarteiras[i]; return null; }
+  function renderCarteirasJur() {
+    var n = {}; casosJur.forEach(function (c) { if (c.carteira) n[c.carteira] = (n[c.carteira] || 0) + 1; });
+    if (jurCartSel && !jurCarteiras.some(function (c) { return c.nome === jurCartSel; })) jurCartSel = "";
+    var opcoes = [{ v: "", l: "Carteira: todas (" + casosJur.length + ")" }].concat(jurCarteiras.map(function (c) {
+      return { v: c.nome, l: "Carteira: " + c.nome + (c.ano ? " · ano letivo " + c.ano : "") + " (" + (n[c.nome] || 0) + ")" };
+    }));
+    prepararSelect($("jCarteira"), opcoes.map(function (o) { return { v: esc(o.v), l: esc(o.l) }; }), jurCartSel);
+    $("jCarteira").value = jurCartSel;
+    $("btnEditarCarteira").hidden = !carteiraAtual();
+    $("ncCarteiras").innerHTML = jurCarteiras.map(function (c) { return '<option value="' + esc(c.nome) + '"></option>'; }).join("");
+  }
+  $("jCarteira").addEventListener("change", function () {
+    jurCartSel = this.value;
+    try { localStorage.setItem("jur_carteira", jurCartSel); } catch (x) { /* sem armazenamento */ }
+    jurLimite = 300; renderJuridico();
+  });
+  $("btnEditarCarteira").addEventListener("click", function () { var c = carteiraAtual(); if (c) abrirCarteiraJur(c); });
+  $("btnNovaCarteira").addEventListener("click", function () { abrirCarteiraJur(null); });
+  var carteiraEdit = null;
+  function anoDaCarteira(nome) { var m = /(\d{4})\s*$/.exec(nome || ""); return m ? String(+m[1] - 1) : ""; }
+  function abrirCarteiraJur(c) {
+    carteiraEdit = c; mostrarErro($("carErr"), ""); delete $("carAno").dataset.mexeu;
+    $("carTitulo").textContent = c ? "Editar carteira" : "Nova carteira";
+    if (c) { $("carNome").value = c.nome; $("carAno").value = c.ano || ""; }
+    else {
+      // sugere o ano seguinte ao da carteira mais recente
+      var maior = 0; jurCarteiras.forEach(function (x) { var m = /(\d{4})\s*$/.exec(x.nome); if (m && +m[1] > maior) maior = +m[1]; });
+      var nome = "Carteira " + (maior ? maior + 1 : new Date().getFullYear());
+      $("carNome").value = nome; $("carAno").value = anoDaCarteira(nome);
+    }
+    var qtd = c ? casosJur.filter(function (x) { return x.carteira === c.nome; }).length : 0;
+    $("carInfo").textContent = c ? qtd + " caso(s) nesta carteira. Mudar o nome ou o ano letivo muda também os casos dela." : "Depois de criar, importe os alunos em “Importar carteira” ou inclua em “Novo caso”.";
+    var bx = $("carExcluir"); bx.hidden = !c; bx.classList.remove("armed"); bx.textContent = "Excluir carteira";
+    abrir("mCarteira"); setTimeout(function () { $("carNome").focus(); }, 30);
+  }
+  $("carNome").addEventListener("input", function () { if (!$("carAno").dataset.mexeu) $("carAno").value = anoDaCarteira(this.value); });
+  $("carAno").addEventListener("input", function () { this.dataset.mexeu = "1"; });
+  $("formCarteira").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var dados = { nome: $("carNome").value.trim(), ano: $("carAno").value.trim() };
+    var req = carteiraEdit ? api("PATCH", "/api/juridico/carteiras/" + encodeURIComponent(carteiraEdit.id), dados) : api("POST", "/api/juridico/carteiras", dados);
+    req.then(function (d) {
+      jurCartSel = d.carteira.nome;
+      try { localStorage.setItem("jur_carteira", jurCartSel); } catch (x) { /* sem armazenamento */ }
+      fecharModais(); toast(carteiraEdit ? "Carteira atualizada." : "Carteira criada."); return carregarJuridico();
+    }).catch(function (x) { mostrarErro($("carErr"), x.message); });
+  });
+  $("carExcluir").addEventListener("click", function () {
+    var b = this;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
+    api("DELETE", "/api/juridico/carteiras/" + encodeURIComponent(carteiraEdit.id)).then(function () {
+      jurCartSel = ""; fecharModais(); toast("Carteira excluída."); return carregarJuridico();
+    }).catch(function (x) { mostrarErro($("carErr"), x.message); b.classList.remove("armed"); b.textContent = "Excluir carteira"; });
   });
 
   // ficha do aluno
@@ -2616,7 +2676,11 @@
   // novo caso (só entra na carteira; os valores vêm do relatório de inadimplência)
   function prepararNovoCaso() {
     $("formJurNovo").reset(); mostrarErro($("ncErr"), "");
-    $("ncCarteiras").innerHTML = unicos("carteira").map(function (c) { return '<option value="' + esc(c) + '"></option>'; }).join("");
+    // carteira da lista (a selecionada no Painel, se houver); o ano letivo vem dela
+    fill($("ncCarteira"), jurCarteiras.map(function (c) { return { v: c.nome, l: c.nome }; }), jurCarteiras.length ? null : "Crie uma carteira primeiro");
+    if (jurCartSel) $("ncCarteira").value = jurCartSel;
+    var cs = null; jurCarteiras.forEach(function (c) { if (c.nome === $("ncCarteira").value) cs = c; });
+    $("ncAno").value = cs ? cs.ano || "" : "";
     carregarBaseDados(); // para completar o nome pelo RA
     setTimeout(function () { $("ncRa").focus(); }, 30);
   }
@@ -2625,6 +2689,7 @@
     var b = null; baseAlunos.forEach(function (x) { if (String(x.ra || "").trim().toLowerCase() === ra) b = x; });
     if (b && !$("ncAluno").value.trim()) { $("ncAluno").value = b.nome || ""; toast("Nome preenchido pela Base de dados."); }
   });
+  $("ncCarteira").addEventListener("change", function () { var v = this.value; jurCarteiras.forEach(function (c) { if (c.nome === v) $("ncAno").value = c.ano || ""; }); });
   $("ncCancelar").addEventListener("click", function () { irJur("painel"); });
   $("formJurNovo").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -2716,18 +2781,29 @@
         jurPendentes = linhas;
         var existe = function (l) { return casosJur.some(function (c) { return ((l.ra && c.ra === l.ra) || (!l.ra && normHeader(c.aluno) === normHeader(l.aluno))) && (!l.carteira || !c.carteira || normHeader(c.carteira) === normHeader(l.carteira)); }); };
         var ja = linhas.filter(existe).length, semCart = linhas.filter(function (l) { return !l.carteira; }).length;
+        // linhas sem a coluna Carteira: vão para a carteira escolhida aqui
+        var destino = semCart ? '<div class="field"><label for="jurCartDest">Carteira destas linhas</label><select id="jurCartDest">' + jurCarteiras.map(function (c) {
+          return '<option value="' + esc(c.nome) + '"' + (c.nome === jurCartSel ? " selected" : "") + ">" + esc(c.nome) + (c.ano ? " · ano letivo " + esc(c.ano) : "") + "</option>";
+        }).join("") + '</select><span class="hint">' + semCart + " linha(s) sem a coluna Carteira vão para esta carteira. Não está na lista? Crie em “+ Nova carteira”.</span></div>" : "";
         res.innerHTML = "<p><b>" + esc(f.name) + "</b>: " + linhas.length + " aluno(s) — " + (linhas.length - ja) + " novo(s) na carteira e " + ja + " que já estão (têm o nome e o ano letivo atualizados).</p>" +
-          (semCart ? '<div class="form-err" style="background:var(--warn-soft);color:var(--warn)">' + semCart + " linha(s) sem carteira: confira a coluna Carteira.</div>" : "") +
+          destino +
           '<div class="table-wrap"><table class="data compacta"><thead><tr><th>RA</th><th>Aluno</th><th>Carteira</th><th>Ano letivo</th></tr></thead><tbody>' +
           linhas.slice(0, 8).map(function (l) { return "<tr><td>" + esc(l.ra || "—") + "</td><td>" + esc(l.aluno || "—") + "</td><td>" + esc(l.carteira || "—") + "</td><td>" + esc(l.ano || "—") + "</td></tr>"; }).join("") +
           "</tbody></table></div>" + (linhas.length > 8 ? '<div class="meta">…e mais ' + (linhas.length - 8) + " linha(s).</div>" : "");
-        $("jurImpOk").disabled = false; $("jurImpOk").textContent = "Importar " + linhas.length + " aluno(s)";
+        $("jurImpOk").disabled = semCart > 0 && !jurCarteiras.length; $("jurImpOk").textContent = "Importar " + linhas.length + " aluno(s)";
+        if (semCart && !jurCarteiras.length) res.insertAdjacentHTML("beforeend", '<div class="form-err">Crie a carteira primeiro, em “+ Nova carteira”.</div>');
       }).catch(function (x) { res.innerHTML = '<div class="form-err">Não foi possível ler o arquivo: ' + esc(x.message) + "</div>"; });
     };
     r.readAsArrayBuffer(f);
   }
   function aplicarCarteiraJur(btn) {
     if (!jurPendentes.length) return;
+    // linhas sem carteira: a escolhida na janela; sem ano letivo: o da carteira cadastrada
+    var dest = $("jurCartDest") ? $("jurCartDest").value : "";
+    jurPendentes.forEach(function (l) {
+      if (!l.carteira && dest) l.carteira = dest;
+      if (!l.ano) jurCarteiras.forEach(function (c) { if (normHeader(c.nome) === normHeader(l.carteira)) l.ano = c.ano || ""; });
+    });
     var partes = [], tot = { criados: 0, atualizados: 0, ignorados: 0 };
     for (var i = 0; i < jurPendentes.length; i += 400) partes.push(jurPendentes.slice(i, i + 400));
     btn.disabled = true; btn.textContent = "Importando…";
