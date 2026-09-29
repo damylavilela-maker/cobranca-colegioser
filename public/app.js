@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v31";
+  var VERSAO = "29/09 · v32";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -884,10 +884,13 @@
       for (var n = 1; n <= pdf.numPages; n++) paginas.push(pdf.getPage(n).then(linhasDaPagina));
       return Promise.all(paginas);
     }).then(function (paginas) {
-      var brutos = [], achouCabecalho = false;
+      var brutos = [], achouCabecalho = false, conta = "";
       paginas.forEach(function (linhas) {
         var colDevido = null;
         linhas.forEach(function (l) {
+          // as parcelas vêm separadas por "Conta financeira: <nome>"
+          var mc = /^conta\s+financeira\s*:?\s*(.*)$/i.exec(l.texto.trim());
+          if (mc) { conta = mc[1].replace(/^\d+\s*[-–]\s*/, "").trim(); return; }
           var cab = l.cels.filter(function (c) { return /^devido$/i.test(c.s); })[0];
           if (cab && l.cels.some(function (c) { return /^c[oó]digo$/i.test(c.s); })) { colDevido = cab.cx; achouCabecalho = true; return; }
           var m = l.texto.match(/^(\d{1,12})\s+(.+?)\s+(\d{2}\/\d{2}\/\d{4})\s+(.*)$/);
@@ -896,7 +899,7 @@
           if (!nums.length) return;
           var dev = nums[nums.length - 1];
           if (colDevido != null) nums.forEach(function (c) { if (Math.abs(c.cx - colDevido) < Math.abs(dev.cx - colDevido)) dev = c; });
-          brutos.push({ ra: m[1], nome: m[2].trim(), valorAberto: parseMoneyBR(dev.s), vencimento: parseDateBR(m[3]), turma: "", responsavel: "", telefone: "", email: "" });
+          brutos.push({ ra: m[1], nome: m[2].trim(), valorAberto: parseMoneyBR(dev.s), vencimento: parseDateBR(m[3]), turma: "", responsavel: "", telefone: "", email: "", conta: conta });
         });
       });
       return { brutos: brutos, cabecalho: achouCabecalho };
@@ -1144,8 +1147,10 @@
     dz.addEventListener("click", function (e) { if (e.target !== input) input.click(); });
     dz.addEventListener("dragover", function (e) { e.preventDefault(); dz.classList.add("drag"); });
     dz.addEventListener("dragleave", function () { dz.classList.remove("drag"); });
-    dz.addEventListener("drop", function (e) { e.preventDefault(); dz.classList.remove("drag"); var f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) receber(f); });
-    input.addEventListener("change", function () { if (input.files && input.files[0]) receber(input.files[0]); });
+    // campo com "multiple" (relatórios de inadimplência) aceita vários arquivos de uma vez
+    function soltar(files) { var fs = [].slice.call(files || []); (input.multiple ? fs : fs.slice(0, 1)).forEach(function (f) { receber(f); }); }
+    dz.addEventListener("drop", function (e) { e.preventDefault(); dz.classList.remove("drag"); soltar(e.dataTransfer.files); });
+    input.addEventListener("change", function () { soltar(input.files); if (input.multiple) input.value = ""; });
   }
   ligarDropzone($("dropzone"), $("fileInput"), processarCSV, receberArquivoImport);
   $("btnProcessPaste").addEventListener("click", function () { var t = $("pasteArea").value; if (!t.trim()) return toast("Cole o conteúdo do CSV antes de processar."); processarCSV(t); });
@@ -2344,6 +2349,7 @@
   ];
   var JUR_MOTIVOS = ["Aguardando negociação com a família", "Aguardando documentação", "Aguardando aprovação interna", "Em análise financeira", "Contato não localizado", "Acordo em cumprimento", "Outro (ver observação)"];
   var JUR_CAB = ["RA", "Aluno", "Responsável", "CPF", "E-mail", "Celular", "Carteira", "Ano", "Status", "Valor negociado (R$)", "Valor em aberto (R$)", "Parcelas em aberto", "Enviado ao jurídico", "Data envio jurídico", "Motivo pendência", "Última observação", "Atualizado em", "Extrato (R$)", "Conta financeira", "Link Drive"];
+  var jurComps = [], jurMovs = {};
   var casosJur = [], jurCarregado = false, jurTab = "painel", jurLimite = 300, casoJur = null, jurPendentes = [];
 
   function jst(k) { for (var i = 0; i < JUR_STATUS.length; i++) if (JUR_STATUS[i].k === k) return JUR_STATUS[i]; return JUR_STATUS[1]; }
@@ -2361,7 +2367,7 @@
 
   function carregarJuridico() {
     return api("GET", "/api/juridico").then(function (d) {
-      casosJur = d.casos; jurCarregado = true; jurInadData = d.inadData || ""; marcarSync(true);
+      casosJur = d.casos; jurCarregado = true; jurInadData = d.inadData || ""; jurComps = d.competencias || []; jurMovs = d.movimentos || {}; marcarSync(true);
       if (view === "juridico") renderJuridico();
     }).catch(function (x) { marcarSync(false); if (x.status !== 401 && x.status !== 403) toast(x.message); });
   }
@@ -2400,22 +2406,46 @@
       { n: (tot ? Math.round(emDia / tot * 100) : 0) + "%", l: "Em dia ou quitados", c: "success" },
       { n: semPos, l: "Sem posicionamento", c: "warn" }
     ];
-    $("jurKpis").innerHTML = tiles.map(function (t) {
-      return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ' title="' + esc(t.n) + '">' + t.n + '</div><div class="lbl">' + t.l + "</div></div>";
-    }).join("");
+    function kpiHtml(t) {
+      return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ' title="' + esc(t.n) + '">' + t.n + '</div><div class="lbl">' + t.l + "</div>" + (t.s ? '<div class="kpi-sub muted">' + t.s + "</div>" : "") + "</div>";
+    }
+    $("jurKpis").innerHTML = tiles.map(kpiHtml).join("");
+    // indicadores do último mês de referência importado (valores separados, nunca somados)
+    var C = jurComps[0], P = jurComps[1], el = $("jurKpisComp");
+    el.hidden = !C;
+    if (!C) return;
+    function varTxt(k) {
+      if (!P) return "";
+      var d = Math.round(((Number(C[k]) || 0) - (Number(P[k]) || 0)) * 100) / 100;
+      return d ? (d > 0 ? "+" : "−") + money(Math.abs(d)) + " vs " + mesBR(P.mes) : "sem variação vs " + mesBR(P.mes);
+    }
+    var paraConferir = casosJur.filter(function (c) { return c.flagConflito; }).length;
+    el.innerHTML = '<div class="comp-tit">Competência <b>' + mesBR(C.mes) + "</b>" + (P ? " · comparada com " + mesBR(P.mes) : " · primeira competência importada") + "</div>" +
+      '<div class="kpis k4">' + [
+        { n: C.noRelatorio + " de " + C.casos, l: "Alunos acompanhados no relatório" },
+        { n: money(C.aberto), l: "Valor em aberto no mês", c: "danger", s: varTxt("aberto") },
+        { n: money(C.negociado), l: "Valor negociado GM no mês", c: "info", s: varTxt("negociado") },
+        { n: C.casosAberto + " · " + C.casosNegociado, l: "Casos em aberto · negociados" },
+        { n: C.reclassificados || 0, l: "Mudaram de classificação", c: "brand" },
+        { n: C.semMovimento || 0, l: "Sem movimentação" },
+        { n: C.sairam || 0, l: "Deixaram de constar", c: "warn" },
+        { n: paraConferir, l: "Para conferir", c: "warn" }
+      ].map(kpiHtml).join("") + "</div>";
   }
 
   function filtrarJur() {
     prepararSelect($("jStatus"), [{ v: "", l: "Todos os status" }].concat(opcoesStatusJur()), "");
     prepararSelect($("jCarteira"), [{ v: "", l: "Todas as carteiras" }].concat(unicos("carteira").map(function (c) { return { v: esc(c), l: esc(c) }; })), "");
     prepararSelect($("jAno"), [{ v: "", l: "Todos os anos" }].concat(unicos("ano").map(function (a) { return { v: esc(a), l: esc(a) }; })), "");
-    var q = $("jBusca").value.trim().toLowerCase(), s = $("jStatus").value, ca = $("jCarteira").value, an = $("jAno").value, ju = $("jJuridico").value;
+    var q = $("jBusca").value.trim().toLowerCase(), s = $("jStatus").value, ca = $("jCarteira").value, an = $("jAno").value, ju = $("jJuridico").value, cf = $("jConferir").value;
     return casosJur.filter(function (c) {
       if (s && c.status !== s) return false;
       if (ca && c.carteira !== ca) return false;
       if (an && c.ano !== an) return false;
       if (ju === "sim" && !c.enviadoJuridico) return false;
       if (ju === "nao" && c.enviadoJuridico) return false;
+      if (cf === "conferir" && !c.flagConflito) return false;
+      if (cf && cf !== "conferir" && jurMovs[c.id] !== cf) return false;
       if (q && [c.aluno, c.responsavel, c.ra, c.cpf].join(" ").toLowerCase().indexOf(q) === -1) return false;
       return true;
     }).sort(function (a, b) { return (Number(b.valorAberto) || 0) - (Number(a.valorAberto) || 0) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
@@ -2431,7 +2461,7 @@
     $("jurTbody").innerHTML = vis.slice(0, jurLimite).map(function (c) {
       var ob = ultimaObs(c), v = Number(c.valorAberto) || 0, turma = c.ra ? turmaPorRa[c.ra.trim().toLowerCase()] : "";
       return '<tr class="click" data-id="' + esc(c.id) + '">' +
-        '<td><div class="nome">' + esc(c.aluno || "—") + '</div><div class="meta">' +
+        '<td><div class="nome">' + esc(c.aluno || "—") + (c.flagConflito ? ' <span class="pill" style="color:var(--warn);background:var(--warn-soft)" title="' + esc(c.conferirMotivo || "Precisa de conferência manual") + '"><i></i>Conferir</span>' : "") + '</div><div class="meta">' +
         esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + (turma ? " · " + esc(turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" +
         (c.parcelas ? '<div class="meta">' + c.parcelas + (c.parcelas === 1 ? " parcela" : " parcelas") + "</div>" : "") + "</td>" +
@@ -2440,11 +2470,11 @@
         "<td>" + esc(c.carteira || "—") + (c.ano ? '<div class="meta">ano letivo ' + esc(c.ano) + "</div>" : "") + "</td>" +
         '<td><span class="yn ' + (c.enviadoJuridico ? "sim" : "nao") + '">' + (c.enviadoJuridico ? "Sim" : "Não") + "</span></td>" +
         '<td class="muted obs-cell">' + esc(ob ? (ob.length > 60 ? ob.slice(0, 60).trim() + "…" : ob) : "—") + "</td>" +
-        '<td class="muted">' + dataCurta(c.atualizadoEm) + "</td></tr>";
+        '<td class="muted">' + dataCurta(c.atualizadoEm) + (c.competencia ? '<div class="meta">ref. ' + mesBR(c.competencia) + "</div>" : "") + "</td></tr>";
     }).join("");
     $("jurMais").hidden = vis.length <= jurLimite;
   }
-  ["jBusca", "jStatus", "jCarteira", "jAno", "jJuridico"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; renderTabelaJur(); }); });
+  ["jBusca", "jStatus", "jCarteira", "jAno", "jJuridico", "jConferir"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; renderTabelaJur(); }); });
   $("jurMais").addEventListener("click", function () { jurLimite += 300; renderTabelaJur(); });
   $("jurTbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirCasoJur(tr.getAttribute("data-id")); });
 
@@ -2492,6 +2522,9 @@
     $("jcTitulo").textContent = c.aluno || "Caso";
     $("jcSub").textContent = "RA " + (c.ra || "—") + " · " + (c.carteira || "—") + " · ano letivo " + (c.ano || "—");
     $("jcConflito").hidden = !c.flagConflito;
+    $("jcConflitoTxt").textContent = c.conferirMotivo || "Este caso aparece em mais de uma aba de status na planilha original e precisa de verificação manual.";
+    if (c.competencia) $("jcSub").textContent += " · ref. " + mesBR(c.competencia);
+    carregarHistCaso(c.id);
     $("jcAluno").value = c.aluno || ""; $("jcRa").value = c.ra || ""; $("jcResp").value = c.responsavel || ""; $("jcCpf").value = c.cpf || "";
     $("jcEmail").value = c.email || ""; $("jcCelular").value = c.celular || ""; $("jcCarteira").value = c.carteira || ""; $("jcAno").value = c.ano || "";
     fill($("jcStatus"), opcoesStatusJur()); $("jcStatus").value = c.status || "nao_classificado";
@@ -2515,7 +2548,7 @@
       aluno: $("jcAluno").value.trim(), ra: $("jcRa").value.trim(), responsavel: $("jcResp").value.trim(), cpf: $("jcCpf").value.trim(),
       email: $("jcEmail").value.trim(), celular: $("jcCelular").value.trim(), carteira: $("jcCarteira").value.trim(), ano: $("jcAno").value.trim(),
       status: $("jcStatus").value, valorNegociado: numOuNull($("jcNegociado").value), valorAberto: numOuNull($("jcAberto").value), parcelas: parseInt($("jcParcelas").value, 10) || 0,
-      enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value, flagConflito: false,
+      enviadoJuridico: $("jcJuridico").checked, dataEnvio: $("jcDataEnvio").value, motivo: $("jcMotivo").value,
       extrato: numOuNull($("jcExtrato").value), contaFinanceira: $("jcConta").value.trim(), linkDrive: $("jcLink").value.trim()
     };
   }
@@ -2551,6 +2584,27 @@
       trocarCaso(d.caso); casoJur = d.caso; $("jcNovaObs").value = ""; renderObsJur(d.caso); renderJuridico(); toast("Atendimento registrado e caso atualizado.");
     }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
   });
+  // aviso de conferência: some só quando alguém marca como conferido
+  $("jcConferido").addEventListener("click", function () {
+    var btn = this; btn.disabled = true;
+    api("PATCH", "/api/juridico/" + encodeURIComponent(casoJur.id), { flagConflito: false }).then(function (d) {
+      trocarCaso(d.caso); casoJur = d.caso; $("jcConflito").hidden = true; renderJuridico(); toast("Caso marcado como conferido.");
+    }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
+  });
+  // evolução do aluno mês a mês (competências importadas)
+  function carregarHistCaso(id) {
+    var el = $("jcHist"); el.innerHTML = '<div class="meta">Carregando…</div>';
+    api("GET", "/api/juridico/" + encodeURIComponent(id) + "/historico").then(function (d) {
+      if (!casoJur || casoJur.id !== id) return;
+      var h = d.historico || [];
+      el.innerHTML = h.length ? '<div class="table-wrap" style="max-height:220px;overflow:auto"><table class="data"><thead><tr><th>Mês</th><th class="right">Em aberto</th><th class="right">Negociado</th><th>Movimento</th><th>Contas financeiras</th></tr></thead><tbody>' +
+        h.slice().reverse().map(function (x) {
+          var contas = Object.keys(x.contas || {}).map(function (k) { return esc(k) + " " + money(x.contas[k]); }).join("<br>");
+          return "<tr><td><b>" + mesBR(x.mes) + '</b></td><td class="tabular right">' + (x.ausente ? "—" : money(x.valorAberto)) + '</td><td class="tabular right">' + (x.ausente ? "—" : money(x.valorNegociado)) + "</td><td>" + movPill(x.movimento) +
+            (x.conferir ? '<div class="meta" style="color:var(--warn)">' + esc(x.conferir) + "</div>" : "") + '</td><td class="meta">' + (contas || "—") + "</td></tr>";
+        }).join("") + "</tbody></table></div>" : '<div class="meta">Nenhuma competência importada ainda para este aluno.</div>';
+    }).catch(function () { el.innerHTML = '<div class="meta">Não foi possível carregar o histórico.</div>'; });
+  }
   $("jcArquivar").addEventListener("click", function () {
     var b = this;
     if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar: arquivar"; return; }
@@ -2819,12 +2873,12 @@
   var jurModo = "cadastro", jurRelatorio = null, jurInadData = "";
   var JUR_MODOS = {
     cadastro: { t: "Importar cadastro — Painel jurídico", s: "Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.", b: "Importar casos" },
-    inadimplencia: { t: "Importar relatório de inadimplência", s: "Envie o relatório geral de inadimplência (Excel, CSV ou o PDF do sistema), com todas as contas financeiras. Só os alunos que já estão no Painel jurídico são atualizados; os outros são ignorados e nenhum caso novo é criado. Quem está no relatório tem o valor em aberto e as parcelas atualizados (Quitado ou Em dia volta para Em aberto). Quem tinha valor em aberto e não está no relatório fica Quitado. Nada é gravado antes de você confirmar.", b: "Aplicar mudanças" },
+    inadimplencia: { t: "Importar relatórios de inadimplência do mês", s: "Envie os relatórios de inadimplência do mês (Excel, CSV ou o PDF do sistema); pode mandar os dois juntos. Cada parcela vai para Valor em aberto ou Valor negociado conforme a conta financeira. Só os alunos que já estão no Painel jurídico entram; nenhum caso novo é criado. O mês fica guardado no histórico e é comparado com o anterior. Quem não aparece no relatório mantém os valores e fica marcado para conferência (não é quitado). Nada é gravado antes de você conferir o resumo.", b: "Gravar competência" },
     desfazer: { t: "Desfazer recebimentos importados", s: "Apaga todos os pagamentos que vieram do relatório de recebimento e as tratativas que eles criaram. Cada caso volta com o status e o valor em aberto de antes. Nada é apagado antes de você confirmar.", b: "Desfazer" },
     recebimento: { t: "Importar relatório de recebimento", s: "Envie o relatório de recebimento (Excel, CSV ou PDF) com aluno ou RA, data e valor pago. Cada pagamento é abatido do valor em aberto e registrado nas tratativas. Caso com acordo fica Em dia; sem acordo: zerou é Quitado, sobrou é Parcialmente pago. Um pagamento já lançado não é abatido de novo.", b: "Aplicar mudanças" }
   };
   function abrirJurImp(modo) {
-    $("jurDrop").hidden = modo === "desfazer";
+    $("jurDrop").hidden = modo === "desfazer"; $("jurFile").multiple = modo === "inadimplencia";
     jurModo = modo; jurPendentes = []; jurRelatorio = null;
     $("jurImpRes").innerHTML = ""; $("jurFile").value = ""; $("jurRelFiltros").innerHTML = "";
     $("jiTitulo").textContent = JUR_MODOS[modo].t; $("jiSub").textContent = JUR_MODOS[modo].s;
@@ -2865,6 +2919,7 @@
     valor: ["devido", "valor devido", "total devido", "valor em aberto", "valor em aberto (r$)", "saldo", "valor", "valor (r$)"],
     venc: ["vencimento", "data vcto.", "data vcto", "data de vencimento", "dt vencimento", "dt. vencimento", "vcto"],
     pago: ["valor pago", "vl pago", "vl. pago", "valor recebido", "recebido", "pago", "valor liquido", "liquido", "valor pago (r$)", "valor", "valor (r$)"],
+    parc: ["parc.", "parc", "parcela", "n parcela"],
     data: ["data pagamento", "data de pagamento", "dt pagamento", "dt. pagamento", "data do pagamento", "data recebimento", "data de recebimento", "pagamento", "recebido em", "data baixa", "data"]
   };
   // uma linha por parcela (inadimplência) ou por pagamento (recebimento)
@@ -2888,7 +2943,7 @@
       if (!ra && /^(total|soma|subtotal)\b/i.test(normHeader(nome))) return;
       if (ra && !/\d/.test(ra)) return; // linha de título repetida no meio do relatório
       if (jurModo === "inadimplencia") {
-        out.push({ ra: ra, nome: nome, valorAberto: valorCelula(ix.valor === -1 ? "" : r[ix.valor]) || 0, vencimento: dataCelula(ix.venc === -1 ? "" : r[ix.venc]) || "", conta: conta });
+        out.push({ ra: ra, nome: nome, valorAberto: valorCelula(ix.valor === -1 ? "" : r[ix.valor]) || 0, vencimento: dataCelula(ix.venc === -1 ? "" : r[ix.venc]) || "", parc: String(cel("parc")).replace(/\.0+$/, ""), conta: conta });
       } else {
         var v = valorCelula(ix.pago === -1 ? "" : r[ix.pago]) || 0;
         if (v > 0) out.push({ ra: ra, aluno: nome, valor: Math.round(v * 100) / 100, data: dataCelula(ix.data === -1 ? "" : r[ix.data]) || "" });
@@ -2933,12 +2988,15 @@
       return saida;
     });
   }
-  function receberRelatorioJur(f) {
-    var res = $("jurImpRes"); res.innerHTML = '<div class="meta">Lendo ' + esc(f.name) + "…</div>";
-    jurRelatorio = null; $("jurImpOk").disabled = true; $("jurRelFiltros").innerHTML = "";
-    var r = new FileReader();
-    r.onload = function () {
-      var buf = new Uint8Array(r.result), p;
+  // lê um relatório (PDF do sistema, Excel ou CSV) e devolve uma linha por parcela ou pagamento
+  function lerLinhasRelatorio(f) {
+    return new Promise(function (ok, erro) {
+      var r = new FileReader();
+      r.onerror = function () { erro(new Error("não foi possível abrir o arquivo")); };
+      r.onload = function () { ok(new Uint8Array(r.result)); };
+      r.readAsArrayBuffer(f);
+    }).then(function (buf) {
+      var p;
       if (ehPDF(f)) {
         // os PDFs do sistema (inadimplência E141 e recebimento e181) têm leitor próprio; os outros viram tabela
         p = (jurModo === "inadimplencia" ? lerRelatorioPDF(buf).then(function (e) { return e && e.brutos && e.brutos.length ? e.brutos : null; }) : lerRecebimentoPDF(buf)).then(function (e) {
@@ -2947,7 +3005,7 @@
         });
       } else if (ehExcel(f)) p = tabelaDoExcel(buf);
       else p = Promise.resolve([parseCSV(new TextDecoder("utf-8").decode(buf))]);
-      p.then(function (ts) {
+      return p.then(function (ts) {
         var linhas;
         if (ts && ts.brutos) linhas = ts.brutos;
         else {
@@ -2957,41 +3015,110 @@
           if (!linhas) throw new Error("Não achei as colunas de aluno ou RA no relatório.");
         }
         if (!linhas.length) throw new Error(jurModo === "recebimento" ? "Não achei pagamentos (valor pago maior que zero) no relatório." : "Não achei parcelas no relatório.");
-        var contas = {};
-        linhas.forEach(function (l) { var c = l.conta || ""; var x = contas[c] || (contas[c] = { n: 0, v: 0 }); x.n++; x.v += Number(l.valorAberto || l.valor) || 0; });
-        jurRelatorio = { brutos: linhas, nome: f.name, contas: contas, sel: {}, desde: "" };
-        Object.keys(contas).forEach(function (c) { jurRelatorio.sel[c] = true; });
-        if (jurModo === "recebimento") {
-          var d0 = new Date(); jurRelatorio.desde = jurInadData || (d0.getFullYear() + "-" + pad2(d0.getMonth() + 1) + "-01");
-        }
-        montarFiltrosRelatorio();
-        return simularRelatorioJur();
-      }).catch(function (x) { res.innerHTML = '<div class="form-err">Não foi possível ler o relatório: ' + esc(x.message) + "</div>"; });
-    };
-    r.readAsArrayBuffer(f);
+        return linhas;
+      });
+    });
   }
-  // o que vai para o servidor, conforme as contas marcadas (inadimplência) ou a data inicial (recebimento)
+  var jurLendo = 0;
+  function receberRelatorioJur(f) {
+    var res = $("jurImpRes");
+    if (jurModo === "inadimplencia") {
+      // os relatórios do mês se somam (pode mandar um de cada vez ou os dois juntos)
+      if (!jurRelatorio) jurRelatorio = { arquivos: [], regras: {}, competencia: hoje().slice(0, 7), dataRel: hoje() };
+      jurLendo++; $("jurImpOk").disabled = true; renderArquivosInad();
+      return lerLinhasRelatorio(f).then(function (linhas) {
+        var R = jurRelatorio;
+        R.arquivos = R.arquivos.filter(function (a) { return a.nome !== f.name; }).concat([{ nome: f.name, linhas: linhas }]);
+      }).catch(function (x) { toast("Não foi possível ler " + f.name + ": " + x.message); })
+        .then(function () { jurLendo--; if (!jurLendo) { montarFiltrosRelatorio(); simularRelatorioJur(); } });
+    }
+    res.innerHTML = '<div class="meta">Lendo ' + esc(f.name) + "…</div>";
+    jurRelatorio = null; $("jurImpOk").disabled = true; $("jurRelFiltros").innerHTML = "";
+    lerLinhasRelatorio(f).then(function (linhas) {
+      jurRelatorio = { brutos: linhas, nome: f.name, desde: "" };
+      var d0 = new Date(); jurRelatorio.desde = jurInadData || (d0.getFullYear() + "-" + pad2(d0.getMonth() + 1) + "-01");
+      montarFiltrosRelatorio();
+      return simularRelatorioJur();
+    }).catch(function (x) { res.innerHTML = '<div class="form-err">Não foi possível ler o relatório: ' + esc(x.message) + "</div>"; });
+  }
+  function mesBR(m) { return m ? m.slice(5, 7) + "/" + m.slice(0, 4) : ""; }
+  // Junta os relatórios do mês: a mesma parcela em dois relatórios conta uma vez só; a mesma
+  // parcela com valor diferente em outro relatório é divergência (vale a do primeiro).
+  // Soma por aluno e conta financeira (a classificação da conta é feita no servidor).
+  function analisarInad() {
+    var R = jurRelatorio, vistos = {}, porParc = {}, dup = 0, dupMesmo = 0, total = 0, divergencias = [], raNomes = {}, nomeRas = {}, usadas = [];
+    R.arquivos.forEach(function (a, ia) {
+      var noArq = {};
+      a.linhas.forEach(function (l) {
+        total++;
+        var nome = l.nome || l.aluno || "", nn = normHeader(nome), v = Math.round((Number(l.valorAberto) || 0) * 100) / 100;
+        var base = (l.ra || "") + "|" + nn + "|" + normHeader(l.conta || "") + "|" + (l.vencimento || "") + "|" + (l.parc || ""), k = base + "|" + v.toFixed(2);
+        if (vistos[k] !== undefined && vistos[k] !== ia) { dup++; return; }
+        if (noArq[k]) dupMesmo++;
+        var pp = porParc[base];
+        if (pp && pp.ia !== ia && Math.abs(pp.v - v) > 0.009) {
+          divergencias.push({ aluno: nome, ra: l.ra, conta: l.conta || "", venc: l.vencimento || "", v1: pp.v, v2: v, a1: R.arquivos[pp.ia].nome, a2: a.nome });
+          return;
+        }
+        if (!pp) porParc[base] = { ia: ia, v: v };
+        noArq[k] = 1; vistos[k] = ia;
+        if (l.ra) (raNomes[l.ra] = raNomes[l.ra] || {})[nn] = nome;
+        if (nn) (nomeRas[nn] = nomeRas[nn] || {})[l.ra || ""] = nome;
+        usadas.push(l);
+      });
+    });
+    // nomes parecidos ou RA com dois nomes: só interessa para alunos da base do painel
+    var rasJur = {}, nomesJur = {};
+    casosJur.forEach(function (c) { if (c.ra) rasJur[String(c.ra).toLowerCase()] = 1; nomesJur[normHeader(c.aluno)] = 1; });
+    var semelhantes = [];
+    Object.keys(raNomes).forEach(function (ra) {
+      var ns = Object.keys(raNomes[ra]);
+      if (rasJur[ra.toLowerCase()] && ns.some(function (x) { return ns.some(function (y) { return !nomesIguaisJur(x, y); }); }))
+        semelhantes.push("RA " + ra + " com nomes diferentes: " + ns.map(function (n) { return raNomes[ra][n]; }).join(" / "));
+    });
+    Object.keys(nomeRas).forEach(function (nn) {
+      var rs = Object.keys(nomeRas[nn]).filter(Boolean);
+      if (rs.length > 1 && nomesJur[nn]) semelhantes.push(nomeRas[nn][rs[0]] + " com mais de um RA: " + rs.join(", "));
+    });
+    var ag = {}, ordem = [];
+    usadas.forEach(function (l) {
+      var nome = l.nome || l.aluno || "", k = (l.ra || "") + "|" + normHeader(nome) + "|" + (l.conta || ""), g = ag[k];
+      if (!g) { g = ag[k] = { ra: l.ra || "", aluno: nome, conta: l.conta || "", valor: 0, parcelas: 0 }; ordem.push(k); }
+      g.valor += Number(l.valorAberto) || 0; g.parcelas++;
+    });
+    R.enviadas = ordem.map(function (k) { var g = ag[k]; g.valor = Math.round(g.valor * 100) / 100; return g; });
+    R.analise = { total: total, dup: dup, dupMesmo: dupMesmo, divergencias: divergencias, semelhantes: semelhantes };
+  }
+  function renderArquivosInad() {
+    var el = $("jurArqsInad"); if (!el || !jurRelatorio) return;
+    el.innerHTML = jurRelatorio.arquivos.map(function (a, i) {
+      return '<div class="arq-linha"><div><b>' + esc(a.nome) + '</b><div class="meta">' + a.linhas.length + ' parcela(s)</div></div><button type="button" class="linkbtn danger" data-tirar-arq="' + i + '">Remover</button></div>';
+    }).join("") + (jurLendo ? '<div class="meta">Lendo arquivo…</div>' : "");
+  }
+  // o que vai para o servidor: recebimento = pagamentos a partir da data escolhida
   function linhasEnviarJur() {
     var R = jurRelatorio;
-    if (jurModo === "inadimplencia") {
-      var ls = R.brutos.filter(function (l) { return R.sel[l.conta || ""]; });
-      // uma linha por aluno: soma o devido e conta as parcelas
-      return agrupar(ls.map(function (l) { return { ra: l.ra || "", nome: l.nome || l.aluno || "", valorAberto: l.valorAberto || 0, vencimento: l.vencimento || "" }; }))
-        .map(function (g) { return { ra: g.ra, aluno: g.nome, valorAberto: g.valorAberto, parcelas: g.parcelas }; });
-    }
+    if (jurModo === "inadimplencia") { analisarInad(); return R.enviadas; }
     return R.brutos.filter(function (l) { return !R.desde || (l.data && l.data >= R.desde); })
       .map(function (l) { return { ra: l.ra, aluno: l.aluno || l.nome, valor: l.valor, data: l.data }; });
   }
   function montarFiltrosRelatorio() {
-    var R = jurRelatorio, el = $("jurRelFiltros"), nomes = Object.keys(R.contas).sort(function (a, b) { return R.contas[b].v - R.contas[a].v; });
-    var campoData = '<div class="field"><label for="jurDataRel">Data em que o relatório foi gerado</label><input type="date" id="jurDataRel" value="' + esc(R.dataRel || hoje()) + '" style="max-width:200px">' +
-      '<span class="hint">Pagamentos feitos a partir desta data serão abatidos quando você importar o relatório de recebimento.</span></div>';
+    var R = jurRelatorio, el = $("jurRelFiltros");
     if (jurModo === "inadimplencia") {
-      // relatório geral: entram todas as contas financeiras, só dos alunos que já estão no painel
-      var nAlunos = {}; R.brutos.forEach(function (l) { nAlunos[(l.ra || "") + "|" + normHeader(l.nome || l.aluno)] = 1; });
-      el.innerHTML = campoData + '<div class="meta" style="margin-bottom:8px">Relatório geral: ' + Object.keys(nAlunos).length + " aluno(s), " + R.brutos.length + " parcela(s)" +
-        (nomes.length > 1 || nomes[0] ? " em " + nomes.length + " conta(s) financeira(s)" : "") + ". Todas as contas entram no valor em aberto, só para os alunos que já estão no Painel jurídico; os outros são ignorados.</div>";
+      el.innerHTML = '<div class="grid2"><div class="field"><label for="jurComp">Mês de referência (competência)</label><input type="month" id="jurComp" value="' + esc(R.competencia) + '">' +
+        '<span class="hint">Cada mês importado fica guardado no histórico. Importar o mesmo mês de novo substitui só aquele mês.</span></div>' +
+        '<div class="field"><label for="jurDataRel">Data em que o relatório foi gerado</label><input type="date" id="jurDataRel" value="' + esc(R.dataRel || hoje()) + '">' +
+        '<span class="hint">Pagamentos feitos a partir desta data serão abatidos quando você importar o relatório de recebimento.</span></div></div>' +
+        '<div class="field"><label>Relatórios desta competência</label><div id="jurArqsInad"></div><span class="hint">Para juntar o segundo relatório, arraste-o na área acima.</span></div>';
+      renderArquivosInad();
+      $("jurComp").addEventListener("change", function () { if (/^\d{4}-\d{2}$/.test(this.value)) { R.competencia = this.value; simularRelatorioJur(); } });
       $("jurDataRel").addEventListener("change", function () { R.dataRel = this.value; });
+      $("jurArqsInad").addEventListener("click", function (e) {
+        var b = e.target.closest("[data-tirar-arq]"); if (!b) return;
+        R.arquivos.splice(+b.getAttribute("data-tirar-arq"), 1);
+        renderArquivosInad();
+        if (R.arquivos.length) simularRelatorioJur(); else { $("jurImpRes").innerHTML = ""; $("jurImpOk").disabled = true; }
+      });
     } else if (jurModo === "recebimento") {
       var datas = R.brutos.map(function (l) { return l.data; }).filter(Boolean).sort();
       el.innerHTML = '<div class="field"><label for="jurDesde">Considerar pagamentos a partir de</label><input type="date" id="jurDesde" value="' + esc(R.desde) + '" style="max-width:200px">' +
@@ -3000,14 +3127,104 @@
       $("jurDesde").addEventListener("change", function () { R.desde = this.value; simularRelatorioJur(); });
     } else el.innerHTML = "";
   }
+  var MOV_JUR = {
+    primeira: { l: "Primeira competência", c: "gray" }, novo: { l: "Entrou no relatório", c: "info" }, reclassificado: { l: "Mudou de classificação", c: "brand" },
+    alterado: { l: "Valor alterado", c: "gold" }, sem_movimento: { l: "Sem movimentação", c: "gray" }, ausente: { l: "Não consta no relatório", c: "warn" }
+  };
+  function movPill(t) { var s = MOV_JUR[t]; return s ? '<span class="pill" style="color:var(--' + s.c + ');background:var(--' + s.c + '-soft)"><i></i>' + s.l + "</span>" : "—"; }
+  function variacao(v, antes) {
+    if (antes == null) return "";
+    var d = Math.round(((Number(v) || 0) - (Number(antes) || 0)) * 100) / 100;
+    return d ? ' <span class="meta">(' + (d > 0 ? "+" : "−") + money(Math.abs(d)) + ")</span>" : ' <span class="meta">(sem variação)</span>';
+  }
+  var ROTULO_GRUPO = { aberto: "Valor em aberto", negociado: "Valor negociado", ignorar: "Não considerar" };
+  // resumo de conferência antes de gravar a competência
+  function mostrarInad(d) {
+    var R = jurRelatorio, A = R.analise, s = d.resumo, P = d.anterior, res = $("jurImpRes"), html = "";
+    R.ultimo = d;
+    html += "<p>Competência <b>" + mesBR(d.mes) + "</b>" + (d.mesAnt ? ", comparada com <b>" + mesBR(d.mesAnt) + "</b>." : " — primeira competência importada.") + "</p>";
+    if (d.jaImportada) html += '<div class="form-err" style="background:var(--info-soft);color:var(--info)">Esta competência já foi importada em ' + dataHora(d.jaImportada) + ". Gravar de novo substitui os dados deste mês, sem duplicar nada.</div>";
+    if (!d.atualizaPainel) html += '<div class="form-err" style="background:var(--warn-soft);color:var(--warn)">A última competência importada é ' + mesBR(d.ultima) + ". Este mês, mais antigo, entra só no histórico; os valores do painel continuam os de " + mesBR(d.ultima) + ".</div>";
+    function linha(rot, val) { return "<tr><td>" + rot + '</td><td class="tabular right">' + val + "</td></tr>"; }
+    html += '<div class="table-wrap"><table class="data"><tbody>' +
+      linha("Registros importados (parcelas de alunos da base)", "<b>" + s.registros + "</b> de " + A.total + " no(s) relatório(s)") +
+      linha("Alunos do Painel jurídico encontrados", "<b>" + s.noRelatorio + "</b> de " + s.casos) +
+      linha("Total classificado como <b>valor em aberto</b>", "<b>" + money(s.aberto) + "</b>" + (P ? variacao(s.aberto, P.aberto) : "")) +
+      linha("Total classificado como <b>valor negociado</b>", "<b>" + money(s.negociado) + "</b>" + (P ? variacao(s.negociado, P.negociado) : "")) +
+      linha("Casos com valor em aberto · casos com valor negociado", s.casosAberto + " · " + s.casosNegociado) +
+      linha("Registros duplicados (mesma parcela em mais de um relatório, contados uma vez)", A.dup + (A.dupMesmo ? " · " + A.dupMesmo + " linha(s) repetida(s) no mesmo arquivo" : "")) +
+      linha("Registros sem conta financeira identificada", s.semConta) +
+      linha("Nomes semelhantes ou possíveis duplicidades", A.semelhantes.length) +
+      linha("Divergências entre os relatórios", A.divergencias.length) +
+      (d.mesAnt ? linha("Em relação a " + mesBR(d.mesAnt), s.reclassificados + " mudaram de classificação · " + s.alterados + " com valor alterado · " + s.novos + " entraram · " + s.semMovimento + " sem movimentação · " + s.sairam + " deixaram de constar") : "") +
+      linha("Casos para conferência manual", "<b>" + s.conferir + "</b>") +
+      linha("Alunos do relatório fora da base (ignorados)", s.foraDoPainel) +
+      "</tbody></table></div>";
+    if (A.semelhantes.length) html += '<details><summary class="meta" style="cursor:pointer">Ver nomes semelhantes</summary><div class="meta">' + A.semelhantes.map(esc).join("<br>") + "</div></details>";
+    if (A.divergencias.length) html += '<details><summary class="meta" style="cursor:pointer">Ver divergências</summary><div class="meta">' + A.divergencias.slice(0, 200).map(function (x) {
+      return esc(x.aluno) + " · " + esc(x.conta || "sem conta") + " · venc. " + (x.venc ? br(x.venc) : "—") + ": " + money(x.v1) + " (" + esc(x.a1) + ") × " + money(x.v2) + " (" + esc(x.a2) + ") — vale o primeiro";
+    }).join("<br>") + "</div></details>";
+    // contas financeiras
+    if (d.pendentes.length) html += '<div class="form-err">' + d.pendentes.length + " conta(s) financeira(s) não estão nas regras de classificação. Escolha para onde vai cada uma (a escolha fica salva para os próximos meses). Nada é gravado enquanto houver conta sem classificação.</div>";
+    html += '<h4 style="margin:14px 0 6px">Registros por conta financeira</h4><div class="table-wrap"><table class="data"><thead><tr><th>Conta financeira</th><th>Vai para</th><th class="right">Registros</th><th class="right">Valor</th><th class="right">Alunos</th></tr></thead><tbody>' +
+      s.porConta.map(function (c) {
+        var escolha = R.regras[c.conta] || "";
+        var cel = c.grupo && !R.regras[c.conta] ? ROTULO_GRUPO[c.grupo]
+          : '<select data-conta="' + esc(c.conta) + '"><option value="">— classificar —</option>' + ["aberto", "negociado", "ignorar"].map(function (g) { return '<option value="' + g + '"' + (escolha === g ? " selected" : "") + ">" + ROTULO_GRUPO[g] + "</option>"; }).join("") + "</select>";
+        return "<tr><td>" + esc(c.conta || "(sem conta financeira)") + "</td><td>" + cel + '</td><td class="tabular right">' + c.registros + '</td><td class="tabular right">' + money(c.valor) + '</td><td class="tabular right">' + c.casos + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+    // movimentação por caso
+    var ms = d.movimentos.filter(function (m) { return m.tipo !== "sem_movimento" && (m.tipo !== "ausente" || m.saiu); })
+      .sort(function (a, b) { return (!a.conferir - !b.conferir) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
+    if (ms.length) {
+      html += '<h4 style="margin:14px 0 6px">Movimentação dos casos (' + ms.length + ")</h4>" +
+        '<div class="table-wrap" style="max-height:340px;overflow:auto"><table class="data"><thead><tr><th>Aluno</th><th>Movimento</th><th class="right">Valor em aberto</th><th class="right">Valor negociado</th></tr></thead><tbody>' +
+        ms.map(function (m) {
+          return "<tr><td><b>" + esc(m.aluno || "—") + '</b><div class="meta">' + (m.ra ? "RA " + esc(m.ra) + " · " : "") + esc(m.carteira || "—") + "</div>" + (m.conferir ? '<div class="meta" style="color:var(--warn)">Conferir: ' + esc(m.conferir) + "</div>" : "") + "</td>" +
+            "<td>" + movPill(m.tipo) + "</td>" +
+            '<td class="tabular right">' + (m.presente ? moneyOu(m.abAntes) + " → <b>" + money(m.ab) + "</b>" : moneyOu(m.abAntes) + '<div class="meta">mantido</div>') + "</td>" +
+            '<td class="tabular right">' + (m.presente ? moneyOu(m.negAntes) + " → <b>" + money(m.neg) + "</b>" : moneyOu(m.negAntes) + '<div class="meta">mantido</div>') + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }
+    if (d.foraDoPainel.length) html += '<details style="margin-top:10px"><summary class="meta" style="cursor:pointer">' + d.foraDoPainel.length + " aluno(s) do relatório não estão na base do Painel jurídico: nenhum dado deles foi importado (ver lista)</summary><div class=\"meta\" style=\"margin-top:6px\">" +
+      d.foraDoPainel.slice(0, 300).map(function (x) { return esc((x.ra ? x.ra + " · " : "") + (x.aluno || "—")) + " (" + money(x.valor) + ")"; }).join("<br>") + "</div></details>";
+    if (d.outrasCarteiras.length) html += '<div class="meta" style="margin-top:6px">' + d.outrasCarteiras.length + " aluno(s) têm caso em mais de uma carteira: o relatório foi aplicado na carteira mais recente.</div>";
+    // inconsistências: só grava depois de a pessoa confirmar que conferiu
+    var precisaConfirmar = A.divergencias.length || A.semelhantes.length || A.dupMesmo;
+    if (precisaConfirmar) html += '<label class="check-linha" style="margin-top:12px"><input type="checkbox" id="jurConfirmo"> <span>Conferi as divergências e possíveis duplicidades acima e quero gravar mesmo assim</span></label>';
+    res.innerHTML = html;
+    var b = $("jurImpOk");
+    function libera() { b.disabled = d.pendentes.length > 0 || (precisaConfirmar && !$("jurConfirmo").checked); }
+    b.textContent = "Gravar competência " + mesBR(d.mes); libera();
+    if (precisaConfirmar) $("jurConfirmo").addEventListener("change", libera);
+    res.querySelectorAll("select[data-conta]").forEach(function (sel) {
+      sel.addEventListener("change", function () { if (sel.value) R.regras[sel.getAttribute("data-conta")] = sel.value; else delete R.regras[sel.getAttribute("data-conta")]; simularRelatorioJur(); });
+    });
+  }
+  function aplicarInad(btn) {
+    var R = jurRelatorio;
+    btn.disabled = true; btn.textContent = "Gravando…";
+    api("POST", "/api/juridico/inadimplencia", { linhas: R.enviadas, simular: false, competencia: R.competencia, regras: R.regras, dataRelatorio: R.dataRel || hoje(), arquivos: R.arquivos.map(function (a) { return a.nome; }) }).then(function (d) {
+      if (d.inadData) jurInadData = d.inadData;
+      $("jurRelFiltros").innerHTML = ""; jurRelatorio = null; btn.textContent = "Gravado";
+      $("jurImpRes").innerHTML = '<p><b style="color:var(--success)">Competência ' + mesBR(d.mes) + " gravada:</b> " + d.resumo.noRelatorio + " aluno(s) no relatório, " + d.alterados + " caso(s) atualizado(s) no painel" +
+        (d.atualizaPainel ? "" : " (mês antigo: só o histórico foi gravado)") + ". As movimentações ficaram registradas nas tratativas e no histórico de cada aluno; " + d.resumo.conferir + " caso(s) ficaram marcados para conferência.</p>";
+      toast("Competência " + mesBR(d.mes) + " gravada."); return carregarJuridico();
+    }).catch(function (x) {
+      btn.disabled = false; btn.textContent = "Tentar de novo";
+      $("jurImpRes").insertAdjacentHTML("afterbegin", '<div class="form-err">Não foi possível gravar: ' + esc(x.message) + "</div>");
+    });
+  }
   function simularRelatorioJur() {
     var envio = linhasEnviarJur();
     jurRelatorio.enviadas = envio;
     $("jurImpOk").disabled = true;
     if (!envio.length) {
-      $("jurImpRes").innerHTML = '<div class="meta">' + (jurModo === "recebimento" ? "Nenhum pagamento a partir desta data." : "Nenhuma conta marcada.") + "</div>";
+      $("jurImpRes").innerHTML = '<div class="meta">' + (jurModo === "recebimento" ? "Nenhum pagamento a partir desta data." : "Nenhuma parcela nos relatórios.") + "</div>";
       $("jurImpOk").textContent = "Nada para aplicar"; return Promise.resolve();
     }
+    if (jurModo === "inadimplencia") return api("POST", "/api/juridico/inadimplencia", { linhas: envio, simular: true, competencia: jurRelatorio.competencia, regras: jurRelatorio.regras })
+      .then(mostrarInad).catch(function (x) { $("jurImpRes").innerHTML = '<div class="form-err">' + esc(x.message) + "</div>"; });
     return api("POST", "/api/juridico/" + jurModo, { linhas: envio, simular: true }).then(mostrarComparacaoJur)
       .catch(function (x) { $("jurImpRes").innerHTML = '<div class="form-err">' + esc(x.message) + "</div>"; });
   }
@@ -3044,6 +3261,7 @@
   }
   function aplicarRelatorioJur(btn) {
     if (!jurRelatorio) return;
+    if (jurModo === "inadimplencia") return aplicarInad(btn);
     btn.disabled = true; btn.textContent = "Aplicando…";
     api("POST", "/api/juridico/" + jurModo, { linhas: jurRelatorio.enviadas, simular: false, dataRelatorio: jurRelatorio.dataRel || hoje() }).then(function (d) {
       if (jurModo === "inadimplencia" && d.inadData) jurInadData = d.inadData;
@@ -3091,6 +3309,30 @@
       if (jurTab !== "evolucao") return;
       var Chart = r[0], hist = r[1].historico;
       Chart.defaults.color = corVar("muted"); Chart.defaults.borderColor = corVar("line"); Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+      // evolução mês a mês das competências importadas: em aberto e negociado em linhas separadas
+      var comps = r[1].competencias || [];
+      $("jCompNota").textContent = comps.length ? comps.length + " competência(s) importada(s), desde " + mesBR(comps[0].mes) + "." : "Nenhuma competência importada ainda. Use “Importar inadimplência” para gravar o primeiro mês.";
+      graficoJur("jChartComp", {
+        type: "line",
+        data: { labels: comps.map(function (c) { return mesBR(c.mes); }), datasets: [
+          { label: "Valor em aberto", borderColor: corVar("danger"), backgroundColor: corVar("danger"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.aberto || 0; }) },
+          { label: "Valor negociado", borderColor: corVar("info"), backgroundColor: corVar("info"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.negociado || 0; }) }
+        ] },
+        options: { scales: { y: { ticks: { callback: function (v) { return "R$ " + Number(v).toLocaleString("pt-BR"); } } } } }
+      });
+      function varCel(c, i, k) {
+        if (!i) return "";
+        var d = Math.round(((Number(c[k]) || 0) - (Number(comps[i - 1][k]) || 0)) * 100) / 100;
+        return '<div class="meta">' + (d ? (d > 0 ? "+" : "−") + money(Math.abs(d)) : "sem variação") + "</div>";
+      }
+      $("jCompTabela").innerHTML = comps.slice().reverse().map(function (c) {
+        var i = comps.indexOf(c);
+        return "<tr><td><b>" + mesBR(c.mes) + '</b><div class="meta">' + (c.importadoPor ? esc(c.importadoPor) + " · " : "") + dataCurta(c.importadoEm) + '</div></td><td class="tabular right">' + (c.noRelatorio || 0) + " de " + (c.casos || 0) +
+          '</td><td class="tabular right">' + money(c.aberto) + varCel(c, i, "aberto") + '</td><td class="tabular right">' + money(c.negociado) + varCel(c, i, "negociado") +
+          '</td><td class="tabular right">' + (c.casosAberto || 0) + " · " + (c.casosNegociado || 0) + '</td><td class="tabular right">' + (c.reclassificados || 0) + '</td><td class="tabular right">' + (c.semMovimento || 0) +
+          '</td><td class="tabular right">' + (c.sairam || 0) + '</td><td class="tabular right">' + (c.conferir || 0) + "</td></tr>";
+      }).join("");
+      $("jCompVazio").hidden = comps.length > 0;
       var carteiras = unicos("carteira");
       graficoJur("jChartCarteira", {
         type: "bar",

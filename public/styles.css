@@ -411,3 +411,6 @@ td.obs-cell{max-width:260px}
 .linkbtn.danger{color:var(--danger)}
 .linkbtn.danger.armed{font-weight:800;text-decoration:underline}
 .jur-obs .ob-edit{width:100%;margin-top:4px}
+
+/* Painel jurídico: indicadores da competência */
+.comp-tit{font-size:13.5px;color:var(--muted);margin:-6px 0 8px}
