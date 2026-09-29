@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v45";
+  var VERSAO = "30/09 · v46";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2776,7 +2776,18 @@
       var buf = new Uint8Array(r.result);
       var p = ehExcel(f) ? tabelaDoExcel(buf) : Promise.resolve([parseCSV(new TextDecoder("utf-8").decode(buf))]);
       p.then(function (ts) {
-        var linhas = []; ts.forEach(function (t) { linhas = linhas.concat(linhasCarteira(t)); });
+        // planilha com várias abas: se alguma aba tem a coluna Carteira (ou se chama "Carteira AAAA"),
+        // só essas contam; abas de parcelas (RA e Aluno repetidos em cada linha) ficam de fora
+        var comCart = ts.filter(function (t) { return colunaJur(t.headers, JUR_COLUNAS.carteira) !== -1 || /^carteira\s+\d{4}$/i.test(String(t.aba || "").trim()); });
+        var usar = comCart.length ? comCart : ts, linhas = [], vistos = {};
+        usar.forEach(function (t) {
+          linhasCarteira(t).forEach(function (l) {
+            // o mesmo aluno repetido na mesma carteira conta uma vez
+            var k = (l.ra || normHeader(l.aluno)) + "|" + normHeader(l.carteira);
+            if (!vistos[k]) { vistos[k] = 1; linhas.push(l); }
+          });
+        });
+        var abasFora = ts.length - usar.length;
         if (!linhas.length) throw new Error("Não achei as colunas RA ou Aluno. Use o modelo (botão “Baixar modelo”).");
         jurPendentes = linhas;
         var existe = function (l) { return casosJur.some(function (c) { return ((l.ra && c.ra === l.ra) || (!l.ra && normHeader(c.aluno) === normHeader(l.aluno))) && (!l.carteira || !c.carteira || normHeader(c.carteira) === normHeader(l.carteira)); }); };
@@ -2785,7 +2796,8 @@
         var destino = semCart ? '<div class="field"><label for="jurCartDest">Carteira destas linhas</label><select id="jurCartDest">' + jurCarteiras.map(function (c) {
           return '<option value="' + esc(c.nome) + '"' + (c.nome === jurCartSel ? " selected" : "") + ">" + esc(c.nome) + (c.ano ? " · ano letivo " + esc(c.ano) : "") + "</option>";
         }).join("") + '</select><span class="hint">' + semCart + " linha(s) sem a coluna Carteira vão para esta carteira. Não está na lista? Crie em “+ Nova carteira”.</span></div>" : "";
-        res.innerHTML = "<p><b>" + esc(f.name) + "</b>: " + linhas.length + " aluno(s) — " + (linhas.length - ja) + " novo(s) na carteira e " + ja + " que já estão (têm o nome e o ano letivo atualizados).</p>" +
+        res.innerHTML = (abasFora ? '<div class="meta">' + abasFora + " aba(s) sem a coluna Carteira foram ignoradas (" + ts.filter(function (t) { return usar.indexOf(t) === -1; }).map(function (t) { return esc(t.aba || "sem nome"); }).join(", ") + "). Só RA, Aluno, Carteira e Ano letivo são importados.</div>" : "") +
+          "<p><b>" + esc(f.name) + "</b>: " + linhas.length + " aluno(s) — " + (linhas.length - ja) + " novo(s) na carteira e " + ja + " que já estão (têm o nome e o ano letivo atualizados).</p>" +
           destino +
           '<div class="table-wrap"><table class="data compacta"><thead><tr><th>RA</th><th>Aluno</th><th>Carteira</th><th>Ano letivo</th></tr></thead><tbody>' +
           linhas.slice(0, 8).map(function (l) { return "<tr><td>" + esc(l.ra || "—") + "</td><td>" + esc(l.aluno || "—") + "</td><td>" + esc(l.carteira || "—") + "</td><td>" + esc(l.ano || "—") + "</td></tr>"; }).join("") +
@@ -2841,7 +2853,8 @@
     aluno: ["aluno", "nome do aluno", "nome", "nome completo"],
     valor: ["devido", "valor devido", "total devido", "valor em aberto", "valor em aberto (r$)", "saldo", "valor", "valor (r$)"],
     venc: ["vencimento", "data vcto.", "data vcto", "data de vencimento", "dt vencimento", "dt. vencimento", "vcto"],
-    parc: ["parc.", "parc", "parcela", "n parcela"]
+    parc: ["parc.", "parc", "parcela", "n parcela"],
+    conta: ["conta financeira", "conta"]
   };
   // uma linha por parcela; o relatório do sistema separa as parcelas por "Conta financeira: <conta>"
   function linhasRelatorio(t) {
@@ -2864,7 +2877,7 @@
       if (!ra && !nome) return;
       if (!ra && /^(total|soma|subtotal)\b/i.test(normHeader(nome))) return;
       if (ra && !/\d/.test(ra)) return; // linha de título repetida no meio do relatório
-      out.push({ ra: ra, nome: nome, valorAberto: valorCelula(ix.valor === -1 ? "" : r[ix.valor]) || 0, vencimento: dataCelula(ix.venc === -1 ? "" : r[ix.venc]) || "", parc: String(cel("parc")).replace(/\.0+$/, ""), conta: conta });
+      out.push({ ra: ra, nome: nome, valorAberto: valorCelula(ix.valor === -1 ? "" : r[ix.valor]) || 0, vencimento: dataCelula(ix.venc === -1 ? "" : r[ix.venc]) || "", parc: String(cel("parc")).replace(/\.0+$/, ""), conta: cel("conta") || conta });
     });
     return out;
   }
