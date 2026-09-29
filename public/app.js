@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v35";
+  var VERSAO = "29/09 · v36";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2447,7 +2447,9 @@
       if (ju === "sim" && !c.enviadoJuridico) return false;
       if (ju === "nao" && c.enviadoJuridico) return false;
       if (cf === "conferir" && !c.flagConflito) return false;
-      if (cf && cf !== "conferir" && jurMovs[c.id] !== cf) return false;
+      // "constam": apareceram no último relatório (qualquer movimento, menos "não consta")
+      if (cf === "presente" && (!jurMovs[c.id] || jurMovs[c.id] === "ausente")) return false;
+      if (cf && cf !== "conferir" && cf !== "presente" && jurMovs[c.id] !== cf) return false;
       if (q && [c.aluno, c.responsavel, c.ra, c.cpf].join(" ").toLowerCase().indexOf(q) === -1) return false;
       return true;
     }).sort(function (a, b) { return (Number(b.valorAberto) || 0) - (Number(a.valorAberto) || 0) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
