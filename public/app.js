@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v42";
+  var VERSAO = "30/09 · v43";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2456,6 +2456,14 @@
     }).sort(function (a, b) { return (Number(b.valorAberto) || 0) - (Number(a.valorAberto) || 0) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
   }
 
+  // parcelas do último relatório de inadimplência (em aberto e negociado juntas), separadas pelo
+  // vencimento em relação a hoje: vencidas × a vencer (futuras)
+  function celParcelasJur(c, vencidas) {
+    var hj = hoje(), n = 0, v = 0;
+    (c.parcelasVenc || []).forEach(function (p) { if ((p[0] < hj) === vencidas) { n++; v += Number(p[1]) || 0; } });
+    if (!(c.parcelasVenc || []).length) return '<td class="muted">—</td>';
+    return '<td>' + (n ? '<span class="tabular">' + n + (n === 1 ? " parcela" : " parcelas") + '</span><div class="meta tabular">' + money(v) + "</div>" : '<span class="muted">0</span>') + "</td>";
+  }
   function renderTabelaJur() {
     var vis = filtrarJur();
     // soma dos casos filtrados: ajuda a conferir os totais (ex.: quanto está nos que não constam no relatório)
@@ -2472,7 +2480,9 @@
         esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + (turma ? " · " + esc(turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" +
         (c.parcelas ? '<div class="meta">' + c.parcelas + (c.parcelas === 1 ? " parcela" : " parcelas") + "</div>" : "") + "</td>" +
-        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + moneyOu(c.valorNegociado) + "</span></td>" +
+        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + moneyOu(c.valorNegociado) + "</span>" +
+        (c.parcelasNegociado ? '<div class="meta">' + c.parcelasNegociado + (c.parcelasNegociado === 1 ? " parcela" : " parcelas") + "</div>" : "") + "</td>" +
+        celParcelasJur(c, true) + celParcelasJur(c, false) +
         "<td>" + jpill(c.status) + "</td>" +
         "<td>" + esc(c.carteira || "—") + (c.ano ? '<div class="meta">ano letivo ' + esc(c.ano) + "</div>" : "") + "</td>" +
         '<td><span class="yn ' + (c.enviadoJuridico ? "sim" : "nao") + '">' + (c.enviadoJuridico ? "Sim" : "Não") + "</span></td>" +
@@ -3109,8 +3119,9 @@
       // ano do vencimento: aluno com caso em duas carteiras recebe cada parcela no caso do ano letivo dela
       var ano = String(l.vencimento || "").slice(0, 4);
       var nome = l.nome || l.aluno || "", k = (l.ra || "") + "|" + normHeader(nome) + "|" + (l.conta || "") + "|" + (l.conta ? "" : l.grupoArquivo) + "|" + ano, g = ag[k];
-      if (!g) { g = ag[k] = { ra: l.ra || "", aluno: nome, conta: l.conta || "", ano: ano, valor: 0, parcelas: 0 }; if (!l.conta && l.grupoArquivo) g.grupoArquivo = l.grupoArquivo; ordem.push(k); }
+      if (!g) { g = ag[k] = { ra: l.ra || "", aluno: nome, conta: l.conta || "", ano: ano, valor: 0, parcelas: 0, venc: [] }; if (!l.conta && l.grupoArquivo) g.grupoArquivo = l.grupoArquivo; ordem.push(k); }
       g.valor += Number(l.valorAberto) || 0; g.parcelas++;
+      if (l.vencimento) g.venc.push([l.vencimento, Math.round((Number(l.valorAberto) || 0) * 100) / 100]);
     });
     R.enviadas = ordem.map(function (k) { var g = ag[k]; g.valor = Math.round(g.valor * 100) / 100; return g; });
     R.analise = { total: total, dup: dup, dupMesmo: dupMesmo, divergencias: divergencias, semelhantes: semelhantes };
