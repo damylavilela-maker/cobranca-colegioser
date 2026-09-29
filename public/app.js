@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v48";
+  var VERSAO = "30/09 · v49";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2484,8 +2484,7 @@
         '<td><div class="nome">' + esc(c.aluno || "—") + (c.flagConflito ? ' <span class="pill" style="color:var(--warn);background:var(--warn-soft)" title="' + esc(c.conferirMotivo || "Precisa de conferência") + '"><i></i>Conferir</span>' : "") + '</div><div class="meta">' +
         esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + (turma ? " · " + esc(turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + qtdParc(c.parcelas) + "</td>" +
-        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + money(c.valorNegociado || 0) + "</span>" + qtdParc(c.parcelasNegociado) + (c.acordo && c.acordo.tipo ? '<div class="meta">Acordo ' + esc(c.acordo.tipo) + (c.acordo.valor != null ? ": " + money(c.acordo.valor) : "") + (c.acordo.saldoAberto != null ? " · saldo " + money(c.acordo.saldoAberto) : "") + "</div>" : "") + "</td>" +
-        celParcelasJur(c, true) + celParcelasJur(c, false) +
+        '<td><span class="money tabular' + (Number(c.valorNegociado) ? "" : " zero") + '">' + money(c.valorNegociado || 0) + "</span>" + qtdParc(c.parcelasNegociado) + "</td>" +
         "<td>" + jpill(c.status) + "</td>" +
         "<td>" + esc(c.carteira || "—") + (c.ano ? '<div class="meta">ano letivo ' + esc(c.ano) + "</div>" : "") + "</td>" +
         '<td class="muted obs-cell">' + esc(ob ? (ob.length > 60 ? ob.slice(0, 60).trim() + "…" : ob) : "—") + "</td>" +
