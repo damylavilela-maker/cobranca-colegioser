@@ -1883,8 +1883,12 @@ async function inadimplenciaJuridico(req, env, eu) {
     const h = ant[c.id];
     // o aluno está no relatório, mas nenhuma parcela é do ano letivo desta carteira
     if (outras[c.id]) {
+      // carteira antiga já paga (Quitado ou sem valor) é o normal: aluno pagou, voltou a dever e
+      // entrou em outra carteira. Só avisa quando o caso ainda tem valor e é a 1ª vez que acontece.
+      const temValor = c.status !== "quitado" && (Number(c.valor_aberto) > 0 || Number(c.valor_negociado) > 0);
+      const avisar = temValor && !(h && h.movimento === "outra_carteira");
       movs.push({ c, presente: false, tipo: "outra_carteira", saiu: false, h,
-        conferir: `O aluno consta no relatório de ${mesBR(mes)}, mas nenhuma parcela vence no ano letivo desta carteira (as parcelas foram para o caso da ${outras[c.id].usado}). Valores mantidos: conferir se o débito desta carteira foi pago ou renegociado.` });
+        conferir: !avisar ? "" : `O aluno consta no relatório de ${mesBR(mes)}, mas nenhuma parcela vence no ano letivo desta carteira (as parcelas foram para o caso da ${outras[c.id].usado}). Valores mantidos: conferir se o débito desta carteira foi pago ou renegociado.` });
       return;
     }
     // "deixou de constar": estava no mês anterior (no 1º mês: tinha valor no painel)
