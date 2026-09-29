@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v39";
+  var VERSAO = "29/09 · v40";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2457,7 +2457,9 @@
 
   function renderTabelaJur() {
     var vis = filtrarJur();
-    $("jurCount").textContent = vis.length + " de " + casosJur.length + " casos";
+    // soma dos casos filtrados: ajuda a conferir os totais (ex.: quanto está nos que não constam no relatório)
+    var somaAb = 0, somaNeg = 0; vis.forEach(function (c) { somaAb += Number(c.valorAberto) || 0; somaNeg += Number(c.valorNegociado) || 0; });
+    $("jurCount").textContent = vis.length + " de " + casosJur.length + " casos · em aberto " + money(somaAb) + " · negociado " + money(somaNeg);
     $("jurVazio").hidden = vis.length > 0;
     $("jurVazio").textContent = casosJur.length ? "Nenhum caso encontrado com estes filtros." : "Nenhum caso cadastrado ainda. Use “Novo caso” ou “Importar planilha”.";
     // mesmo formato do Painel: aluno com responsável · RA · turma embaixo; valor em aberto com as parcelas
