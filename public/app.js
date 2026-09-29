@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v34";
+  var VERSAO = "29/09 · v35";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -890,7 +890,9 @@
         linhas.forEach(function (l) {
           // as parcelas vêm separadas por "Conta financeira: <nome>"
           var mc = /^conta\s+financeira\s*:?\s*(.*)$/i.exec(l.texto.trim());
-          if (mc) { conta = mc[1].trim(); return; } // código e/ou nome da conta (o servidor reconhece os dois)
+          // (o topo de cada página repete o filtro "Conta financeira: 8 / 9 / 26…", antes dos títulos
+          // das colunas: esse não muda a conta; o grupo continua na página seguinte)
+          if (mc) { if (colDevido != null) conta = mc[1].trim(); return; } // código e/ou nome da conta (o servidor reconhece os dois)
           var cab = l.cels.filter(function (c) { return /^devido$/i.test(c.s); })[0];
           if (cab && l.cels.some(function (c) { return /^c[oó]digo$/i.test(c.s); })) { colDevido = cab.cx; achouCabecalho = true; return; }
           var m = l.texto.match(/^(\d{1,12})\s+(.+?)\s+(\d{2}\/\d{2}\/\d{4})\s+(.*)$/);
@@ -899,7 +901,7 @@
           if (!nums.length) return;
           var dev = nums[nums.length - 1];
           if (colDevido != null) nums.forEach(function (c) { if (Math.abs(c.cx - colDevido) < Math.abs(dev.cx - colDevido)) dev = c; });
-          brutos.push({ ra: m[1], nome: m[2].trim(), valorAberto: parseMoneyBR(dev.s), vencimento: parseDateBR(m[3]), turma: "", responsavel: "", telefone: "", email: "", conta: conta });
+          brutos.push({ ra: m[1], nome: m[2].trim(), valorAberto: parseMoneyBR(dev.s), vencimento: parseDateBR(m[3]), parc: (/^(\d{1,3})\s/.exec(m[4]) || [])[1] || "", turma: "", responsavel: "", telefone: "", email: "", conta: conta });
         });
       });
       return { brutos: brutos, cabecalho: achouCabecalho };
