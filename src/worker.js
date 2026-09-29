@@ -373,6 +373,7 @@ async function rotear(req, env, url) {
     if (partes[1] === "evolucao" && m === "GET") return evolucaoJuridico(env);
     if (partes[1] === "inadimplencia" && m === "POST") return inadimplenciaJuridico(req, env, eu);
     if (partes[1] === "competencias" && m === "GET") return competenciasJuridico(env);
+    if (partes[1] === "quitar-sem-valor" && m === "POST") return quitarSemValorJur(req, env, eu);
     if (partes.length === 3 && partes[2] === "historico" && m === "GET") return historicoCasoJur(env, partes[1]);
     if (partes[1] === "recebimento" && partes[2] === "desfazer" && m === "POST") { exigirAdmin(eu); return desfazerRecebimentos(req, env, eu); }
     if (partes[1] === "recebimento" && m === "POST") return recebimentoJuridico(req, env, eu);
@@ -1777,6 +1778,22 @@ async function competenciasJuridico(env) {
   const r = (await env.DB.prepare("SELECT * FROM jur_competencias ORDER BY mes").all()).results;
   const { regras } = await regrasContas(env);
   return json({ competencias: r.map(compSaida), regras: Object.values(regras) });
+}
+// Casos escolhidos na tela que não têm valor nenhum (em aberto e negociado zerados ou vazios):
+// ficam Quitado, com o aviso de conferência apagado e o registro nas tratativas. O servidor
+// confere de novo: caso com valor não é alterado.
+async function quitarSemValorJur(req, env, eu) {
+  const b = await corpo(req);
+  const ids = new Set((Array.isArray(b.ids) ? b.ids : []).slice(0, 2000).map((x) => texto(x, 40)));
+  const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0 AND status <> 'quitado'").all()).results
+    .filter((c) => ids.has(c.id) && !(Number(c.valor_aberto) > 0) && !(Number(c.valor_negociado) > 0));
+  const agora = agoraISO(), stmts = [];
+  casos.forEach((c) => {
+    stmts.push(env.DB.prepare("UPDATE jur_casos SET status = 'quitado', valor_aberto = 0, parcelas = 0, flag_conflito = 0, conferir_motivo = '', atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agora, eu.nome, c.id));
+    stmts.push(insertObsJur(env, c.id, agora, `Status ${JUR_ST_ROTULO[c.status] || c.status} → Quitado (sem valor em aberto nem negociado; conferido no sistema).`, eu));
+  });
+  await executarEmLotes(env, stmts);
+  return json({ quitados: casos.length });
 }
 async function historicoCasoJur(env, id) {
   await buscarCasoJur(env, id);

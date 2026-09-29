@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v40";
+  var VERSAO = "29/09 · v41";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2479,9 +2479,23 @@
         '<td class="muted">' + dataCurta(c.atualizadoEm) + (c.competencia ? '<div class="meta">ref. ' + mesBR(c.competencia) + "</div>" : "") + "</td></tr>";
     }).join("");
     $("jurMais").hidden = vis.length <= jurLimite;
+    // casos filtrados sem nenhum valor (em aberto e negociado zerados) que ainda não estão Quitado
+    jurSemValor = vis.filter(function (c) { return c.status !== "quitado" && !(Number(c.valorAberto) > 0) && !(Number(c.valorNegociado) > 0); });
+    var bq = $("jurQuitarLote"); bq.hidden = !jurSemValor.length; bq.classList.remove("armed");
+    bq.textContent = "Marcar como Quitado os " + jurSemValor.length + " caso(s) sem valor";
   }
   ["jBusca", "jStatus", "jCarteira", "jAno", "jJuridico", "jConferir"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; renderTabelaJur(); }); });
   $("jurMais").addEventListener("click", function () { jurLimite += 300; renderTabelaJur(); });
+  var jurSemValor = [];
+  $("jurQuitarLote").addEventListener("click", function () {
+    var b = this, ids = jurSemValor.map(function (c) { return c.id; });
+    if (!ids.length) return;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar: " + ids.length + " caso(s) sem valor → Quitado"; return; }
+    b.disabled = true;
+    api("POST", "/api/juridico/quitar-sem-valor", { ids: ids }).then(function (d) {
+      toast(d.quitados + " caso(s) marcados como Quitado."); return carregarJuridico();
+    }).catch(function (x) { toast(x.message); }).then(function () { b.disabled = false; });
+  });
   $("jurTbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirCasoJur(tr.getAttribute("data-id")); });
 
   // editar caso (janela)
