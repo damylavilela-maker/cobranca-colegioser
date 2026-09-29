@@ -1781,13 +1781,17 @@ async function inadimplenciaJuridico(req, env, eu) {
     }
     const c = achados[0];
     achados.slice(1).forEach((o) => { outras[o.id] = { ra: o.ra, aluno: o.aluno, carteira: o.carteira, usado: c.carteira }; });
-    const g = conta ? grupoDe(conta) : null;
-    const ct = contas[conta] || (contas[conta] = { conta, grupo: g, registros: 0, valor: 0, casos: new Set() });
+    // relatório exportado sem as linhas "Conta financeira" (já filtrado por grupo): vale o tipo
+    // escolhido para o arquivo inteiro
+    const gArq = ["aberto", "negociado"].includes(l.grupoArquivo) ? l.grupoArquivo : null;
+    const g = conta ? grupoDe(conta) : gArq;
+    const chave = conta || (gArq ? `(relatório de ${gArq === "aberto" ? "valor em aberto" : "valor negociado"}, sem conta)` : "");
+    const ct = contas[chave] || (contas[chave] = { conta: chave, grupo: g, registros: 0, valor: 0, casos: new Set(), semConta: !conta });
     ct.registros += n; ct.valor = r2(ct.valor + valor); ct.casos.add(c.id);
     registros += n;
     if (!conta) semConta += n;
     const p = porCaso[c.id] || (porCaso[c.id] = { c, aberto: 0, negociado: 0, pAb: 0, pNeg: 0, contas: {} });
-    const nomeConta = conta || "(sem conta)";
+    const nomeConta = chave || "(sem conta)";
     p.contas[nomeConta] = r2((p.contas[nomeConta] || 0) + valor);
     if (g === "aberto") { p.aberto += valor; p.pAb += n; }
     else if (g === "negociado") { p.negociado += valor; p.pNeg += n; }
@@ -1837,7 +1841,7 @@ async function inadimplenciaJuridico(req, env, eu) {
     reclassificados: contar("reclassificado"), semMovimento: contar("sem_movimento"), novos: contar("novo"), alterados: contar("alterado"),
     ausentes: contar("ausente"), sairam: movs.filter((m) => m.saiu).length, conferir: movs.filter((m) => m.conferir).length,
     foraDoPainel: Object.keys(fora).length,
-    porConta: Object.values(contas).map((c) => ({ conta: c.conta, grupo: c.grupo, registros: c.registros, valor: c.valor, casos: c.casos.size })).sort((x, y) => y.valor - x.valor)
+    porConta: Object.values(contas).map((c) => ({ conta: c.conta, grupo: c.grupo, registros: c.registros, valor: c.valor, casos: c.casos.size, semConta: c.semConta })).sort((x, y) => y.valor - x.valor)
   };
   const saida = {
     mes, mesAnt, anterior: compAnt ? compSaida(compAnt) : null, jaImportada: jaImportada ? jaImportada.importado_em : "", atualizaPainel, ultima,

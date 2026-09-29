@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v32";
+  var VERSAO = "29/09 · v33";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2873,7 +2873,7 @@
   var jurModo = "cadastro", jurRelatorio = null, jurInadData = "";
   var JUR_MODOS = {
     cadastro: { t: "Importar cadastro — Painel jurídico", s: "Use o modelo baixado para garantir as colunas certas. Casos com o mesmo RA são atualizados; RAs novos são criados. Célula vazia não apaga o que já está salvo.", b: "Importar casos" },
-    inadimplencia: { t: "Importar relatórios de inadimplência do mês", s: "Envie os relatórios de inadimplência do mês (Excel, CSV ou o PDF do sistema); pode mandar os dois juntos. Cada parcela vai para Valor em aberto ou Valor negociado conforme a conta financeira. Só os alunos que já estão no Painel jurídico entram; nenhum caso novo é criado. O mês fica guardado no histórico e é comparado com o anterior. Quem não aparece no relatório mantém os valores e fica marcado para conferência (não é quitado). Nada é gravado antes de você conferir o resumo.", b: "Gravar competência" },
+    inadimplencia: { t: "Importar relatórios de inadimplência do mês", s: "Envie os relatórios de inadimplência do mês (Excel, CSV ou o PDF do sistema); pode mandar os dois juntos. Cada parcela vai para Valor em aberto ou Valor negociado conforme a conta financeira. Só os alunos que já estão no Painel jurídico entram; nenhum caso novo é criado. Se o relatório vier sem as linhas “Conta financeira” (já filtrado por grupo de contas), indique se o arquivo é de valor em aberto ou de valor negociado. O mês fica guardado no histórico e é comparado com o anterior. Quem não aparece no relatório mantém os valores e fica marcado para conferência (não é quitado). Nada é gravado antes de você conferir o resumo.", b: "Gravar competência" },
     desfazer: { t: "Desfazer recebimentos importados", s: "Apaga todos os pagamentos que vieram do relatório de recebimento e as tratativas que eles criaram. Cada caso volta com o status e o valor em aberto de antes. Nada é apagado antes de você confirmar.", b: "Desfazer" },
     recebimento: { t: "Importar relatório de recebimento", s: "Envie o relatório de recebimento (Excel, CSV ou PDF) com aluno ou RA, data e valor pago. Cada pagamento é abatido do valor em aberto e registrado nas tratativas. Caso com acordo fica Em dia; sem acordo: zerou é Quitado, sobrou é Parcialmente pago. Um pagamento já lançado não é abatido de novo.", b: "Aplicar mudanças" }
   };
@@ -3051,6 +3051,7 @@
       var noArq = {};
       a.linhas.forEach(function (l) {
         total++;
+        if (!l.conta) l.grupoArquivo = a.grupo || "";
         var nome = l.nome || l.aluno || "", nn = normHeader(nome), v = Math.round((Number(l.valorAberto) || 0) * 100) / 100;
         var base = (l.ra || "") + "|" + nn + "|" + normHeader(l.conta || "") + "|" + (l.vencimento || "") + "|" + (l.parc || ""), k = base + "|" + v.toFixed(2);
         if (vistos[k] !== undefined && vistos[k] !== ia) { dup++; return; }
@@ -3082,8 +3083,8 @@
     });
     var ag = {}, ordem = [];
     usadas.forEach(function (l) {
-      var nome = l.nome || l.aluno || "", k = (l.ra || "") + "|" + normHeader(nome) + "|" + (l.conta || ""), g = ag[k];
-      if (!g) { g = ag[k] = { ra: l.ra || "", aluno: nome, conta: l.conta || "", valor: 0, parcelas: 0 }; ordem.push(k); }
+      var nome = l.nome || l.aluno || "", k = (l.ra || "") + "|" + normHeader(nome) + "|" + (l.conta || "") + "|" + (l.conta ? "" : l.grupoArquivo), g = ag[k];
+      if (!g) { g = ag[k] = { ra: l.ra || "", aluno: nome, conta: l.conta || "", valor: 0, parcelas: 0 }; if (!l.conta && l.grupoArquivo) g.grupoArquivo = l.grupoArquivo; ordem.push(k); }
       g.valor += Number(l.valorAberto) || 0; g.parcelas++;
     });
     R.enviadas = ordem.map(function (k) { var g = ag[k]; g.valor = Math.round(g.valor * 100) / 100; return g; });
@@ -3092,7 +3093,13 @@
   function renderArquivosInad() {
     var el = $("jurArqsInad"); if (!el || !jurRelatorio) return;
     el.innerHTML = jurRelatorio.arquivos.map(function (a, i) {
-      return '<div class="arq-linha"><div><b>' + esc(a.nome) + '</b><div class="meta">' + a.linhas.length + ' parcela(s)</div></div><button type="button" class="linkbtn danger" data-tirar-arq="' + i + '">Remover</button></div>';
+      // relatório exportado já filtrado por grupo de contas (sem as linhas "Conta financeira"):
+      // a pessoa diz se o arquivo é de valor em aberto ou de valor negociado
+      var semConta = a.linhas.some(function (l) { return !l.conta; });
+      var sel = semConta ? '<select data-grupo-arq="' + i + '" style="max-width:260px"><option value="">— este relatório é de… —</option>' +
+        [["aberto", "Valor em aberto (Grupo 1)"], ["negociado", "Valor negociado (renegociação GM)"]].map(function (o) { return '<option value="' + o[0] + '"' + (a.grupo === o[0] ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + "</select>" : "";
+      return '<div class="arq-linha"><div><b>' + esc(a.nome) + '</b><div class="meta">' + a.linhas.length + " parcela(s)" + (semConta ? " · sem a conta financeira nas linhas: escolha o tipo do relatório" : "") + "</div></div>" +
+        '<span class="row-end">' + sel + '<button type="button" class="linkbtn danger" data-tirar-arq="' + i + '">Remover</button></span></div>';
     }).join("") + (jurLendo ? '<div class="meta">Lendo arquivo…</div>' : "");
   }
   // o que vai para o servidor: recebimento = pagamentos a partir da data escolhida
@@ -3113,6 +3120,10 @@
       renderArquivosInad();
       $("jurComp").addEventListener("change", function () { if (/^\d{4}-\d{2}$/.test(this.value)) { R.competencia = this.value; simularRelatorioJur(); } });
       $("jurDataRel").addEventListener("change", function () { R.dataRel = this.value; });
+      $("jurArqsInad").addEventListener("change", function (e) {
+        var s = e.target.closest("[data-grupo-arq]"); if (!s) return;
+        R.arquivos[+s.getAttribute("data-grupo-arq")].grupo = s.value; simularRelatorioJur();
+      });
       $("jurArqsInad").addEventListener("click", function (e) {
         var b = e.target.closest("[data-tirar-arq]"); if (!b) return;
         R.arquivos.splice(+b.getAttribute("data-tirar-arq"), 1);
@@ -3146,7 +3157,7 @@
     if (d.jaImportada) html += '<div class="form-err" style="background:var(--info-soft);color:var(--info)">Esta competência já foi importada em ' + dataHora(d.jaImportada) + ". Gravar de novo substitui os dados deste mês, sem duplicar nada.</div>";
     if (!d.atualizaPainel) html += '<div class="form-err" style="background:var(--warn-soft);color:var(--warn)">A última competência importada é ' + mesBR(d.ultima) + ". Este mês, mais antigo, entra só no histórico; os valores do painel continuam os de " + mesBR(d.ultima) + ".</div>";
     function linha(rot, val) { return "<tr><td>" + rot + '</td><td class="tabular right">' + val + "</td></tr>"; }
-    html += '<div class="table-wrap"><table class="data"><tbody>' +
+    html += '<div class="table-wrap"><table class="data compacta"><tbody>' +
       linha("Registros importados (parcelas de alunos da base)", "<b>" + s.registros + "</b> de " + A.total + " no(s) relatório(s)") +
       linha("Alunos do Painel jurídico encontrados", "<b>" + s.noRelatorio + "</b> de " + s.casos) +
       linha("Total classificado como <b>valor em aberto</b>", "<b>" + money(s.aberto) + "</b>" + (P ? variacao(s.aberto, P.aberto) : "")) +
@@ -3165,11 +3176,12 @@
       return esc(x.aluno) + " · " + esc(x.conta || "sem conta") + " · venc. " + (x.venc ? br(x.venc) : "—") + ": " + money(x.v1) + " (" + esc(x.a1) + ") × " + money(x.v2) + " (" + esc(x.a2) + ") — vale o primeiro";
     }).join("<br>") + "</div></details>";
     // contas financeiras
-    if (d.pendentes.length) html += '<div class="form-err">' + d.pendentes.length + " conta(s) financeira(s) não estão nas regras de classificação. Escolha para onde vai cada uma (a escolha fica salva para os próximos meses). Nada é gravado enquanto houver conta sem classificação.</div>";
-    html += '<h4 style="margin:14px 0 6px">Registros por conta financeira</h4><div class="table-wrap"><table class="data"><thead><tr><th>Conta financeira</th><th>Vai para</th><th class="right">Registros</th><th class="right">Valor</th><th class="right">Alunos</th></tr></thead><tbody>' +
+    if (d.pendentes.length) html += '<div class="form-err">' + d.pendentes.length + " conta(s) ou relatório(s) sem classificação. Escolha para onde vai cada uma (a escolha das contas fica salva para os próximos meses). Nada é gravado enquanto houver conta sem classificação.</div>";
+    html += '<h4 style="margin:14px 0 6px">Registros por conta financeira</h4><div class="table-wrap"><table class="data compacta"><thead><tr><th>Conta financeira</th><th>Vai para</th><th class="right">Registros</th><th class="right">Valor</th><th class="right">Alunos</th></tr></thead><tbody>' +
       s.porConta.map(function (c) {
         var escolha = R.regras[c.conta] || "";
-        var cel = c.grupo && !R.regras[c.conta] ? ROTULO_GRUPO[c.grupo]
+        var cel = c.semConta ? (c.grupo ? ROTULO_GRUPO[c.grupo] + ' <span class="meta">(tipo do relatório)</span>' : '<span style="color:var(--danger)">Escolha acima o tipo do relatório</span>')
+          : c.grupo && !R.regras[c.conta] ? ROTULO_GRUPO[c.grupo]
           : '<select data-conta="' + esc(c.conta) + '"><option value="">— classificar —</option>' + ["aberto", "negociado", "ignorar"].map(function (g) { return '<option value="' + g + '"' + (escolha === g ? " selected" : "") + ">" + ROTULO_GRUPO[g] + "</option>"; }).join("") + "</select>";
         return "<tr><td>" + esc(c.conta || "(sem conta financeira)") + "</td><td>" + cel + '</td><td class="tabular right">' + c.registros + '</td><td class="tabular right">' + money(c.valor) + '</td><td class="tabular right">' + c.casos + "</td></tr>";
       }).join("") + "</tbody></table></div>";

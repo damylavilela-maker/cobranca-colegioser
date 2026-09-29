@@ -414,3 +414,5 @@ td.obs-cell{max-width:260px}
 
 /* Painel jurídico: indicadores da competência */
 .comp-tit{font-size:13.5px;color:var(--muted);margin:-6px 0 8px}
+table.data.compacta{min-width:0}
+table.data.compacta td.right{white-space:nowrap}
