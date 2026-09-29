@@ -1831,8 +1831,11 @@ async function inadimplenciaJuridico(req, env, eu) {
       const k = ra + "|" + normNome(nome), f = fora[k] || (fora[k] = { ra, aluno: nome, valor: 0 });
       f.valor = r2(f.valor + valor); continue;
     }
-    const c = achados[0];
-    achados.slice(1).forEach((o) => { outras[o.id] = { ra: o.ra, aluno: o.aluno, carteira: o.carteira, usado: c.carteira }; });
+    // aluno com caso em mais de uma carteira: a parcela vai para o caso cujo ano letivo é o ano do
+    // vencimento; sem caso daquele ano, para a carteira mais recente
+    const anoVenc = texto(l.ano, 4);
+    const c = (anoVenc && achados.find((o) => texto(o.ano, 10) === anoVenc)) || achados[0];
+    achados.forEach((o) => { if (o.id !== c.id && !outras[o.id]) outras[o.id] = { ra: o.ra, aluno: o.aluno, carteira: o.carteira, usado: c.carteira }; });
     // relatório exportado sem as linhas "Conta financeira" (já filtrado por grupo): vale o tipo
     // escolhido para o arquivo inteiro
     const gArq = ["aberto", "negociado"].includes(l.grupoArquivo) ? l.grupoArquivo : null;
@@ -1878,6 +1881,12 @@ async function inadimplenciaJuridico(req, env, eu) {
   casos.forEach((c) => {
     if (porCaso[c.id]) return;
     const h = ant[c.id];
+    // o aluno está no relatório, mas nenhuma parcela é do ano letivo desta carteira
+    if (outras[c.id]) {
+      movs.push({ c, presente: false, tipo: "outra_carteira", saiu: false, h,
+        conferir: `O aluno consta no relatório de ${mesBR(mes)}, mas nenhuma parcela vence no ano letivo desta carteira (as parcelas foram para o caso da ${outras[c.id].usado}). Valores mantidos: conferir se o débito desta carteira foi pago ou renegociado.` });
+      return;
+    }
     // "deixou de constar": estava no mês anterior (no 1º mês: tinha valor no painel)
     const saiu = mesAnt ? !!(h && !h.ausente) : atualizaPainel && (Number(c.valor_aberto) > 0 || Number(c.valor_negociado) > 0);
     movs.push({ c, presente: false, tipo: "ausente", saiu, h,
@@ -1902,7 +1911,7 @@ async function inadimplenciaJuridico(req, env, eu) {
       abAntes: m.h && !m.h.ausente ? m.h.valor_aberto : m.c.valor_aberto, ab: m.presente ? m.ab : null,
       negAntes: m.h && !m.h.ausente ? m.h.valor_negociado : m.c.valor_negociado, neg: m.presente ? m.neg : null,
       pAb: m.pAb || 0, pNeg: m.pNeg || 0, contas: m.contas || {}, conferir: m.conferir })),
-    foraDoPainel: Object.values(fora).sort((x, y) => y.valor - x.valor), outrasCarteiras: Object.values(outras), gravado: false
+    foraDoPainel: Object.values(fora).sort((x, y) => y.valor - x.valor), outrasCarteiras: Object.keys(outras).map((id) => ({ ...outras[id], recebeuParcelas: !!porCaso[id] })), gravado: false
   };
   if (b.simular) return json(saida);
   if (pendentes.length) throw new HttpError(400, "Classifique as contas financeiras que não estão nas regras antes de gravar: " + pendentes.map((c) => c || "(sem conta)").join(", ") + ".");

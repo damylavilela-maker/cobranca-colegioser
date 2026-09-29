@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/09 · v37";
+  var VERSAO = "29/09 · v38";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3089,8 +3089,10 @@
     });
     var ag = {}, ordem = [];
     usadas.forEach(function (l) {
-      var nome = l.nome || l.aluno || "", k = (l.ra || "") + "|" + normHeader(nome) + "|" + (l.conta || "") + "|" + (l.conta ? "" : l.grupoArquivo), g = ag[k];
-      if (!g) { g = ag[k] = { ra: l.ra || "", aluno: nome, conta: l.conta || "", valor: 0, parcelas: 0 }; if (!l.conta && l.grupoArquivo) g.grupoArquivo = l.grupoArquivo; ordem.push(k); }
+      // ano do vencimento: aluno com caso em duas carteiras recebe cada parcela no caso do ano letivo dela
+      var ano = String(l.vencimento || "").slice(0, 4);
+      var nome = l.nome || l.aluno || "", k = (l.ra || "") + "|" + normHeader(nome) + "|" + (l.conta || "") + "|" + (l.conta ? "" : l.grupoArquivo) + "|" + ano, g = ag[k];
+      if (!g) { g = ag[k] = { ra: l.ra || "", aluno: nome, conta: l.conta || "", ano: ano, valor: 0, parcelas: 0 }; if (!l.conta && l.grupoArquivo) g.grupoArquivo = l.grupoArquivo; ordem.push(k); }
       g.valor += Number(l.valorAberto) || 0; g.parcelas++;
     });
     R.enviadas = ordem.map(function (k) { var g = ag[k]; g.valor = Math.round(g.valor * 100) / 100; return g; });
@@ -3146,7 +3148,7 @@
   }
   var MOV_JUR = {
     primeira: { l: "Primeira competência", c: "gray" }, novo: { l: "Entrou no relatório", c: "info" }, reclassificado: { l: "Mudou de classificação", c: "brand" },
-    alterado: { l: "Valor alterado", c: "gold" }, sem_movimento: { l: "Sem movimentação", c: "gray" }, ausente: { l: "Não consta no relatório", c: "warn" }
+    alterado: { l: "Valor alterado", c: "gold" }, outra_carteira: { l: "Parcelas em outra carteira", c: "warn" }, sem_movimento: { l: "Sem movimentação", c: "gray" }, ausente: { l: "Não consta no relatório", c: "warn" }
   };
   function movPill(t) { var s = MOV_JUR[t]; return s ? '<span class="pill" style="color:var(--' + s.c + ');background:var(--' + s.c + '-soft)"><i></i>' + s.l + "</span>" : "—"; }
   function variacao(v, antes) {
@@ -3206,7 +3208,7 @@
     }
     if (d.foraDoPainel.length) html += '<details style="margin-top:10px"><summary class="meta" style="cursor:pointer">' + d.foraDoPainel.length + " aluno(s) do relatório não estão na base do Painel jurídico: nenhum dado deles foi importado (ver lista)</summary><div class=\"meta\" style=\"margin-top:6px\">" +
       d.foraDoPainel.slice(0, 300).map(function (x) { return esc((x.ra ? x.ra + " · " : "") + (x.aluno || "—")) + " (" + money(x.valor) + ")"; }).join("<br>") + "</div></details>";
-    if (d.outrasCarteiras.length) html += '<div class="meta" style="margin-top:6px">' + d.outrasCarteiras.length + " aluno(s) têm caso em mais de uma carteira: o relatório foi aplicado na carteira mais recente.</div>";
+    if (d.outrasCarteiras.length) html += '<div class="meta" style="margin-top:6px">' + d.outrasCarteiras.length + " caso(s) são de aluno com caso em mais de uma carteira: cada parcela foi para o caso do ano letivo do vencimento (sem caso daquele ano, para a carteira mais recente).</div>";
     // inconsistências: só grava depois de a pessoa confirmar que conferiu
     var precisaConfirmar = A.divergencias.length || A.semelhantes.length || A.dupMesmo;
     if (precisaConfirmar) html += '<label class="check-linha" style="margin-top:12px"><input type="checkbox" id="jurConfirmo"> <span>Conferi as divergências e possíveis duplicidades acima e quero gravar mesmo assim</span></label>';
