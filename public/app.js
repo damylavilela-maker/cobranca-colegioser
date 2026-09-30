@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v59";
+  var VERSAO = "30/09 · v60";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2617,9 +2617,10 @@
     // resumo do acordo GM (da planilha da carteira)
     var a = c.acordo || {};
     $("jcAcordoBox").hidden = !a.tipo;
-    $("jcAcordo").innerHTML = a.tipo ? '<div class="kpis k4" style="margin:0">' + [
+    $("jcAcordo").innerHTML = a.tipo ? '<div class="kpis k5" style="margin:0">' + [
       ["Acordo", esc(a.tipo)], ["Valor do acordo", moneyOu(a.valor)], ["Pago", moneyOu(a.pago)],
-      ["Saldo em aberto · a vencer", moneyOu(a.saldoAberto) + " · " + moneyOu(a.saldoVencer) + (a.parcVencer ? '<div class="meta">' + a.parcVencer + " parcela(s) a vencer</div>" : "")]
+      ["Saldo em aberto", moneyOu(a.saldoAberto)],
+      ["A vencer", moneyOu(a.saldoVencer) + (a.parcVencer ? '<div class="meta">' + a.parcVencer + " parcela(s) a vencer</div>" : "")]
     ].map(function (x) { return '<div class="kpi"><div class="lbl">' + x[0] + '</div><div class="num tabular" style="font-size:15px">' + x[1] + "</div></div>"; }).join("") + "</div>" : "";
     renderObsJur(c);
     $("jcAtualizado").textContent = "Última atualização: " + (c.atualizadoEm ? dataHora(c.atualizadoEm) + (c.atualizadoPor ? " por " + c.atualizadoPor : "") : "nunca");
