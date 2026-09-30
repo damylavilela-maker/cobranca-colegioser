@@ -2164,7 +2164,13 @@ async function importarCheques(req, env, eu) {
   const b = await corpo(req);
   const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 3000) : [];
   const existentes = {};
-  (await env.DB.prepare("SELECT * FROM cheques").all()).results.forEach((c) => { existentes[c.tipo + "#" + c.chave] = c; });
+  // mesmo banco, agência, conta, número e vencimento com outro valor: é o valor sendo corrigido
+  const semValor = (ch) => (String(ch || "").split("|")[4] ? String(ch).replace(/\|[^|]*$/, "") : "");
+  const existentesSV = {};
+  (await env.DB.prepare("SELECT * FROM cheques").all()).results.forEach((c) => {
+    existentes[c.tipo + "#" + c.chave] = c;
+    const sv = semValor(c.chave); if (sv) existentesSV[c.tipo + "#" + sv] = c;
+  });
   const stmts = [];
   let criados = 0, atualizados = 0, ignorados = 0;
   linhas.forEach((l0) => {
@@ -2173,13 +2179,15 @@ async function importarCheques(req, env, eu) {
     Object.keys(CHQ_CAMPOS).concat(Object.keys(CHQ_DATAS), ["valor"]).forEach((k) => { if (l0[k] !== undefined && l0[k] !== null && String(l0[k]).trim() !== "") o[k] = l0[k]; });
     if (!o.aluno && !o.emitente) { ignorados++; return; }
     const chave = chaveCheque(o.tipo, { banco: texto(o.banco, 20), agencia: texto(o.agencia, 20), conta: texto(o.conta, 30), numero: texto(o.numero, 30), vencimento: dataISO(o.vencimento), valor: valorOuNull(o.valor) });
-    const atual = existentes[o.tipo + "#" + chave] || null;
+    const sv = semValor(chave);
+    const atual = existentes[o.tipo + "#" + chave] || (sv && existentesSV[o.tipo + "#" + sv]) || null;
     // o mesmo cheque repetido na planilha com outra observação: junta as observações
     if (atual && o.observacao && atual.observacao && !atual.observacao.includes(texto(o.observacao, 1000))) o.observacao = atual.observacao + " | " + o.observacao;
     const vals = chequeValores(o, atual, eu);
     stmts.push(env.DB.prepare(insertSQL("cheques", CHQ_COLS)).bind(...vals));
     const r = {}; CHQ_COLS.forEach((c, i) => { r[c] = vals[i]; });
-    existentes[o.tipo + "#" + chave] = r;
+    if (atual && atual.chave !== r.chave) delete existentes[atual.tipo + "#" + atual.chave];
+    existentes[o.tipo + "#" + r.chave] = r; if (sv) existentesSV[o.tipo + "#" + sv] = r;
     if (atual) atualizados++; else criados++;
   });
   await executarEmLotes(env, stmts);

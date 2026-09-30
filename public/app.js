@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v51";
+  var VERSAO = "30/09 · v52";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3424,6 +3424,8 @@
   function valorChq(v) {
     if (typeof v === "number") return v;
     var s = String(v || "").replace(/[R$\s]/g, ""); if (!/\d/.test(s)) return null;
+    // ponto só como separador de milhar (1.749 = mil setecentos e quarenta e nove)
+    if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) return parseFloat(s.replace(/\./g, ""));
     if (/^-?\d{1,3}(,\d{3})*(\.\d{1,2})?$/.test(s) || /^-?\d+\.\d{1,2}$/.test(s)) return parseFloat(s.replace(/,/g, ""));
     return parseMoneyBR(s);
   }
@@ -3440,7 +3442,21 @@
     return carregarXLSX().then(function (X) {
       var wb = X.read(buf, { type: "array" });
       // texto como aparece na planilha (datas e valores formatados)
-      return wb.SheetNames.map(function (n) { return { nome: n, aoa: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "", raw: false }) }; });
+      return wb.SheetNames.map(function (n) {
+        var ws = wb.Sheets[n], aoa = X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false, blankrows: true });
+        // o número guardado em cada célula (para o valor: o texto formatado pode enganar, ex. 1.749 lido como 1,749)
+        var num = aoa.map(function () { return []; });
+        if (ws["!ref"]) {
+          var rg = X.utils.decode_range(ws["!ref"]);
+          Object.keys(ws).forEach(function (ref) {
+            if (ref.charAt(0) === "!") return;
+            var c = ws[ref]; if (!c || c.t !== "n" || typeof c.v !== "number") return;
+            var a = X.utils.decode_cell(ref), r = a.r - rg.s.r;
+            if (num[r]) num[r][a.c - rg.s.c] = c.v;
+          });
+        }
+        return { nome: n, aoa: aoa, num: num };
+      });
     });
   }
   function parseCSVBruto(txt) {
@@ -3470,14 +3486,15 @@
     var nomeAba = normHeader(t.nome);
     var tipo = /devolv/.test(nomeAba) ? "devolvido" : /receb/.test(nomeAba) ? "recebido" : ix.dataRecebimento !== -1 ? "recebido" : ix.pagamento !== -1 ? "devolvido" : tipoPadrao;
     var out = [];
-    t.aoa.slice(melhor + 1).forEach(function (r) {
+    t.aoa.slice(melhor + 1).forEach(function (r, j) {
+      var nr = t.num ? t.num[melhor + 1 + j] || [] : [];
       function cel(k) { return ix[k] === -1 ? "" : String(r[ix[k]] == null ? "" : r[ix[k]]).trim(); }
       // linhas de total ("Total:", "Qtde.:") e linhas vazias ficam de fora
       if (r.some(function (x) { return /^(total|qtde|subtotal)\b/i.test(String(x || "").trim()); })) return;
       var l = { tipo: tipo };
       ["ra", "aluno", "responsavel", "emitente", "cpfEmitente", "banco", "agencia", "conta", "numero", "motivo", "pagamento", "geracaoMentor", "observacao", "motivoDevolucao", "identificacao"].forEach(function (k) { var v = cel(k); if (v) l[k] = v; });
       ["vencimento", "dataRecebimento", "dataDevolucao", "dataFormulario"].forEach(function (k) { var v = dataChq(cel(k)); if (v) l[k] = v; });
-      var v = valorChq(cel("valor")); if (v != null) l.valor = Math.round(v * 100) / 100;
+      var v = ix.valor !== -1 && typeof nr[ix.valor] === "number" ? nr[ix.valor] : valorChq(cel("valor")); if (v != null) l.valor = Math.round(v * 100) / 100;
       if (!l.aluno && !l.emitente) return;
       if (!(l.valor > 0)) return;
       out.push(l);
@@ -3498,13 +3515,20 @@
         // chave igual à do servidor: conta quantos já estão cadastrados
         function dig(v) { return String(v || "").replace(/\D/g, "").replace(/^0+/, ""); }
         function chave(c) { return [c.tipo, dig(c.banco), dig(c.agencia), dig(c.conta), dig(c.numero), c.vencimento || "", c.valor == null ? "" : Number(c.valor).toFixed(2)].join("|"); }
-        var ja = {}; cheques.forEach(function (c) { ja[chave(c)] = 1; });
+        // mesmo banco, agência, conta, número e vencimento com outro valor: é o valor sendo corrigido
+        function semValor(c) { return dig(c.numero) ? chave(c).replace(/\|[^|]*$/, "") : ""; }
+        var ja = {}, jaSV = {}; cheques.forEach(function (c) { ja[chave(c)] = 1; var sv = semValor(c); if (sv) jaSV[sv] = 1; });
         var html = "<p><b>" + esc(f.name) + "</b>:</p>", todas = [];
         partes.forEach(function (p) {
-          var vistos = {}, novos = 0, rep = 0, tot = 0;
-          p.linhas.forEach(function (l) { var k = chave(l); if (vistos[k]) rep++; else { vistos[k] = 1; if (!ja[k]) novos++; } tot += l.valor || 0; });
+          var vistos = {}, novos = 0, rep = 0, tot = 0, corr = 0;
+          p.linhas.forEach(function (l) {
+            var k = chave(l), sv = semValor(l); tot += l.valor || 0;
+            if (vistos[k]) { rep++; return; } vistos[k] = 1;
+            if (ja[k]) return;
+            if (sv && jaSV[sv]) corr++; else novos++;
+          });
           html += '<div class="arq-linha"><div><b>' + (p.tipo === "devolvido" ? "Cheques devolvidos" : "Cheques recebidos") + '</b><div class="meta">aba ' + esc(p.aba) + " · " + p.linhas.length + " cheque(s) · " + money(tot) +
-            " · " + novos + " novo(s), " + (p.linhas.length - rep - novos) + " já cadastrado(s) (serão atualizados)" + (rep ? ", " + rep + " repetido(s) na planilha (contam uma vez)" : "") + "</div></div></div>";
+            " · " + novos + " novo(s), " + (p.linhas.length - rep - novos) + " já cadastrado(s) (serão atualizados)" + (corr ? ", " + corr + " deles com o valor corrigido" : "") + (rep ? ", " + rep + " repetido(s) na planilha (contam uma vez)" : "") + "</div></div></div>";
           todas = todas.concat(p.linhas);
         });
         chqPendentes = todas;
