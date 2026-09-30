@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v53";
+  var VERSAO = "30/09 · v54";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3497,8 +3497,8 @@
       ["vencimento", "dataRecebimento", "dataDevolucao", "dataFormulario"].forEach(function (k) { var v = dataChq(cel(k)); if (v) l[k] = v; });
       var v = ix.valor !== -1 && typeof nr[ix.valor] === "number" ? nr[ix.valor] : valorChq(cel("valor")); if (v != null) l.valor = Math.round(v * 100) / 100;
       if (!l.aluno && !l.emitente) return;
-      if (!(l.valor > 0)) return;
-      out.push(l);
+      if (l.valor != null && !(l.valor > 0)) return;
+      out.push(l); // cheque sem valor na planilha entra mesmo assim (valor fica em branco)
     });
     return { tipo: tipo, aba: t.nome, linhas: out };
   }
@@ -3521,7 +3521,7 @@
         var ja = {}, jaSV = {}; cheques.forEach(function (c) { ja[chave(c)] = 1; var sv = semValor(c); if (sv) jaSV[sv] = 1; });
         var html = "<p><b>" + esc(f.name) + "</b>:</p>", todas = [];
         partes.forEach(function (p) {
-          var vistos = {}, novos = 0, rep = 0, tot = 0, corr = 0;
+          var vistos = {}, novos = 0, rep = 0, tot = 0, corr = 0, semV = p.linhas.filter(function (l) { return l.valor == null; }).length;
           p.linhas.forEach(function (l) {
             var k = chave(l), sv = semValor(l); tot += l.valor || 0;
             if (vistos[k]) { rep++; return; } vistos[k] = 1;
@@ -3529,7 +3529,7 @@
             if (sv && jaSV[sv]) corr++; else novos++;
           });
           html += '<div class="arq-linha"><div><b>' + (p.tipo === "devolvido" ? "Cheques devolvidos" : "Cheques recebidos") + '</b><div class="meta">aba ' + esc(p.aba) + " · " + p.linhas.length + " cheque(s) · " + money(tot) +
-            " · " + novos + " novo(s), " + (p.linhas.length - rep - novos) + " já cadastrado(s) (serão atualizados)" + (corr ? ", " + corr + " deles com o valor corrigido" : "") + (rep ? ", " + rep + " repetido(s) na planilha (contam uma vez)" : "") + "</div></div></div>";
+            " · " + novos + " novo(s), " + (p.linhas.length - rep - novos) + " já cadastrado(s) (serão atualizados)" + (corr ? ", " + corr + " deles com o valor corrigido" : "") + (rep ? ", " + rep + " repetido(s) na planilha (contam uma vez)" : "") + (semV ? " · " + semV + " sem valor na planilha (entram com o valor em branco)" : "") + "</div></div></div>";
           todas = todas.concat(p.linhas);
         });
         chqPendentes = todas;
