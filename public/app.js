@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v63";
+  var VERSAO = "30/09 · v64";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1865,12 +1865,16 @@
   // Conta como negativação a parcela incluída no Serasa, mesmo que depois tenha sido paga ou negociada.
   function foiNegativada(x) { return x.serasa === "ok" || (!!x.dataInclusao && !!x.serasa && x.serasa !== "nao_negativar"); }
   function renderNegMes(p, chaveDe) {
-    // em "todos os períodos" a mesma parcela pode estar em mais de uma aba: conta uma vez só
-    var vistas = {}, porMes = {}, semData = { n: 0, alunos: {}, valor: 0 }, anos = {};
+    // em "todos os períodos" a mesma parcela pode estar em mais de uma aba: conta uma vez só.
+    // Parcelas iguais dentro do MESMO período são parcelas diferentes e contam todas.
+    var vistas = {}, porPer = {}, porMes = {}, semData = { n: 0, alunos: {}, valor: 0 }, anos = {};
     p.forEach(function (x) {
       if (!foiNegativada(x)) return;
       var ch = chaveDe(x) + "|" + (x.vencimento || "") + "|" + (Number(x.valor) || 0).toFixed(2) + "|" + (x.tipo || "");
-      if (vistas[ch]) return; vistas[ch] = 1;
+      var kp = ch + "#" + (x.periodoId || "");
+      porPer[kp] = (porPer[kp] || 0) + 1;
+      if (porPer[kp] <= (vistas[ch] || 0)) return; // já contada por outro período
+      vistas[ch] = porPer[kp];
       var m = (x.dataInclusao || "").slice(0, 7), alvo;
       if (/^\d{4}-\d{2}$/.test(m)) { anos[m.slice(0, 4)] = 1; alvo = porMes[m] || (porMes[m] = { n: 0, alunos: {}, valor: 0 }); } else alvo = semData;
       alvo.n++; alvo.alunos[chaveDe(x)] = 1; alvo.valor += Number(x.valor) || 0;
