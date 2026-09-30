@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v57";
+  var VERSAO = "30/09 · v58";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3320,7 +3320,8 @@
     var tot = 0, hj = hoje(); vis.forEach(function (c) { tot += Number(c.valor) || 0; });
     var tiles;
     if (chqTab === "devolvido") {
-      var pend = vis.filter(function (c) { return !pagoChq(c); }), vPend = pend.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0);
+      // ainda não pagos = só os marcados como PENDENTE na coluna Pagamento (negociados e em branco ficam de fora)
+      var pend = vis.filter(function (c) { return /^pendente/i.test((c.pagamento || "").trim()); }), vPend = pend.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0);
       tiles = [{ n: vis.length, l: "Cheques devolvidos" }, { n: money(tot), l: "Valor total", c: "danger" }, { n: pend.length, l: "Ainda não pagos", c: "warn" }, { n: money(vPend), l: "Valor não pago", c: "warn" }];
     } else {
       var aVencer = vis.filter(function (c) { return c.vencimento && c.vencimento >= hj; });
