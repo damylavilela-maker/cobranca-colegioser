@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v62";
+  var VERSAO = "30/09 · v63";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1869,8 +1869,6 @@
     var vistas = {}, porMes = {}, semData = { n: 0, alunos: {}, valor: 0 }, anos = {};
     p.forEach(function (x) {
       if (!foiNegativada(x)) return;
-      // contagem zerada: só entram inclusões a partir da data escolhida
-      if (negInicio && (!x.dataInclusao || x.dataInclusao < negInicio)) return;
       var ch = chaveDe(x) + "|" + (x.vencimento || "") + "|" + (Number(x.valor) || 0).toFixed(2) + "|" + (x.tipo || "");
       if (vistas[ch]) return; vistas[ch] = 1;
       var m = (x.dataInclusao || "").slice(0, 7), alvo;
@@ -1897,25 +1895,11 @@
       linha("Valor", function (d) { return d.n ? money(d.valor).replace(/,\d{2}$/, "") : "—"; }) + "</tbody>";
     var p1 = periodoAtual();
     $("negMesSub").textContent = "Parcelas incluídas no Serasa em cada mês, pela data de inclusão" + (p1 ? " · período " + p1.nome : " · todos os períodos") +
-      (negInicio ? " · contagem zerada: conta a partir de " + br(negInicio) : "") +
       (semData.n ? " · " + semData.n + " negativada(s) sem data de inclusão não entram na tabela" : "") + ".";
-    if (!$("btnNegZerar").classList.contains("armed")) rotuloZerar();
   }
   $("negMesAno").addEventListener("change", function () { renderSerasa(); });
-  // Zerar a contagem (só administradores): a tabela conta só o que for incluído a partir de hoje.
-  // Nada é apagado; "Voltar a contar tudo" desfaz.
+  // a tabela conta todas as inclusões pela data (o antigo "Zerar contagem" não vale mais)
   var negInicio = "";
-  function rotuloZerar() { var b = $("btnNegZerar"); b.classList.remove("armed"); b.textContent = negInicio ? "Voltar a contar tudo" : "Zerar contagem"; }
-  $("btnNegZerar").addEventListener("click", function () {
-    var b = this;
-    if (!negInicio && !b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar: zerar a partir de hoje"; return; }
-    b.disabled = true;
-    api("POST", "/api/serasa/inicio-negativacoes", { data: negInicio ? "" : hoje() }).then(function (d) {
-      negInicio = d.negInicio || "";
-      toast(negInicio ? "Contagem zerada: a tabela conta as negativações a partir de hoje." : "A tabela voltou a contar todas as negativações.");
-      renderSerasa();
-    }).catch(function (x) { toast(x.message); }).then(function () { b.disabled = false; rotuloZerar(); });
-  });
   // Depois de importar, a lista atrás da janela passa a mostrar as parcelas do arquivo:
   // limpa os filtros e escolhe o período para onde elas foram (ou todos, se foram para vários).
   function mostrarImportadas(porPeriodo) {
