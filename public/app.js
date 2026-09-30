@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v52";
+  var VERSAO = "30/09 · v53";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3423,11 +3423,12 @@
   // "1,349.30" e "$ 600.00" (planilha em formato americano) ou "1.349,30"
   function valorChq(v) {
     if (typeof v === "number") return v;
-    var s = String(v || "").replace(/[R$\s]/g, ""); if (!/\d/.test(s)) return null;
-    // ponto só como separador de milhar (1.749 = mil setecentos e quarenta e nove)
-    if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) return parseFloat(s.replace(/\./g, ""));
-    if (/^-?\d{1,3}(,\d{3})*(\.\d{1,2})?$/.test(s) || /^-?\d+\.\d{1,2}$/.test(s)) return parseFloat(s.replace(/,/g, ""));
-    return parseMoneyBR(s);
+    var s = String(v || "").replace(/[^\d.,-]/g, ""); if (!/\d/.test(s)) return null;
+    // a planilha mistura formatos: 1.449,29 · 1,349.30 · 1041,39 · 394.95 · e até 1.748.47 (ponto nos dois lugares).
+    // O último ponto/vírgula seguido de 1 ou 2 dígitos são os centavos; os outros separadores são de milhar.
+    var neg = /^-/.test(s), m = /^(.*)[.,](\d{1,2})$/.exec(s.replace(/-/g, ""));
+    var n = m ? parseFloat((m[1].replace(/[.,]/g, "") || "0") + "." + m[2]) : parseFloat(s.replace(/[.,-]/g, ""));
+    return isNaN(n) ? null : neg ? -n : n;
   }
   // datas como aparecem na planilha: dia/mês/ano (12/7/2017 = 12 de julho)
   function dataChq(v) {
