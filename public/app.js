@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v56";
+  var VERSAO = "30/09 · v57";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3353,6 +3353,43 @@
     }).join("");
     $("chqMais").hidden = vis.length <= chqLimite;
   }
+  // Exportar: planilha no mesmo formato da CHEQUES_SER (abas SER_DEVOLVIDOS e SER_RECEBIDOS), que pode ser
+  // importada de novo. Busca e ano valem para as duas abas; o filtro de pagamento, só para os devolvidos.
+  $("btnChqExportar").addEventListener("click", function () {
+    var q = $("cBusca").value.trim().toLowerCase(), an = $("cAno").value, si = chqTab === "devolvido" ? $("cSituacao").value : "";
+    function passa(c) {
+      if (an && (c.vencimento || "").slice(0, 4) !== an) return false;
+      if (si && c.tipo === "devolvido" && situacaoChq(c) !== si) return false;
+      if (q && [c.aluno, c.ra, c.responsavel, c.emitente, c.cpfEmitente, c.numero].join(" ").toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    }
+    function lista(tipo) {
+      return cheques.filter(function (c) { return c.tipo === tipo && passa(c); })
+        .sort(function (a, b) { return (a.vencimento || "").localeCompare(b.vencimento || "") || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR"); });
+    }
+    function d(v) { return v ? br(v) : ""; }
+    function val(v) { return v == null || v === "" ? "" : Number(v); }
+    var dev = lista("devolvido"), rec = lista("recebido");
+    var abaDev = [["RA", "ALUNO", "RESPONSAVEL FINANCEIRO", "EMITENTE", "CPF EMITENTE", "BANCO", "AGENCIA", "CONTA", "Nº", "VALOR", "VENCIMENTO", "MOTIVO", "PAGAMENTO", "GERAÇÃO NO MENTOR", "OBSERVAÇÕES"]].concat(dev.map(function (c) {
+      return [c.ra, c.aluno, c.responsavel, c.emitente, c.cpfEmitente, c.banco, c.agencia, c.conta, c.numero, val(c.valor), d(c.vencimento), c.motivo, c.pagamento, c.geracaoMentor, c.observacao];
+    }));
+    var abaRec = [["RA", "ALUNO", "RESPONSAVEL FINANCEIRO", "DT RECEBIMENTO", "EMITENTE", "CPF EMITENTE", "BANCO", "AGENCIA", "CONTA", "NUMERO", "VALOR", "VENCIMENTO", "OBS", "MOTIVO DEVOLUÇÃO", "DATA DEVOLUÇÃO", "DATA FORMULÁRIO", "IDENTIFICAÇÃO DO PEDIDO"]].concat(rec.map(function (c) {
+      return [c.ra, c.aluno, c.responsavel, d(c.dataRecebimento), c.emitente, c.cpfEmitente, c.banco, c.agencia, c.conta, c.numero, val(c.valor), d(c.vencimento), c.observacao, c.motivoDevolucao, d(c.dataDevolucao), d(c.dataFormulario), c.identificacao];
+    }));
+    carregarXLSX().then(function (X) {
+      var wb = X.utils.book_new();
+      [["SER_DEVOLVIDOS", abaDev, 9], ["SER_RECEBIDOS", abaRec, 10]].forEach(function (a) {
+        var ws = X.utils.aoa_to_sheet(a[1]);
+        // valor como número no formato brasileiro; colunas com largura legível
+        for (var r = 1; r < a[1].length; r++) { var cel = ws[X.utils.encode_cell({ r: r, c: a[2] })]; if (cel && cel.t === "n") cel.z = "#,##0.00"; }
+        ws["!cols"] = a[1][0].map(function (h) { return { wch: /ALUNO|RESPONSAVEL|EMITENTE$|OBS/.test(h) ? 34 : 14 }; });
+        ws["!autofilter"] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(a[1].length - 1, 0), c: a[1][0].length - 1 } }) };
+        X.utils.book_append_sheet(wb, ws, a[0]);
+      });
+      X.writeFile(wb, "cheques_" + hoje() + ".xlsx");
+      toast("Planilha exportada: " + dev.length + " devolvido(s) e " + rec.length + " recebido(s)" + (q || an || si ? " (conforme os filtros)." : "."));
+    }).catch(function (x) { toast(x.message); });
+  });
   ["cBusca", "cSituacao", "cAno"].forEach(function (id) { $(id).addEventListener("input", function () { chqLimite = 300; renderCheques(); }); });
   $("chqMais").addEventListener("click", function () { chqLimite += 300; renderCheques(); });
   $("chqTbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-chq]"); if (tr) abrirCheque(tr.getAttribute("data-chq")); });
