@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v58";
+  var VERSAO = "30/09 · v59";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2610,12 +2610,6 @@
     $("jcSub").textContent = "RA " + (c.ra || "—") + " · " + (c.carteira || "—") + " · ano letivo " + (c.ano || "—") + (c.competencia ? " · ref. " + mesBR(c.competencia) : "");
     $("jcConflito").hidden = !c.flagConflito;
     $("jcConflitoTxt").textContent = c.conferirMotivo || "Este caso precisa de conferência.";
-    $("jcResumo").innerHTML = [
-      ["Valor em aberto", money(c.valorAberto || 0) + qtdParc(c.parcelas)],
-      ["Valor negociado GM", money(c.valorNegociado || 0) + qtdParc(c.parcelasNegociado)],
-      ["Parcelas vencidas", celParcelasJur(c, true).replace(/^<td[^>]*>|<\/td>$/g, "")],
-      ["Parcelas a vencer", celParcelasJur(c, false).replace(/^<td[^>]*>|<\/td>$/g, "")]
-    ].map(function (x) { return '<div class="kpi"><div class="lbl">' + x[0] + '</div><div class="num tabular" style="font-size:16px">' + x[1] + "</div></div>"; }).join("");
     $("jcContato").innerHTML = '<div class="meta">Responsável: <b>' + esc(c.responsavel || "—") + "</b> · Telefone: " + esc(c.celular || "—") + " · E-mail: " + esc(c.email || "—") +
       '</div><div class="meta">Conta(s) financeira(s) de origem: ' + esc(c.contaFinanceira || "—") + "</div>" +
       '<div class="meta">' + (c.cpf ? "CPF: " + esc(c.cpf) + " · " : "") + (c.dataEnvio ? "Enviado ao jurídico em " + br(c.dataEnvio) + " · " : "") + (c.extrato != null ? "Extrato: " + money(c.extrato) + " · " : "") + (c.motivo ? "Motivo: " + esc(c.motivo) + " · " : "") +
