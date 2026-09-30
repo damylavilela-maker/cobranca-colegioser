@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v60";
+  var VERSAO = "30/09 · v61";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -486,7 +486,11 @@
     $("dArchBanner").innerHTML =
       (a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "") +
       (outra ? '<div class="link-banner"><b>Também está no ' + (carteiraDe(outra) === "contraturno" ? "Contraturno" : "Painel") + "</b> (" + money(outra.valorAberto) + " em aberto, " + st(outra.status).l.toLowerCase() +
-        "). Os atendimentos aparecem nas duas abas; o status e o valor em aberto são de cada aba.</div>" : "");
+        "). Os atendimentos aparecem nas duas abas; o status é de cada aba e o valor em aberto do Contraturno vem do Painel.</div>" : "");
+    // no Contraturno, o valor em aberto e o vencimento de quem também está no Painel vêm de lá (não se edita aqui)
+    var doPainel = carteiraDe(a) === "contraturno" && !!outra;
+    $("eValor").disabled = doPainel; $("eVenc").disabled = doPainel;
+    $("eValor").title = $("eVenc").title = doPainel ? "Vem do Painel: altere no Painel e o Contraturno acompanha." : "";
     $("btnArquivarAluno").textContent = a.arquivado ? "Reativar aluno" : "Arquivar aluno";
     $("dInfoView").hidden = false; $("dInfoEdit").hidden = true; $("btnEditarDados").hidden = false;
     $("eNome").value = a.nome || ""; $("eRa").value = a.ra || ""; $("eTurma").value = a.turma || "";

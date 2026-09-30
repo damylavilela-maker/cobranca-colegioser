@@ -286,7 +286,10 @@ export default {
         ].map((s) => env.DB.prepare(s)));
         schemaPronto = true;
       }
-      return await rotear(request, env, url);
+      const resposta = await rotear(request, env, url);
+      // mudou algo no Painel: o Contraturno acompanha o valor em aberto na hora
+      if (request.method !== "GET" && /^\/api\/(alunos|atendimentos|admin|base)(\/|$)/.test(url.pathname) && resposta.ok) await sincronizarContraturno(env);
+      return resposta;
     } catch (e) {
       if (e instanceof HttpError) return json({ erro: e.message, codigo: e.code || null }, e.status);
       console.error(e && e.stack || e);
@@ -768,7 +771,21 @@ async function alunosVinculados(env, a) {
   return r.results;
 }
 
+// O aluno do Contraturno que também está no Painel (mesmo RA ou, sem RA, mesmo nome) fica com o
+// valor em aberto, as parcelas e o vencimento do Painel. Quem não está no Painel mantém o próprio valor.
+const MESMO_ALUNO_NO_PAINEL = `r.carteira <> 'contraturno' AND r.id <> alunos.id AND (CASE WHEN trim(coalesce(alunos.ra, '')) <> ''
+  THEN lower(trim(coalesce(r.ra, ''))) = lower(trim(alunos.ra)) OR (trim(coalesce(r.ra, '')) = '' AND lower(trim(r.nome)) = lower(trim(alunos.nome)))
+  ELSE lower(trim(r.nome)) = lower(trim(alunos.nome)) END)`;
+async function sincronizarContraturno(env) {
+  await env.DB.prepare(`UPDATE alunos SET (valor_aberto, parcelas_aberto, vencimento, parcelas_venc, ultima_atualizacao_financeira) =
+    (SELECT r.valor_aberto, r.parcelas_aberto, r.vencimento, r.parcelas_venc, r.ultima_atualizacao_financeira FROM alunos r
+      WHERE ${MESMO_ALUNO_NO_PAINEL} ORDER BY r.arquivado, r.atualizado_em DESC LIMIT 1)
+    WHERE carteira = 'contraturno' AND EXISTS (SELECT 1 FROM alunos r WHERE ${MESMO_ALUNO_NO_PAINEL}
+      AND (r.valor_aberto IS NOT alunos.valor_aberto OR r.parcelas_aberto IS NOT alunos.parcelas_aberto
+        OR r.vencimento IS NOT alunos.vencimento OR r.parcelas_venc IS NOT alunos.parcelas_venc))`).run();
+}
 async function listarAlunos(env) {
+  await sincronizarContraturno(env);
   const r = await env.DB.prepare("SELECT * FROM alunos ORDER BY nome").all();
   return json({ alunos: r.results.map(alunoSaida) });
 }
