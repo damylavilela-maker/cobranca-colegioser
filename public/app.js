@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v55";
+  var VERSAO = "30/09 · v56";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3305,7 +3305,9 @@
     // filtros: situação e ano de vencimento
     var sits = {}, anos = {};
     doTipo.forEach(function (c) { sits[situacaoChq(c)] = (sits[situacaoChq(c)] || 0) + 1; if (c.vencimento) anos[c.vencimento.slice(0, 4)] = 1; });
-    prepararSelect($("cSituacao"), [{ v: "", l: chqTab === "devolvido" ? "Pagamento: todos" : "Devolução: todos" }].concat(Object.keys(sits).sort().map(function (s) { return { v: esc(s), l: esc(s) + " (" + sits[s] + ")" }; })), "");
+    $("cSituacao").hidden = chqTab !== "devolvido"; // filtro de pagamento só nos devolvidos
+    if (chqTab !== "devolvido") { sits = {}; $("cSituacao").value = ""; }
+    prepararSelect($("cSituacao"), [{ v: "", l: "Pagamento: todos" }].concat(Object.keys(sits).sort().map(function (s) { return { v: esc(s), l: esc(s) + " (" + sits[s] + ")" }; })), "");
     prepararSelect($("cAno"), [{ v: "", l: "Vencimento: todos os anos" }].concat(Object.keys(anos).sort().reverse().map(function (a) { return { v: a, l: a }; })), "");
     var q = $("cBusca").value.trim().toLowerCase(), si = $("cSituacao").value, an = $("cAno").value;
     var vis = doTipo.filter(function (c) {
@@ -3325,13 +3327,14 @@
       tiles = [{ n: vis.length, l: "Cheques recebidos" }, { n: money(tot), l: "Valor total", c: "info" },
         { n: aVencer.length + " · " + money(aVencer.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0)), l: "A vencer" }];
     }
+    $("chqKpis").className = "kpis k" + tiles.length;
     $("chqKpis").innerHTML = tiles.map(function (t) { return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ">" + t.n + '</div><div class="lbl">' + t.l + "</div></div>"; }).join("");
     $("chqCount").textContent = vis.length + " de " + doTipo.length + " cheques · " + money(tot);
     $("chqVazio").hidden = vis.length > 0;
     $("chqVazio").textContent = doTipo.length ? "Nenhum cheque com estes filtros." : "Nenhum cheque cadastrado. Use “Importar planilha” ou “+ Novo cheque”.";
     $("chqHead").innerHTML = chqTab === "devolvido"
       ? "<tr><th>Aluno</th><th>Emitente</th><th>Banco · Agência · Conta · Nº</th><th class=\"right\">Valor</th><th>Vencimento</th><th>Motivo</th><th>Pagamento</th><th>Mentor</th><th>Observações</th></tr>"
-      : "<tr><th>Aluno</th><th>Recebido em</th><th>Emitente</th><th>Banco · Agência · Conta · Nº</th><th class=\"right\">Valor</th><th>Vencimento</th><th>Obs</th><th>Devolução</th><th>Formulário · Identificação</th></tr>";
+      : "<tr><th>Aluno</th><th>Recebido em</th><th>Emitente</th><th>Banco · Agência · Conta · Nº</th><th class=\"right\">Valor</th><th>Vencimento</th><th>Obs</th><th>Formulário · Identificação</th></tr>";
     function obsCurta(t) { return esc(t ? (t.length > 60 ? t.slice(0, 60).trim() + "…" : t) : "—"); }
     $("chqTbody").innerHTML = vis.slice(0, chqLimite).map(function (c) {
       var aluno = '<td><div class="nome">' + esc(c.aluno || "—") + '</div><div class="meta">' + esc(c.responsavel || "sem responsável informado") + (c.ra ? " · RA " + esc(c.ra) : "") + "</div></td>";
@@ -3345,7 +3348,7 @@
           "<td>" + esc(c.geracaoMentor || "—") + '</td><td class="muted obs-cell">' + obsCurta(c.observacao) + "</td></tr>";
       }
       return '<tr class="click" data-chq="' + esc(c.id) + '">' + aluno + '<td class="tabular">' + (c.dataRecebimento ? br(c.dataRecebimento) : "—") + "</td>" + emit + banco + valor + venc +
-        '<td class="muted obs-cell">' + obsCurta(c.observacao) + "</td><td>" + (c.motivoDevolucao || c.dataDevolucao ? esc(c.motivoDevolucao || "devolvido") + (c.dataDevolucao ? '<div class="meta">' + br(c.dataDevolucao) + "</div>" : "") : '<span class="muted">—</span>') + "</td>" +
+        '<td class="muted obs-cell">' + obsCurta(c.observacao) + "</td>" +
         "<td>" + (c.dataFormulario ? br(c.dataFormulario) : "—") + (c.identificacao ? '<div class="meta">' + esc(c.identificacao) + "</div>" : "") + "</td></tr>";
     }).join("");
     $("chqMais").hidden = vis.length <= chqLimite;

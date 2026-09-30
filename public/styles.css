@@ -332,6 +332,9 @@ table.data.as-tab td.mudou{background:var(--warn-soft)}
 .kpis.k4{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media (max-width:1700px){.kpis.k4{grid-template-columns:repeat(4,minmax(0,1fr))}.kpis.k4 .kpi,.kpis.k4 .kpi:nth-child(n+5){grid-column:auto}}
 @media (max-width:700px){.kpis.k4{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis.k4 .kpi:last-child{grid-column:auto}}
+.kpis.k3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:1700px){.kpis.k3{grid-template-columns:repeat(3,minmax(0,1fr))}.kpis.k3 .kpi,.kpis.k3 .kpi:nth-child(n+5){grid-column:auto}}
+@media (max-width:700px){.kpis.k3{grid-template-columns:1fr}}
 .base-mapa{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 .base-abas{font-size:14px}
 .base-dl{display:grid;grid-template-columns:minmax(140px,220px) 1fr;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0}
