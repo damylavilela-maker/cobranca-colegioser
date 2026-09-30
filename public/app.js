@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v54";
+  var VERSAO = "30/09 · v55";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3321,9 +3321,9 @@
       var pend = vis.filter(function (c) { return !pagoChq(c); }), vPend = pend.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0);
       tiles = [{ n: vis.length, l: "Cheques devolvidos" }, { n: money(tot), l: "Valor total", c: "danger" }, { n: pend.length, l: "Ainda não pagos", c: "warn" }, { n: money(vPend), l: "Valor não pago", c: "warn" }];
     } else {
-      var aVencer = vis.filter(function (c) { return c.vencimento && c.vencimento >= hj; }), dev = vis.filter(function (c) { return situacaoChq(c) === "DEVOLVIDO"; });
+      var aVencer = vis.filter(function (c) { return c.vencimento && c.vencimento >= hj; });
       tiles = [{ n: vis.length, l: "Cheques recebidos" }, { n: money(tot), l: "Valor total", c: "info" },
-        { n: aVencer.length + " · " + money(aVencer.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0)), l: "A vencer" }, { n: dev.length, l: "Com devolução", c: "warn" }];
+        { n: aVencer.length + " · " + money(aVencer.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0)), l: "A vencer" }];
     }
     $("chqKpis").innerHTML = tiles.map(function (t) { return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ">" + t.n + '</div><div class="lbl">' + t.l + "</div></div>"; }).join("");
     $("chqCount").textContent = vis.length + " de " + doTipo.length + " cheques · " + money(tot);
