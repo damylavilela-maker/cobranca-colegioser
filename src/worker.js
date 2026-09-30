@@ -773,20 +773,40 @@ async function alunosVinculados(env, a) {
 
 // O aluno do Contraturno que também está no Painel (mesmo RA ou, sem RA, mesmo nome) fica com o
 // valor em aberto, as parcelas e o vencimento do Painel. Quem não está no Painel mantém o próprio valor.
-const MESMO_ALUNO_NO_PAINEL = `r.carteira <> 'contraturno' AND r.id <> alunos.id AND (CASE WHEN trim(coalesce(alunos.ra, '')) <> ''
-  THEN lower(trim(coalesce(r.ra, ''))) = lower(trim(alunos.ra)) OR (trim(coalesce(r.ra, '')) = '' AND lower(trim(r.nome)) = lower(trim(alunos.nome)))
-  ELSE lower(trim(r.nome)) = lower(trim(alunos.nome)) END)`;
-async function sincronizarContraturno(env) {
-  await env.DB.prepare(`UPDATE alunos SET (valor_aberto, parcelas_aberto, vencimento, parcelas_venc, ultima_atualizacao_financeira) =
-    (SELECT r.valor_aberto, r.parcelas_aberto, r.vencimento, r.parcelas_venc, r.ultima_atualizacao_financeira FROM alunos r
-      WHERE ${MESMO_ALUNO_NO_PAINEL} ORDER BY r.arquivado, r.atualizado_em DESC LIMIT 1)
-    WHERE carteira = 'contraturno' AND EXISTS (SELECT 1 FROM alunos r WHERE ${MESMO_ALUNO_NO_PAINEL}
-      AND (r.valor_aberto IS NOT alunos.valor_aberto OR r.parcelas_aberto IS NOT alunos.parcelas_aberto
-        OR r.vencimento IS NOT alunos.vencimento OR r.parcelas_venc IS NOT alunos.parcelas_venc))`).run();
+// A comparação é feita aqui, sobre a lista já lida (uma leitura da tabela), e só grava quem mudou:
+// fazer isso em SQL com subconsultas lia a tabela inteira para cada aluno e estourava o limite do D1.
+const FIN_COLS = ["valor_aberto", "parcelas_aberto", "vencimento", "parcelas_venc", "ultima_atualizacao_financeira"];
+async function sincronizarContraturno(env, linhas) {
+  const todos = linhas || (await env.DB.prepare("SELECT * FROM alunos").all()).results;
+  const n = (v) => String(v || "").trim().toLowerCase();
+  // se houver mais de um no Painel: o não arquivado e, entre eles, o atualizado por último
+  const melhor = (a, b) => {
+    if (!a) return b;
+    const xa = a.arquivado ? 1 : 0, xb = b.arquivado ? 1 : 0;
+    if (xa !== xb) return xa < xb ? a : b;
+    return String(b.atualizado_em || "") > String(a.atualizado_em || "") ? b : a;
+  };
+  const porRa = {}, porNome = {}, porNomeSemRa = {};
+  todos.forEach((r) => {
+    if (r.carteira === "contraturno") return;
+    if (n(r.ra)) porRa[n(r.ra)] = melhor(porRa[n(r.ra)], r); else porNomeSemRa[n(r.nome)] = melhor(porNomeSemRa[n(r.nome)], r);
+    porNome[n(r.nome)] = melhor(porNome[n(r.nome)], r);
+  });
+  const stmts = [];
+  todos.forEach((c) => {
+    if (c.carteira !== "contraturno") return;
+    const r = n(c.ra) ? porRa[n(c.ra)] || porNomeSemRa[n(c.nome)] : porNome[n(c.nome)];
+    if (!r || FIN_COLS.every((k) => (r[k] ?? null) === (c[k] ?? null))) return;
+    FIN_COLS.forEach((k) => { c[k] = r[k]; });
+    stmts.push(env.DB.prepare("UPDATE alunos SET valor_aberto = ?, parcelas_aberto = ?, vencimento = ?, parcelas_venc = ?, ultima_atualizacao_financeira = ? WHERE id = ?")
+      .bind(...FIN_COLS.map((k) => r[k] ?? null), c.id));
+  });
+  if (stmts.length) await executarEmLotes(env, stmts);
+  return todos;
 }
 async function listarAlunos(env) {
-  await sincronizarContraturno(env);
   const r = await env.DB.prepare("SELECT * FROM alunos ORDER BY nome").all();
+  await sincronizarContraturno(env, r.results);
   return json({ alunos: r.results.map(alunoSaida) });
 }
 
