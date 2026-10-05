@@ -419,3 +419,4 @@ td.obs-cell{max-width:260px}
 .comp-tit{font-size:13.5px;color:var(--muted);margin:-6px 0 8px}
 table.data.compacta{min-width:0}
 table.data.compacta td.right{white-space:nowrap}
+.hist-mes{margin-top:10px}.hist-mes summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--brand)}

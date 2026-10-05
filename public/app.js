@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "30/09 · v66";
+  var VERSAO = "05/10 · v67";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -486,11 +486,8 @@
     $("dArchBanner").innerHTML =
       (a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "") +
       (outra ? '<div class="link-banner"><b>Também está no ' + (carteiraDe(outra) === "contraturno" ? "Contraturno" : "Painel") + "</b> (" + money(outra.valorAberto) + " em aberto, " + st(outra.status).l.toLowerCase() +
-        "). Os atendimentos aparecem nas duas abas; o status é de cada aba e o valor em aberto do Contraturno vem do Painel.</div>" : "");
-    // no Contraturno, o valor em aberto e o vencimento de quem também está no Painel vêm de lá (não se edita aqui)
-    var doPainel = carteiraDe(a) === "contraturno" && !!outra;
-    $("eValor").disabled = doPainel; $("eVenc").disabled = doPainel;
-    $("eValor").title = $("eVenc").title = doPainel ? "Vem do Painel: altere no Painel e o Contraturno acompanha." : "";
+        "). Os atendimentos aparecem nas duas abas; o status e o valor em aberto são de cada aba.</div>" : "");
+    carregarHistMesAluno(a);
     $("btnArquivarAluno").textContent = a.arquivado ? "Reativar aluno" : "Arquivar aluno";
     $("dInfoView").hidden = false; $("dInfoEdit").hidden = true; $("btnEditarDados").hidden = false;
     $("eNome").value = a.nome || ""; $("eRa").value = a.ra || ""; $("eTurma").value = a.turma || "";
@@ -500,6 +497,58 @@
     renderTimeline();
     abrir("mDetalhe");
   }
+
+  // Histórico mês a mês do aluno: valor em aberto de cada relatório importado e o recuperado no mês
+  function carregarHistMesAluno(a) {
+    var box = $("dHistMes"); box.hidden = true; $("dHistMesTab").innerHTML = "";
+    var id = a.id;
+    api("GET", "/api/alunos/" + encodeURIComponent(id) + "/historico").then(function (d) {
+      if (curId !== id) return;
+      var rec = {}, meses = {};
+      (d.meses || []).forEach(function (m) { meses[m.mes] = m; });
+      atends.forEach(function (t) { if (t.alunoId === id && t.data && Number(t.valorRecuperado) > 0) { var k = t.data.slice(0, 7); rec[k] = (rec[k] || 0) + Number(t.valorRecuperado); } });
+      var lista = Object.keys(meses).concat(Object.keys(rec).filter(function (k) { return !meses[k]; })).sort().reverse();
+      if (!lista.length) return;
+      $("dHistMesTab").innerHTML = '<div class="table-wrap" style="margin-top:8px"><table class="data compacta"><thead><tr><th>Mês</th><th class="right">Valor em aberto</th><th class="right">Recuperado no mês</th></tr></thead><tbody>' +
+        lista.map(function (k) {
+          var m = meses[k];
+          return "<tr><td>" + mesCurto(k) + '</td><td class="tabular right">' + (!m ? '<span class="muted">sem relatório</span>' : m.presente ? money(m.valorAberto) + (m.parcelas > 1 ? ' <span class="muted">(' + m.parcelas + " parc.)</span>" : "") : '<span class="muted">não veio no relatório</span>') +
+            '</td><td class="tabular right">' + (rec[k] ? money(rec[k]) : "—") + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+      box.hidden = false;
+    }).catch(function () { /* sem histórico: a ficha segue normal */ });
+  }
+  // Acompanhamento mensal da carteira aberta (Painel ou Contraturno)
+  $("btnMensal").addEventListener("click", function () {
+    var c = carteira, nome = c === "contraturno" ? "Contraturno" : "Painel";
+    $("mMensalT").textContent = "Acompanhamento mensal — " + nome;
+    $("mMensalSub").textContent = "Valor em aberto de cada relatório importado e o valor recuperado pela equipe em cada mês";
+    $("mMensalRes").innerHTML = '<div class="meta">Carregando…</div>';
+    abrir("mMensal");
+    api("GET", "/api/alunos/historico?carteira=" + encodeURIComponent(c)).then(function (d) {
+      var hist = {}, rec = {}, nAt = {};
+      (d.meses || []).forEach(function (m) { hist[m.mes] = m; });
+      atends.forEach(function (t) {
+        if (!t.data || carteiraDe(alunos[t.alunoId]) !== c) return;
+        var k = t.data.slice(0, 7); nAt[k] = (nAt[k] || 0) + 1; rec[k] = (rec[k] || 0) + (Number(t.valorRecuperado) || 0);
+      });
+      var lista = Object.keys(hist).concat(Object.keys(nAt).filter(function (k) { return !hist[k]; })).sort();
+      if (!lista.length) { $("mMensalRes").innerHTML = '<div class="import-summary">Ainda não há meses registrados. Ao importar o relatório do mês, o valor em aberto de cada aluno fica registrado aqui.</div>'; return; }
+      var ant = null, linhas = lista.map(function (k) {
+        var h = hist[k], v = h ? h.valorAberto : null, dif = h && ant != null ? v - ant : null;
+        if (h) ant = v;
+        return "<tr><td><b>" + mesCurto(k) + "</b>" + (h && h.importadoEm ? '<div class="meta">importado em ' + br(h.importadoEm) + "</div>" : "") + "</td>" +
+          '<td class="tabular right">' + (h ? h.alunos : '<span class="muted">sem relatório</span>') + "</td>" +
+          '<td class="tabular right">' + (h ? "<b>" + money(v) + "</b>" : "—") + "</td>" +
+          '<td class="tabular right">' + (dif == null ? "—" : '<span style="color:var(--' + (dif > 0 ? "danger" : dif < 0 ? "success" : "muted") + ')">' + (dif > 0 ? "+" : dif < 0 ? "−" : "") + money(Math.abs(dif)) + "</span>") + "</td>" +
+          '<td class="tabular right">' + (rec[k] ? money(rec[k]) : "—") + "</td>" +
+          '<td class="tabular right">' + (nAt[k] || 0) + "</td></tr>";
+      }).reverse();
+      $("mMensalRes").innerHTML = '<div class="table-wrap"><table class="data compacta"><thead><tr><th>Mês</th><th class="right">Alunos no relatório</th><th class="right">Valor em aberto</th><th class="right">Variação</th><th class="right">Valor recuperado</th><th class="right">Atendimentos</th></tr></thead><tbody>' +
+        linhas.join("") + "</tbody></table></div>" +
+        '<div class="meta" style="margin-top:8px">Variação: diferença do valor em aberto para o relatório do mês anterior (verde = diminuiu). Valor recuperado e atendimentos vêm dos registros da equipe no mês.</div>';
+    }).catch(function (x) { $("mMensalRes").innerHTML = '<div class="form-err">' + esc(x.message) + "</div>"; });
+  });
 
   function limparFormAtendimento(a) {
     $("formAt").reset();
@@ -1133,6 +1182,7 @@
       ? "Envie uma aba da planilha em Excel (.xlsx/.xls), CSV ou PDF (RA, Nome, Vencimento, Valor, Mentor, Serasa, Data inclusão). Também aceita Responsável financeiro, CPF, Tipo, Resp. inclusão e Período."
       : "Envie o relatório " + (carteira === "contraturno" ? "do contraturno" : "de cobrança") + " em Excel (.xlsx/.xls), CSV ou PDF (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento). O PDF do relatório de Inadimplência do sistema também é aceito.";
     $("impPeriodoWrap").hidden = modo !== "serasa";
+    $("impMesWrap").hidden = modo !== "alunos"; $("impMes").value = mesAtual();
     $("impPeriodo").disabled = false;
     $("impPeriodoHint").textContent = "Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.";
     if (modo === "serasa") {
@@ -1239,14 +1289,15 @@
         return carregar().then(function () { mostrarImportadas(d.porPeriodo || {}); });
       }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar parcelas"; toast(x.message); mostrarErroImport(x.message); });
     }
-    api("POST", "/api/alunos/importar", { linhas: pendentes, carteira: carteira }).then(function (d) {
+    api("POST", "/api/alunos/importar", { linhas: pendentes, carteira: carteira, mes: $("impMes").value || mesAtual() }).then(function (d) {
       btn.hidden = true;
       mostrarConciliacao(d);
       return carregar();
     }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar alunos"; toast(x.message); });
   });
   function mostrarConciliacao(d) {
-    var html = '<div class="import-summary" style="color:var(--ink)"><b>' + d.criados + "</b> aluno(s) novo(s) cadastrado(s) · <b>" + d.atualizados + "</b> já existiam e foram atualizados.</div>";
+    var html = '<div class="import-summary" style="color:var(--ink)"><b>' + d.criados + "</b> aluno(s) novo(s) cadastrado(s) · <b>" + d.atualizados + "</b> já existiam e foram atualizados." +
+      (d.mes ? " Valores registrados no mês <b>" + mesCurto(d.mes) + "</b> (veja em “Acompanhamento mensal”)." : "") + "</div>";
     if (d.daBase) html += '<div class="import-summary">' + d.daBase + " aluno(s) completados com os dados da <b>Base de dados</b> (nome completo, turma, responsável e contato).</div>";
     var fora = d.foraDaPlanilha || [];
     if (fora.length) {

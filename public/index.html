@@ -102,6 +102,7 @@
         <div class="actions">
           <span class="sync" id="sync" title="Os dados são atualizados automaticamente a cada 30 segundos"><i></i><span class="sync-lbl" id="syncLbl">—</span></span>
           <button type="button" class="btn ghost small" id="btnArquivados">Arquivados</button>
+          <button type="button" class="btn ghost small" id="btnMensal" title="Valor em aberto e valor recuperado mês a mês">Acompanhamento mensal</button>
           <button type="button" class="btn ghost small" id="btnModelo">Baixar modelo</button>
           <button type="button" class="btn ghost small" id="btnImportar">Importar planilha</button>
           <button type="button" class="btn ghost small" id="btnExportar">Exportar relatório</button>
@@ -390,6 +391,7 @@
       <div style="flex:1;min-width:0">
         <h2 id="dNome">—</h2><div class="sub" id="dSub">—</div>
         <div class="info" id="dInfoView"></div>
+        <details class="hist-mes" id="dHistMes" hidden><summary>Histórico mês a mês</summary><div id="dHistMesTab"></div></details>
         <button type="button" class="btn ghost small" id="btnEditarDados" style="margin-top:10px">Editar dados do aluno</button>
         <div class="grid2" id="dInfoEdit" hidden style="margin-top:12px">
           <div class="field"><label for="eNome">Nome do aluno</label><input id="eNome"></div>
@@ -471,6 +473,15 @@
   </div>
 </div>
 
+<div class="overlay" id="mMensal" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="mMensalT">
+    <div class="m-head"><div><h2 id="mMensalT">Acompanhamento mensal</h2><div class="sub" id="mMensalSub"></div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
+    <div class="m-body">
+      <div id="mMensalRes"></div>
+      <div class="m-foot"><button type="button" class="btn ghost" data-close>Fechar</button></div>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="mImportar" hidden>
   <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="mImpT">
     <div class="m-head"><div><h2 id="mImpT">Importar planilha</h2><div class="sub" id="mImpSub">Envie um CSV exportado da planilha de cobrança (RA, Nome, Turma, Responsável, Telefone, E-mail, Valor em aberto, Vencimento)</div></div><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
@@ -480,6 +491,11 @@
         <select id="impPeriodo"></select>
         <span class="hint" id="impPeriodoHint">Todas as linhas do arquivo vão para este período. Se o período ainda não existe, crie em “+ Novo período” antes.</span>
         <label class="check-linha"><input type="checkbox" id="impEspelhar" checked> <span><b>Deixar o período igual ao arquivo</b> — o que está no período e não está no arquivo sai dele (cópias são apagadas; o resto vai para “Sem período”). Antes de gravar, o site mostra o que vai mudar.</span></label>
+      </div>
+      <div class="field" id="impMesWrap" hidden>
+        <label for="impMes">Mês de referência do relatório</label>
+        <input type="month" id="impMes">
+        <span class="hint">O valor em aberto de cada aluno fica registrado neste mês. Importar de novo no mesmo mês substitui o registro do mês (não soma). Os atendimentos continuam no histórico de cada aluno.</span>
       </div>
       <div class="dropzone" id="dropzone">Arraste a planilha (.xlsx, .xls ou .csv) ou o relatório em .pdf aqui, ou clique para selecionar<input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm,.ods,.csv,.txt,.pdf,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf" hidden></div>
       <div class="field" id="impAbaWrap" hidden><label for="impAba">Aba da planilha</label><select id="impAba"></select><span class="hint">A planilha tem mais de uma aba: escolha qual importar.</span></div>

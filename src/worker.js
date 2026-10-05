@@ -186,7 +186,12 @@ const SCHEMA = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_cheques_chave ON cheques(tipo, chave)`,
   // carteiras anuais do jurídico (nome e ano letivo do débito)
-  `CREATE TABLE IF NOT EXISTS jur_carteiras (id TEXT PRIMARY KEY, nome TEXT NOT NULL UNIQUE, ano TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`
+  `CREATE TABLE IF NOT EXISTS jur_carteiras (id TEXT PRIMARY KEY, nome TEXT NOT NULL UNIQUE, ano TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`,
+  // Painel e Contraturno: o valor em aberto de cada aluno em cada mês (um registro por mês e aluno;
+  // importar de novo no mesmo mês substitui o daquele mês, não acumula). presente = veio no relatório.
+  `CREATE TABLE IF NOT EXISTS alunos_hist (mes TEXT NOT NULL, aluno_id TEXT NOT NULL, carteira TEXT NOT NULL DEFAULT 'regular', valor_aberto REAL NOT NULL DEFAULT 0, parcelas_aberto INTEGER NOT NULL DEFAULT 0, presente INTEGER NOT NULL DEFAULT 1, importado_em TEXT NOT NULL, PRIMARY KEY (mes, aluno_id))`,
+  `CREATE INDEX IF NOT EXISTS idx_alunos_hist_aluno ON alunos_hist(aluno_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_alunos_hist_cart ON alunos_hist(carteira, mes)`
 ];
 
 // Períodos que já existiam na planilha "SERASA - SER", criados uma única vez. O nome é o
@@ -284,12 +289,15 @@ export default {
           "UPDATE jur_casos SET status = 'em_negociacao' WHERE status IN ('em_dia', 'parcial')",
           "UPDATE jur_casos SET status = 'em_aberto' WHERE status NOT IN ('em_aberto', 'em_negociacao', 'verificar', 'quitado')"
         ].map((s) => env.DB.prepare(s)));
+        // Uma vez: o histórico mensal começa com o valor atual de cada aluno, no mês da última importação.
+        const hist = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('alunos_hist_inicial', ?)").bind(agora).run();
+        if (!hist.meta || hist.meta.changes > 0) await env.DB.prepare(
+          `INSERT OR IGNORE INTO alunos_hist (mes, aluno_id, carteira, valor_aberto, parcelas_aberto, presente, importado_em)
+           SELECT substr(ultima_atualizacao_financeira, 1, 7), id, carteira, valor_aberto, parcelas_aberto, 1, ultima_atualizacao_financeira
+           FROM alunos WHERE ultima_atualizacao_financeira LIKE '20__-__%' AND arquivado = 0`).run();
         schemaPronto = true;
       }
-      const resposta = await rotear(request, env, url);
-      // mudou algo no Painel: o Contraturno acompanha o valor em aberto na hora
-      if (request.method !== "GET" && /^\/api\/(alunos|atendimentos|admin|base)(\/|$)/.test(url.pathname) && resposta.ok) await sincronizarContraturno(env);
-      return resposta;
+      return await rotear(request, env, url);
     } catch (e) {
       if (e instanceof HttpError) return json({ erro: e.message, codigo: e.code || null }, e.status);
       console.error(e && e.stack || e);
@@ -359,6 +367,8 @@ async function rotear(req, env, url) {
 
   if (partes[0] === "alunos") {
     if (partes.length === 1 && m === "GET") return listarAlunos(env);
+    if (partes[1] === "historico" && partes.length === 2 && m === "GET") return historicoCarteira(env, url.searchParams.get("carteira"));
+    if (partes[2] === "historico" && partes.length === 3 && m === "GET") return historicoAluno(env, partes[1]);
     if (partes.length === 1 && m === "POST") return criarAluno(req, env);
     if (partes[1] === "importar" && m === "POST") return importarPlanilha(req, env);
     if (partes[1] === "regularizar" && m === "POST") return regularizar(req, env, eu);
@@ -771,43 +781,22 @@ async function alunosVinculados(env, a) {
   return r.results;
 }
 
-// O aluno do Contraturno que também está no Painel (mesmo RA ou, sem RA, mesmo nome) fica com o
-// valor em aberto, as parcelas e o vencimento do Painel. Quem não está no Painel mantém o próprio valor.
-// A comparação é feita aqui, sobre a lista já lida (uma leitura da tabela), e só grava quem mudou:
-// fazer isso em SQL com subconsultas lia a tabela inteira para cada aluno e estourava o limite do D1.
-const FIN_COLS = ["valor_aberto", "parcelas_aberto", "vencimento", "parcelas_venc", "ultima_atualizacao_financeira"];
-async function sincronizarContraturno(env, linhas) {
-  const todos = linhas || (await env.DB.prepare("SELECT * FROM alunos").all()).results;
-  const n = (v) => String(v || "").trim().toLowerCase();
-  // se houver mais de um no Painel: o não arquivado e, entre eles, o atualizado por último
-  const melhor = (a, b) => {
-    if (!a) return b;
-    const xa = a.arquivado ? 1 : 0, xb = b.arquivado ? 1 : 0;
-    if (xa !== xb) return xa < xb ? a : b;
-    return String(b.atualizado_em || "") > String(a.atualizado_em || "") ? b : a;
-  };
-  const porRa = {}, porNome = {}, porNomeSemRa = {};
-  todos.forEach((r) => {
-    if (r.carteira === "contraturno") return;
-    if (n(r.ra)) porRa[n(r.ra)] = melhor(porRa[n(r.ra)], r); else porNomeSemRa[n(r.nome)] = melhor(porNomeSemRa[n(r.nome)], r);
-    porNome[n(r.nome)] = melhor(porNome[n(r.nome)], r);
-  });
-  const stmts = [];
-  todos.forEach((c) => {
-    if (c.carteira !== "contraturno") return;
-    const r = n(c.ra) ? porRa[n(c.ra)] || porNomeSemRa[n(c.nome)] : porNome[n(c.nome)];
-    if (!r || FIN_COLS.every((k) => (r[k] ?? null) === (c[k] ?? null))) return;
-    FIN_COLS.forEach((k) => { c[k] = r[k]; });
-    stmts.push(env.DB.prepare("UPDATE alunos SET valor_aberto = ?, parcelas_aberto = ?, vencimento = ?, parcelas_venc = ?, ultima_atualizacao_financeira = ? WHERE id = ?")
-      .bind(...FIN_COLS.map((k) => r[k] ?? null), c.id));
-  });
-  if (stmts.length) await executarEmLotes(env, stmts);
-  return todos;
-}
 async function listarAlunos(env) {
   const r = await env.DB.prepare("SELECT * FROM alunos ORDER BY nome").all();
-  await sincronizarContraturno(env, r.results);
   return json({ alunos: r.results.map(alunoSaida) });
+}
+
+// Acompanhamento mensal (Painel ou Contraturno): por mês, quantos alunos vieram no relatório e o
+// valor em aberto total. Só é lido quando alguém abre o acompanhamento (não entra na atualização automática).
+async function historicoCarteira(env, carteira) {
+  const r = await env.DB.prepare(
+    `SELECT mes, SUM(presente) AS alunos, SUM(CASE WHEN presente = 1 THEN valor_aberto ELSE 0 END) AS valor, MAX(importado_em) AS importado_em
+     FROM alunos_hist WHERE carteira = ? GROUP BY mes ORDER BY mes`).bind(carteiraValida(carteira)).all();
+  return json({ meses: r.results.map((x) => ({ mes: x.mes, alunos: x.alunos || 0, valorAberto: numero(x.valor), importadoEm: x.importado_em })) });
+}
+async function historicoAluno(env, id) {
+  const r = await env.DB.prepare("SELECT mes, valor_aberto, parcelas_aberto, presente FROM alunos_hist WHERE aluno_id = ? ORDER BY mes").bind(id).all();
+  return json({ meses: r.results.map((x) => ({ mes: x.mes, valorAberto: numero(x.valor_aberto), parcelas: x.parcelas_aberto, presente: !!x.presente })) });
 }
 
 async function buscarAluno(env, id) {
@@ -867,6 +856,9 @@ async function importarPlanilha(req, env) {
   const stmts = [];
   let criados = 0, atualizados = 0, daBase = 0;
   const base = await carregarBase(env);
+  // mês de referência do relatório (o valor em aberto de cada aluno fica registrado nesse mês)
+  const mes = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(b.mes || "")) ? b.mes : hojeISO().slice(0, 7);
+  const foto = []; // [aluno_id, valor, parcelas, presente]
 
   for (const r0 of linhas) {
     if (!texto(r0.nome, 150)) continue;
@@ -889,6 +881,7 @@ async function importarPlanilha(req, env) {
       if (achado.arquivado) sets.push("arquivado = 0");
       stmts.push(env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, achado.id));
       tocados.add(achado.id);
+      foto.push([achado.id, vals[0], vals[1], 1]);
       atualizados++;
     } else {
       const id = novoId();
@@ -903,12 +896,22 @@ async function importarPlanilha(req, env) {
       porNome[nome.toLowerCase()] = { id, nome, ra };
       if (ra) porRa[ra.toLowerCase()] = { id, nome, ra };
       tocados.add(id);
+      foto.push([id, numero(r.valorAberto), parseInt(r.parcelas, 10) || 1, 1]);
       criados++;
     }
   }
+  // quem estava ativo e não veio no relatório: no mês fica sem débito (presente = 0)
+  ativosAntes.forEach((a) => { if (!tocados.has(a.id)) foto.push([a.id, 0, 0, 0]); });
+  // o registro do mês é substituído inteiro: importar de novo no mesmo mês não acumula
+  stmts.push(env.DB.prepare("DELETE FROM alunos_hist WHERE mes = ? AND carteira = ?").bind(mes, carteira));
+  for (let i = 0; i < foto.length; i += 12) {
+    const parte = foto.slice(i, i + 12);
+    stmts.push(env.DB.prepare(`INSERT OR REPLACE INTO alunos_hist (mes, aluno_id, carteira, valor_aberto, parcelas_aberto, presente, importado_em) VALUES ${parte.map(() => "(?,?,?,?,?,?,?)").join(",")}`)
+      .bind(...parte.flatMap((f) => [mes, f[0], carteira, f[1], f[2], f[3], agora])));
+  }
   await executarEmLotes(env, stmts);
   const foraDaPlanilha = ativosAntes.filter((a) => !tocados.has(a.id)).map((a) => ({ id: a.id, nome: a.nome, valorAberto: a.valor_aberto }));
-  return json({ criados, atualizados, foraDaPlanilha, daBase });
+  return json({ criados, atualizados, foraDaPlanilha, daBase, mes });
 }
 
 // Marca alunos como regularizados e registra o valor em aberto deles como recuperado.
