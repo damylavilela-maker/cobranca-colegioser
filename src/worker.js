@@ -295,6 +295,11 @@ export default {
           `INSERT OR IGNORE INTO alunos_hist (mes, aluno_id, carteira, valor_aberto, parcelas_aberto, presente, importado_em)
            SELECT substr(ultima_atualizacao_financeira, 1, 7), id, carteira, valor_aberto, parcelas_aberto, 1, ultima_atualizacao_financeira
            FROM alunos WHERE ultima_atualizacao_financeira LIKE '20__-__%' AND arquivado = 0`).run();
+        // Uma vez: as regularizações lançadas em outubro/2026 ao importar o relatório de outubro
+        // pertencem ao mês anterior (quem não veio no relatório pagou antes dele).
+        const regOut = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('regularizacao_out2026_para_set', ?)").bind(agora).run();
+        if (!regOut.meta || regOut.meta.changes > 0) await env.DB.prepare(
+          "UPDATE atendimentos SET data = '2026-09-30' WHERE motivo = 'Regularização via importação de planilha' AND data >= '2026-10-01' AND data <= '2026-10-31'").run();
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -465,6 +470,8 @@ function dataOuNull(v) { return dataISO(v) || null; }
 function statusValido(v) { return STATUS.includes(v) ? v : "sem_contato"; }
 function agoraISO() { return new Date().toISOString(); }
 function hojeISO() { return new Date().toLocaleDateString("en-CA", { timeZone: FUSO }); }
+// "2026-10" -> "2026-09-30"
+function ultimoDiaMesAnterior(mes) { const [a, m] = mes.split("-").map(Number); return new Date(Date.UTC(a, m - 1, 0)).toISOString().slice(0, 10); }
 function novoId() { return crypto.randomUUID().replace(/-/g, "").slice(0, 20); }
 
 function faixaAtrasoDe(vencimento, dataAtend) {
@@ -919,7 +926,11 @@ async function regularizar(req, env, eu) {
   const b = await corpo(req);
   const ids = Array.isArray(b.ids) ? b.ids.slice(0, 2000).map(String) : [];
   if (!ids.length) throw new HttpError(400, "Selecione ao menos um aluno.");
-  const hoje = hojeISO(), agora = agoraISO();
+  // quem não veio no relatório do mês pagou antes dele: o recuperado entra no último dia do mês
+  // anterior ao mês de referência (relatório de outubro → 30/09), nunca no mês do relatório
+  const agora = agoraISO();
+  const ref = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(b.mes || "")) ? b.mes : hojeISO().slice(0, 7);
+  const hoje = ultimoDiaMesAnterior(ref);
   const stmts = [];
   let ok = 0;
   for (const lote of emLotes(ids, 50)) {
@@ -939,7 +950,7 @@ async function regularizar(req, env, eu) {
     }
   }
   await executarEmLotes(env, stmts);
-  return json({ regularizados: ok });
+  return json({ regularizados: ok, data: hoje });
 }
 
 // ---------------------------------------------------------------- atendimentos

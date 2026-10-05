@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "05/10 · v68";
+  var VERSAO = "05/10 · v69";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1310,7 +1310,7 @@
     var fora = d.foraDaPlanilha || [];
     if (fora.length) {
       html += '<div class="sec" style="border:none;padding-top:10px">Não apareceram neste relatório (' + fora.length + ")</div>" +
-        '<div class="import-summary" style="margin-bottom:8px">Estavam ativos no painel mas não vieram na planilha — normalmente quitaram. Marque quem já resolveu:</div>' +
+        '<div class="import-summary" style="margin-bottom:8px">Estavam ativos no painel mas não vieram na planilha — normalmente quitaram. Marque quem já resolveu (o valor entra como recuperado no mês anterior ao do relatório):</div>' +
         '<div class="import-preview"><table><thead><tr><th><label class="check-line"><input type="checkbox" id="concTodos"> Selecionar todos</label></th><th>Valor em aberto</th></tr></thead><tbody>' +
         fora.map(function (a) { return '<tr><td><label class="check-line"><input type="checkbox" class="conc-chk" data-id="' + esc(a.id) + '"> ' + esc(a.nome) + '</label></td><td class="tabular">' + money(a.valorAberto) + "</td></tr>"; }).join("") +
         '</tbody></table></div><div class="m-foot" style="justify-content:flex-start"><button type="button" class="btn ghost small" id="btnRegularizar">Marcar selecionados como regularizados</button></div>';
@@ -1323,8 +1323,8 @@
       var ids = [].map.call(document.querySelectorAll(".conc-chk:checked"), function (c) { return c.getAttribute("data-id"); });
       if (!ids.length) return toast("Selecione ao menos um aluno.");
       br2.disabled = true; br2.textContent = "Marcando…";
-      api("POST", "/api/alunos/regularizar", { ids: ids }).then(function (r) {
-        toast(r.regularizados + " aluno(s) marcados como regularizados e somados ao valor recuperado.");
+      api("POST", "/api/alunos/regularizar", { ids: ids, mes: d.mes || $("impMes").value || mesAtual() }).then(function (r) {
+        toast(r.regularizados + " aluno(s) marcados como regularizados; o valor entra no recuperado de " + (r.data ? br(r.data).slice(3) : "mês anterior") + ".");
         br2.closest(".m-foot").remove();
         document.querySelectorAll(".conc-chk:checked").forEach(function (c) { c.closest("tr").remove(); });
         return carregar();
