@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "05/10 · v69";
+  var VERSAO = "05/10 · v70";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -450,7 +450,7 @@
         var atras = !a.arquivado && pr < h, eHoje = pr === h;
         pc = '<span class="' + (atras ? "late" : eHoje ? "today" : "") + '">' + br(pr) + "</span>" + (atras ? '<div class="meta late" style="font-weight:400">atrasado</div>' : eHoje ? '<div class="meta">hoje</div>' : "");
       } else pc = '<span class="muted">—</span>';
-      return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + '</div><div class="meta">' +
+      return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + (a.juridico ? ' <span class="tag">jurídico</span>' : "") + '</div><div class="meta">' +
         esc(a.responsavel || "sem responsável informado") + (a.ra ? " · RA " + esc(a.ra) : "") + (a.turma ? " · " + esc(a.turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + (a.parcelasAberto > 1 ? '<div class="meta">' + a.parcelasAberto + " parcelas</div>" : "") + "</td>" +
         "<td>" + pill(a.status || "sem_contato") + "</td>" +
@@ -491,11 +491,13 @@
       '<div class="k">Status atual</div><div class="v">' + pill(a.status || "sem_contato") + "</div>";
     var outra = vinculadosDe(a).filter(function (b) { return carteiraDe(b) !== carteiraDe(a); })[0];
     $("dArchBanner").innerHTML =
-      (a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "") +
+      (a.juridico ? '<div class="arch-banner">Aluno retirado do painel (encaminhado ao jurídico). Não entra nos totais e as importações o ignoram. Use “Voltar ao painel” para desfazer.</div>'
+        : a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "") +
       (outra ? '<div class="link-banner"><b>Também está no ' + (carteiraDe(outra) === "contraturno" ? "Contraturno" : "Painel") + "</b> (" + money(outra.valorAberto) + " em aberto, " + st(outra.status).l.toLowerCase() +
         "). Os atendimentos aparecem nas duas abas; o status e o valor em aberto são de cada aba.</div>" : "");
     carregarHistMesAluno(a);
-    $("btnArquivarAluno").textContent = a.arquivado ? "Reativar aluno" : "Arquivar aluno";
+    $("btnArquivarAluno").textContent = a.arquivado ? "Reativar aluno" : "Arquivar aluno"; $("btnArquivarAluno").hidden = !!a.juridico;
+    var bj = $("btnJurAluno"); bj.classList.remove("armed"); bj.textContent = a.juridico ? "Voltar ao painel" : "Retirar do painel (jurídico)";
     $("dInfoView").hidden = false; $("dInfoEdit").hidden = true; $("btnEditarDados").hidden = false;
     $("eNome").value = a.nome || ""; $("eRa").value = a.ra || ""; $("eTurma").value = a.turma || "";
     $("eResp").value = a.responsavel || ""; $("eTel").value = a.telefone || ""; $("eEmail").value = a.email || "";
@@ -728,6 +730,16 @@
     api("PATCH", "/api/alunos/" + encodeURIComponent(curId), { arquivado: !a.arquivado }).then(function (d) {
       alunos[d.aluno.id] = d.aluno; fecharModais(); renderTudo();
       toast(d.aluno.arquivado ? "Aluno arquivado." : "Aluno reativado.");
+    }).catch(function (x) { toast(x.message); });
+  });
+  // aluno encaminhado ao jurídico: sai do painel (fica arquivado) e as importações o ignoram; dá para desfazer
+  $("btnJurAluno").addEventListener("click", function () {
+    var a = alunos[curId], b = this; if (!a) return;
+    if (!a.juridico && !b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar: retirar do painel"; return; }
+    b.classList.remove("armed");
+    api("PATCH", "/api/alunos/" + encodeURIComponent(curId), { juridico: !a.juridico }).then(function (d) {
+      alunos[d.aluno.id] = d.aluno; fecharModais(); renderTudo();
+      toast(d.aluno.juridico ? "Aluno retirado do painel (jurídico). As próximas importações vão ignorá-lo." : "Aluno voltou ao painel.");
     }).catch(function (x) { toast(x.message); });
   });
   $("btnEditarDados").addEventListener("click", function () { $("dInfoView").hidden = true; $("dInfoEdit").hidden = false; this.hidden = true; $("eNome").focus(); });
@@ -1306,6 +1318,7 @@
   function mostrarConciliacao(d) {
     var html = '<div class="import-summary" style="color:var(--ink)"><b>' + d.criados + "</b> aluno(s) novo(s) cadastrado(s) · <b>" + d.atualizados + "</b> já existiam e foram atualizados." +
       (d.mes ? " Valores registrados no mês <b>" + mesCurto(d.mes) + "</b> (veja em “Acompanhamento mensal”)." : "") + "</div>";
+    if (d.ignoradosJur) html += '<div class="import-summary">' + d.ignoradosJur + " aluno(s) do relatório estão retirados do painel (jurídico) e foram ignorados.</div>";
     if (d.daBase) html += '<div class="import-summary">' + d.daBase + " aluno(s) completados com os dados da <b>Base de dados</b> (nome completo, turma, responsável e contato).</div>";
     var fora = d.foraDaPlanilha || [];
     if (fora.length) {

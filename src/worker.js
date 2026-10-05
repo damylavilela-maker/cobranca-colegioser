@@ -239,6 +239,8 @@ export default {
         if (!cols.includes("carteira")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN carteira TEXT NOT NULL DEFAULT 'regular'").run();
         // vencimento e valor de cada parcela em aberto (JSON), para a faixa de atraso por parcela
         if (!cols.includes("parcelas_venc")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN parcelas_venc TEXT NOT NULL DEFAULT '[]'").run();
+        // aluno retirado do painel por ter ido ao jurídico: fica arquivado e as importações o ignoram
+        if (!cols.includes("juridico")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN juridico INTEGER NOT NULL DEFAULT 0").run();
         // Cada parcela da Serasa pertence a um período (como uma linha pertence a uma aba da planilha).
         const colsSer = (await env.DB.prepare("PRAGMA table_info(serasa)").all()).results.map((c) => c.name);
         if (!colsSer.includes("periodo_id")) await env.DB.prepare("ALTER TABLE serasa ADD COLUMN periodo_id TEXT NOT NULL DEFAULT ''").run();
@@ -749,7 +751,7 @@ function alunoSaida(r) {
     valorAberto: r.valor_aberto, parcelasAberto: r.parcelas_aberto, vencimento: r.vencimento || "",
     status: r.status, setor: r.setor, atendenteResponsavel: r.atendente_responsavel,
     ultimoContato: r.ultimo_contato_data ? { data: r.ultimo_contato_data, canal: r.ultimo_contato_canal || "" } : null,
-    proximoRetorno: r.proximo_retorno || null, arquivado: !!r.arquivado,
+    proximoRetorno: r.proximo_retorno || null, arquivado: !!r.arquivado, juridico: !!r.juridico,
     ultimaAtualizacaoFinanceira: r.ultima_atualizacao_financeira || null,
     createdAt: r.criado_em, updatedAt: r.atualizado_em, carteira: r.carteira || "regular", parcelasVenc: lerParcelasVenc(r.parcelas_venc)
   };
@@ -828,8 +830,10 @@ async function alterarAluno(req, env, id) {
     nome: (v) => { const t = texto(v, 150); if (!t) throw new HttpError(400, "O nome do aluno não pode ficar em branco."); return t; },
     ra: (v) => texto(v, 30), turma: (v) => texto(v, 80), responsavel: (v) => texto(v, 150),
     telefone: (v) => texto(v, 60), email: (v) => texto(v, 150), setor: (v) => texto(v, 40),
-    valorAberto: numero, vencimento: dataISO, arquivado: (v) => (v ? 1 : 0)
+    valorAberto: numero, vencimento: dataISO, arquivado: (v) => (v ? 1 : 0), juridico: (v) => (v ? 1 : 0)
   };
+  // retirar do painel (jurídico) arquiva junto; voltar ao painel reativa
+  if (b.juridico !== undefined && b.arquivado === undefined) b.arquivado = !!b.juridico;
   const colunas = { valorAberto: "valor_aberto" };
   const sets = [], vals = [];
   for (const k of Object.keys(campos)) {
@@ -861,7 +865,7 @@ async function importarPlanilha(req, env) {
   const tocados = new Set();
   const agora = agoraISO();
   const stmts = [];
-  let criados = 0, atualizados = 0, daBase = 0;
+  let criados = 0, atualizados = 0, daBase = 0, ignoradosJur = 0;
   const base = await carregarBase(env);
   // mês de referência do relatório (o valor em aberto de cada aluno fica registrado nesse mês)
   const mes = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(b.mes || "")) ? b.mes : hojeISO().slice(0, 7);
@@ -878,6 +882,8 @@ async function importarPlanilha(req, env) {
     const achado = (ra && porRa[ra.toLowerCase()]) || porNome[nome.toLowerCase()] || porNome[texto(r0.nome, 150).toLowerCase()];
     if (achado) {
       if (tocados.has(achado.id)) continue;
+      // retirado do painel por ter ido ao jurídico: a importação não mexe nele nem o reativa
+      if (achado.juridico) { tocados.add(achado.id); ignoradosJur++; continue; }
       const sets = ["valor_aberto = ?", "parcelas_aberto = ?", "ultima_atualizacao_financeira = ?", "atualizado_em = ?", "parcelas_venc = ?"];
       const vals = [numero(r.valorAberto), parseInt(r.parcelas, 10) || 1, agora, agora, parcelasVencJSON(r0.parcelasVenc)];
       if (bx && bx.nome && bx.nome !== achado.nome) { sets.push("nome = ?"); vals.push(bx.nome); }
@@ -918,7 +924,7 @@ async function importarPlanilha(req, env) {
   }
   await executarEmLotes(env, stmts);
   const foraDaPlanilha = ativosAntes.filter((a) => !tocados.has(a.id)).map((a) => ({ id: a.id, nome: a.nome, valorAberto: a.valor_aberto }));
-  return json({ criados, atualizados, foraDaPlanilha, daBase, mes });
+  return json({ criados, atualizados, foraDaPlanilha, daBase, mes, ignoradosJur });
 }
 
 // Marca alunos como regularizados e registra o valor em aberto deles como recuperado.
@@ -1006,7 +1012,7 @@ async function criarAtendimento(req, env, eu) {
       JSON.stringify(mens), totalNegociado, agora
     )
   ];
-  const sets = ["status = ?", "atendente_responsavel = ?", "setor = ?", "ultimo_contato_data = ?", "ultimo_contato_canal = ?", "proximo_retorno = ?", "arquivado = 0", "atualizado_em = ?"];
+  const sets = ["status = ?", "atendente_responsavel = ?", "setor = ?", "ultimo_contato_data = ?", "ultimo_contato_canal = ?", "proximo_retorno = ?", "arquivado = juridico", "atualizado_em = ?"];
   const vals = [status, eu.nome, setor, data, canal, proximo, agora];
   if (temValorNovo) { sets.push("valor_aberto = ?"); vals.push(valorNovo); }
   stmts.push(env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, aluno.id));
