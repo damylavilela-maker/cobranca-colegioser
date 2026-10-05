@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "05/10 · v67";
+  var VERSAO = "05/10 · v68";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -354,9 +354,20 @@
     return out;
   }
   var mesRecup = "", mesAberto = "";
+  // registro mês a mês de cada carteira ({ meses: { "2026-10": {valorAberto, alunos} } }); recarrega após importar
+  var histCarteira = {}, histCarregando = {};
+  function carregarHistCarteira(c) {
+    if (histCarregando[c]) return;
+    histCarregando[c] = true;
+    api("GET", "/api/alunos/historico?carteira=" + encodeURIComponent(c)).then(function (d) {
+      var m = {}; (d.meses || []).forEach(function (x) { m[x.mes] = x; });
+      histCarteira[c] = { meses: m };
+    }).catch(function () { histCarteira[c] = { erro: true, meses: {} }; })
+      .then(function () { histCarregando[c] = false; if (view === "painel" || view === "contraturno") renderPainel(); });
+  }
   $("kpis").addEventListener("change", function (e) {
     if (e.target.id === "kpiMesRecup") { mesRecup = e.target.value; renderPainel(); }
-    if (e.target.id === "kpiMesAberto") { mesAberto = e.target.value; renderPainel(); }
+    if (e.target.id === "kpiMesAberto") { mesAberto = e.target.value; if (histCarteira[carteira] && histCarteira[carteira].erro) delete histCarteira[carteira]; renderPainel(); }
   });
   function renderKpis(vis) {
     var tot = 0, c = {};
@@ -368,27 +379,23 @@
     var selMes = '<select class="kpi-mes" id="kpiMesRecup" aria-label="Mês do valor recuperado">' + meses.map(function (m) {
       return '<option value="' + m.v + '"' + (m.v === mesRecup ? " selected" : "") + ">" + m.l + "</option>";
     }).join("") + "</select>";
-    // "Valor em aberto": o ano todo ou só as parcelas que vencem no mês escolhido. Aluno sem o
-    // detalhe das parcelas (importado antes) entra pelo vencimento dele só quando tem 1 parcela.
+    // "Valor em aberto": "Atual" = soma de hoje dos alunos ativos; um mês = o total do relatório
+    // importado com aquele mês de referência (registro mês a mês, carregado só quando se escolhe um mês)
     if (mesAberto && !meses.some(function (m) { return m.v === mesAberto; })) mesAberto = "";
-    var abertoMes = tot, semDetalhe = 0;
+    var abertoMes = tot, subAberto = "";
     if (mesAberto) {
-      abertoMes = 0;
-      vis.forEach(function (a) {
-        if (!(Number(a.valorAberto) > 0)) return;
-        var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc : [];
-        if (pv.length) pv.forEach(function (p) { if (String(p[0] || "").slice(0, 7) === mesAberto) abertoMes += Number(p[1]) || 0; });
-        else if ((a.parcelasAberto || 1) <= 1) { if ((a.vencimento || "").slice(0, 7) === mesAberto) abertoMes += Number(a.valorAberto) || 0; }
-        else semDetalhe++;
-      });
+      var hc = histCarteira[carteira];
+      if (!hc) { abertoMes = null; subAberto = "Carregando o relatório do mês…"; carregarHistCarteira(carteira); }
+      else if (hc.erro) { abertoMes = null; subAberto = "Não consegui carregar o registro mensal. Tente de novo."; }
+      else if (hc.meses[mesAberto]) { abertoMes = hc.meses[mesAberto].valorAberto; subAberto = hc.meses[mesAberto].alunos + " aluno(s) no relatório deste mês"; }
+      else { abertoMes = null; subAberto = "Nenhum relatório importado com este mês de referência"; }
     }
-    var selAberto = '<select class="kpi-mes" id="kpiMesAberto" aria-label="Mês de vencimento do valor em aberto"><option value="">' + anoR + " (todos os meses)</option>" + meses.map(function (m) {
-      return '<option value="' + m.v + '"' + (m.v === mesAberto ? " selected" : "") + ">" + m.l + " de " + anoR + "</option>";
+    var selAberto = '<select class="kpi-mes" id="kpiMesAberto" aria-label="Mês do relatório"><option value="">Atual (todos os alunos ativos)</option>' + meses.map(function (m) {
+      return '<option value="' + m.v + '"' + (m.v === mesAberto ? " selected" : "") + ">Relatório de " + m.l + " de " + anoR + "</option>";
     }).join("") + "</select>";
     var tiles = [
       { n: vis.length, l: "Alunos em acompanhamento" },
-      { n: money(abertoMes), l: "Valor em aberto " + selAberto, cls: "lead",
-        sub: mesAberto && semDetalhe ? semDetalhe + " aluno(s) sem o vencimento de cada parcela ficaram de fora: importe o relatório de novo" : "" },
+      { n: abertoMes == null ? "—" : money(abertoMes), l: "Valor em aberto " + selAberto, cls: "lead", sub: subAberto },
       { n: money(recuperadoNoMes(mesRecup, carteira)), l: "Recuperado em " + selMes, c: "success" },
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
       { n: c.em_negociacao || 0, l: "Em negociação", c: "info" },
@@ -1291,6 +1298,7 @@
     }
     api("POST", "/api/alunos/importar", { linhas: pendentes, carteira: carteira, mes: $("impMes").value || mesAtual() }).then(function (d) {
       btn.hidden = true;
+      delete histCarteira[carteira]; // o mês importado aparece no quadro "Valor em aberto"
       mostrarConciliacao(d);
       return carregar();
     }).catch(function (x) { btn.disabled = false; btn.textContent = "Importar alunos"; toast(x.message); });
