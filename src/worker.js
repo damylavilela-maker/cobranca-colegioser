@@ -302,6 +302,14 @@ export default {
         const regOut = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('regularizacao_out2026_para_set', ?)").bind(agora).run();
         if (!regOut.meta || regOut.meta.changes > 0) await env.DB.prepare(
           "UPDATE atendimentos SET data = '2026-09-30' WHERE motivo = 'Regularização via importação de planilha' AND data >= '2026-10-01' AND data <= '2026-10-31'").run();
+        // Uma vez (pedido em 05/10/2026): limpa os "Regularizado" do Painel. Todos voltam para
+        // "Sem contato" e o recuperado lançado automaticamente na regularização pela importação é
+        // apagado (atendimentos registrados pela equipe ficam). O relatório é importado de novo depois.
+        const limpReg = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('painel_regularizados_limpos_202610', ?)").bind(agora).run();
+        if (!limpReg.meta || limpReg.meta.changes > 0) await env.DB.batch([
+          "DELETE FROM atendimentos WHERE motivo = 'Regularização via importação de planilha' AND aluno_id IN (SELECT id FROM alunos WHERE carteira = 'regular' AND status = 'regularizado')",
+          "UPDATE alunos SET status = 'sem_contato' WHERE carteira = 'regular' AND status = 'regularizado'"
+        ].map((s) => env.DB.prepare(s)));
         schemaPronto = true;
       }
       return await rotear(request, env, url);
@@ -893,6 +901,8 @@ async function importarPlanilha(req, env) {
       if (ra && !achado.ra) { sets.push("ra = ?"); vals.push(ra); }
       if (dataISO(r.vencimento) && !achado.vencimento) { sets.push("vencimento = ?"); vals.push(dataISO(r.vencimento)); }
       if (achado.arquivado) sets.push("arquivado = 0");
+      // marcado como regularizado mas veio de novo no relatório devendo: não está regularizado
+      if (achado.status === "regularizado" && numero(r.valorAberto) > 0) sets.push("status = 'sem_contato'");
       stmts.push(env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, achado.id));
       tocados.add(achado.id);
       foto.push([achado.id, vals[0], vals[1], 1]);
