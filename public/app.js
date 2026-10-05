@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "05/10 · v70";
+  var VERSAO = "05/10 · v71";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1323,26 +1323,41 @@
     var fora = d.foraDaPlanilha || [];
     if (fora.length) {
       html += '<div class="sec" style="border:none;padding-top:10px">Não apareceram neste relatório (' + fora.length + ")</div>" +
-        '<div class="import-summary" style="margin-bottom:8px">Estavam ativos no painel mas não vieram na planilha — normalmente quitaram. Marque quem já resolveu (o valor entra como recuperado no mês anterior ao do relatório):</div>' +
-        '<div class="import-preview"><table><thead><tr><th><label class="check-line"><input type="checkbox" id="concTodos"> Selecionar todos</label></th><th>Valor em aberto</th></tr></thead><tbody>' +
-        fora.map(function (a) { return '<tr><td><label class="check-line"><input type="checkbox" class="conc-chk" data-id="' + esc(a.id) + '"> ' + esc(a.nome) + '</label></td><td class="tabular">' + money(a.valorAberto) + "</td></tr>"; }).join("") +
-        '</tbody></table></div><div class="m-foot" style="justify-content:flex-start"><button type="button" class="btn ghost small" id="btnRegularizar">Marcar selecionados como regularizados</button></div>';
+        '<div class="import-summary" style="margin-bottom:8px">Estavam ativos no painel mas não vieram na planilha. Para cada um, escolha: <b>regularizado</b> (quitou; o valor entra como recuperado no mês anterior ao do relatório) ou <b>continua em aberto</b> (segue no painel com o valor que tinha e entra no total do mês). Quem ficar sem escolha continua no painel com o valor anterior, mas fora do total do mês.</div>' +
+        '<div class="import-preview"><table><thead><tr><th><label class="check-line"><input type="checkbox" id="concTodos"> Selecionar todos</label></th><th>Valor em aberto</th><th>Situação</th></tr></thead><tbody>' +
+        fora.map(function (a) { return '<tr><td><label class="check-line"><input type="checkbox" class="conc-chk" data-id="' + esc(a.id) + '"> ' + esc(a.nome) + '</label></td><td class="tabular">' + money(a.valorAberto) + '</td><td class="conc-sit"><span class="muted">sem escolha</span></td></tr>'; }).join("") +
+        '</tbody></table></div><div class="m-foot" style="justify-content:flex-start;gap:8px"><button type="button" class="btn ghost small" id="btnRegularizar">Marcar selecionados como regularizados</button><button type="button" class="btn ghost small" id="btnManterAberto">Selecionados continuam em aberto</button></div>';
     }
     $("importResult").innerHTML = html;
     var todos = $("concTodos");
-    if (todos) todos.addEventListener("change", function () { document.querySelectorAll(".conc-chk").forEach(function (c) { c.checked = todos.checked; }); });
-    var br2 = $("btnRegularizar");
-    if (br2) br2.addEventListener("click", function () {
-      var ids = [].map.call(document.querySelectorAll(".conc-chk:checked"), function (c) { return c.getAttribute("data-id"); });
-      if (!ids.length) return toast("Selecione ao menos um aluno.");
-      br2.disabled = true; br2.textContent = "Marcando…";
-      api("POST", "/api/alunos/regularizar", { ids: ids, mes: d.mes || $("impMes").value || mesAtual() }).then(function (r) {
-        toast(r.regularizados + " aluno(s) marcados como regularizados; o valor entra no recuperado de " + (r.data ? br(r.data).slice(3) : "mês anterior") + ".");
-        br2.closest(".m-foot").remove();
-        document.querySelectorAll(".conc-chk:checked").forEach(function (c) { c.closest("tr").remove(); });
-        return carregar();
-      }).catch(function (x) { br2.disabled = false; br2.textContent = "Marcar selecionados como regularizados"; toast(x.message); });
-    });
+    if (todos) todos.addEventListener("change", function () { document.querySelectorAll(".conc-chk:not(:disabled)").forEach(function (c) { c.checked = todos.checked; }); });
+    var mesRef = d.mes || $("impMes").value || mesAtual();
+    // aplica a escolha aos selecionados: a linha fica com a situação e não pode mais ser marcada
+    function escolher(btn, rotulo, rota, msg, cor) {
+      if (!btn) return;
+      btn.addEventListener("click", function () {
+        var chks = [].slice.call(document.querySelectorAll(".conc-chk:checked:not(:disabled)"));
+        if (!chks.length) return toast("Selecione ao menos um aluno.");
+        var bts = [$("btnRegularizar"), $("btnManterAberto")]; bts.forEach(function (b) { b.disabled = true; });
+        btn.textContent = "Salvando…";
+        api("POST", rota, { ids: chks.map(function (c) { return c.getAttribute("data-id"); }), mes: mesRef }).then(function (r) {
+          toast(msg(r));
+          chks.forEach(function (c) { c.checked = false; c.disabled = true; c.closest("tr").querySelector(".conc-sit").innerHTML = '<span style="color:var(--' + cor + ')">' + rotulo + "</span>"; });
+          delete histCarteira[carteira];
+          return carregar();
+        }).catch(function (x) { toast(x.message); }).then(function () {
+          bts.forEach(function (b) { b.disabled = false; });
+          $("btnRegularizar").textContent = "Marcar selecionados como regularizados"; $("btnManterAberto").textContent = "Selecionados continuam em aberto";
+          if (todos) todos.checked = false;
+        });
+      });
+    }
+    escolher($("btnRegularizar"), "regularizado", "/api/alunos/regularizar", function (r) {
+      return r.regularizados + " aluno(s) marcados como regularizados; o valor entra no recuperado de " + (r.data ? br(r.data).slice(3) : "mês anterior") + ".";
+    }, "success");
+    escolher($("btnManterAberto"), "continua em aberto", "/api/alunos/manter-aberto", function (r) {
+      return r.mantidos + " aluno(s) continuam em aberto e entraram no total de " + mesCurto(r.mes) + ".";
+    }, "warn");
   }
 
   // ---------------------------------------------------------------- evolução

@@ -379,6 +379,7 @@ async function rotear(req, env, url) {
     if (partes.length === 1 && m === "POST") return criarAluno(req, env);
     if (partes[1] === "importar" && m === "POST") return importarPlanilha(req, env);
     if (partes[1] === "regularizar" && m === "POST") return regularizar(req, env, eu);
+    if (partes[1] === "manter-aberto" && m === "POST") return manterEmAberto(req, env);
     if (partes.length === 2 && m === "PATCH") return alterarAluno(req, env, partes[1]);
   }
 
@@ -927,6 +928,27 @@ async function importarPlanilha(req, env) {
   return json({ criados, atualizados, foraDaPlanilha, daBase, mes, ignoradosJur });
 }
 
+// Quem não veio no relatório mas continua devendo: segue ativo com o valor que tinha e entra
+// no registro do mês do relatório (no total do mês), como se tivesse vindo nele.
+async function manterEmAberto(req, env) {
+  const b = await corpo(req);
+  const ids = Array.isArray(b.ids) ? b.ids.slice(0, 2000).map(String) : [];
+  if (!ids.length) throw new HttpError(400, "Selecione ao menos um aluno.");
+  const mes = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(b.mes || "")) ? b.mes : hojeISO().slice(0, 7);
+  const agora = agoraISO(), stmts = [];
+  let ok = 0;
+  for (const lote of emLotes(ids, 50)) {
+    const r = await env.DB.prepare(`SELECT id, carteira, valor_aberto, parcelas_aberto FROM alunos WHERE id IN (${lote.map(() => "?").join(",")})`).bind(...lote).all();
+    for (const a of r.results) {
+      stmts.push(env.DB.prepare("INSERT OR REPLACE INTO alunos_hist (mes, aluno_id, carteira, valor_aberto, parcelas_aberto, presente, importado_em) VALUES (?,?,?,?,?,1,?)")
+        .bind(mes, a.id, a.carteira || "regular", numero(a.valor_aberto), a.parcelas_aberto || 0, agora));
+      ok++;
+    }
+  }
+  await executarEmLotes(env, stmts);
+  return json({ mantidos: ok, mes });
+}
+
 // Marca alunos como regularizados e registra o valor em aberto deles como recuperado.
 async function regularizar(req, env, eu) {
   const b = await corpo(req);
@@ -952,6 +974,8 @@ async function regularizar(req, env, eu) {
       stmts.push(env.DB.prepare(
         "UPDATE alunos SET status = 'regularizado', valor_aberto = 0, ultimo_contato_data = ?, ultimo_contato_canal = 'Presencial', atualizado_em = ? WHERE id = ?"
       ).bind(hoje, agora, a.id));
+      // no mês do relatório ele fica sem débito (caso antes tenha sido mantido em aberto)
+      stmts.push(env.DB.prepare("UPDATE alunos_hist SET presente = 0, valor_aberto = 0, parcelas_aberto = 0 WHERE mes = ? AND aluno_id = ?").bind(ref, a.id));
       ok++;
     }
   }
