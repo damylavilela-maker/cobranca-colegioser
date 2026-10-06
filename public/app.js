@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v81";
+  var VERSAO = "06/10 · v82";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1470,7 +1470,8 @@
 
   // atendimento registrado pela equipe (a regularização automática da importação não é atendimento)
   var MOTIVO_REG_AUTO = "Regularização via importação de planilha";
-  function atendManual(a) { return a && a.motivo !== MOTIVO_REG_AUTO; }
+  // também os do painel antigo: "Regularização (importação de planilha)"
+  function atendManual(a) { return !!a && !/^regulariza[cç][aã]o\s*(via|\()\s*importa[cç][aã]o/i.test(a.motivo || ""); }
   function renderEvolucao() {
     var dias = [];
     for (var i = 13; i >= 0; i--) { var d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); dias.push(isoLocal(d)); }
