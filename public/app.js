@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v87";
+  var VERSAO = "06/10 · v88";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2728,6 +2728,21 @@
   function renderTabelaJur() {
     var vis = filtrarJur();
     var somaAb = 0, somaNeg = 0; vis.forEach(function (c) { somaAb += Number(c.valorAberto) || 0; somaNeg += Number(c.valorNegociado) || 0; });
+    // carteira escolhida: quadro com o valor em aberto da carteira inteira (sem os outros filtros)
+    var cb = $("jurCartBox");
+    if (jurCartSel) {
+      var ct = casosJur.filter(function (c) { return c.carteira === jurCartSel; }), cAb = 0, cNeg = 0, nAb = 0, nNeg = 0;
+      ct.forEach(function (c) {
+        var a = Number(c.valorAberto) || 0, g = Number(c.valorNegociado) || 0;
+        cAb += a; cNeg += g; if (a > 0) nAb++; if (g > 0) nNeg++;
+      });
+      var ci = carteiraAtual();
+      cb.innerHTML = '<div class="fx-titulo">Carteira: <b>' + esc(jurCartSel) + "</b>" + (ci && ci.ano ? " · ano letivo " + esc(ci.ano) : "") + " · " + ct.length + (ct.length === 1 ? " caso" : " casos") + '</div><div class="fx-itens">' +
+        '<div><div class="fx-num tabular" style="color:var(--danger)">' + money(cAb) + '</div><div class="fx-lbl">em aberto · ' + nAb + (nAb === 1 ? " caso" : " casos") + " com valor em aberto</div></div>" +
+        '<div><div class="fx-num tabular" style="color:var(--info)">' + money(cNeg) + '</div><div class="fx-lbl">negociado · ' + nNeg + (nNeg === 1 ? " caso" : " casos") + "</div></div>" +
+        "</div>";
+      cb.hidden = false;
+    } else { cb.hidden = true; cb.innerHTML = ""; }
     $("jurCount").textContent = vis.length + " de " + casosJur.length + " casos · em aberto " + money(somaAb) + " · negociado " + money(somaNeg);
     $("jurVazio").hidden = vis.length > 0;
     $("jurVazio").textContent = casosJur.length ? "Nenhum caso encontrado com estes filtros." : "A carteira está vazia. Use “Importar carteira” ou “Novo caso” para incluir os alunos.";
