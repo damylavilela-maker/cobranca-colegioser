@@ -460,6 +460,7 @@ async function rotear(req, env, url) {
     if (partes.length === 1 && m === "GET") return listarAtendimentos(env, url);
     if (partes.length === 1 && m === "POST") return criarAtendimento(req, env, eu);
     if (partes.length === 2 && m === "DELETE") return excluirAtendimento(env, eu, partes[1]);
+    if (partes.length === 2 && m === "PATCH") return editarAtendimento(req, env, eu, partes[1]);
   }
 
   if (caminho === "/api/admin/importar-backup" && m === "POST") {
@@ -1096,6 +1097,42 @@ async function criarAtendimento(req, env, eu) {
   const atualizados = [];
   for (const v of vinculados) atualizados.push(alunoSaida(await buscarAluno(env, v.id)));
   return json({ atendimento: atendSaida(at), aluno: alunoSaida(await buscarAluno(env, aluno.id)), vinculados: atualizados });
+}
+
+// Editar um atendimento (quem registrou ou administrador). Se for o atendimento mais recente do
+// aluno, o status, o próximo retorno e o último contato do aluno acompanham a correção.
+async function editarAtendimento(req, env, eu, id) {
+  const at = await env.DB.prepare("SELECT * FROM atendimentos WHERE id = ?").bind(id).first();
+  if (!at) throw new HttpError(404, "Atendimento não encontrado.");
+  if (eu.perfil !== "admin" && at.usuario_id !== eu.id)
+    throw new HttpError(403, "Só quem registrou o atendimento ou um administrador pode editá-lo.");
+  const b = await corpo(req);
+  const tem = (k) => b[k] !== undefined;
+  const data = tem("data") ? dataISO(b.data) || at.data : at.data;
+  const canal = tem("canal") ? texto(b.canal, 30) : at.canal;
+  const setor = tem("setor") ? texto(b.setor, 40) : at.setor;
+  const motivo = tem("motivo") ? texto(b.motivo, 150) : at.motivo;
+  const obs = tem("observacao") ? texto(b.observacao, 4000) : at.observacao;
+  const status = tem("statusResultante") ? statusValido(b.statusResultante) : at.status_resultante;
+  const proximo = tem("proximoRetorno") ? dataOuNull(b.proximoRetorno) : at.proximo_retorno;
+  const rec = tem("valorRecuperado") ? Math.max(0, numero(b.valorRecuperado)) : numero(at.valor_recuperado);
+  const recAberto = Math.max(0, numero(rec - numero(at.valor_negociado_total)));
+  const stmts = [env.DB.prepare(
+    "UPDATE atendimentos SET data = ?, canal = ?, setor = ?, motivo = ?, observacao = ?, status_resultante = ?, proximo_retorno = ?, valor_recuperado = ?, valor_recuperado_aberto = ? WHERE id = ?"
+  ).bind(data, canal, setor, motivo, obs, status, proximo, rec, recAberto, id)];
+  // o mais recente do aluno (depois da correção) define a situação atual dele
+  const outros = (await env.DB.prepare("SELECT id, data, criado_em FROM atendimentos WHERE aluno_id = ? AND id <> ?").bind(at.aluno_id, id).all()).results;
+  const maisRecente = outros.every((o) => (o.data || "") < data || ((o.data || "") === data && (o.criado_em || "") <= (at.criado_em || "")));
+  if (maisRecente) {
+    const indevida = status === "cobranca_indevida" || /^cobran[cç]a indevida$/i.test(motivo || "");
+    stmts.push(env.DB.prepare(
+      `UPDATE alunos SET status = ?, setor = ?, ultimo_contato_data = ?, ultimo_contato_canal = ?, proximo_retorno = ?${indevida ? ", indevido = 1" : ""}, atualizado_em = ? WHERE id = ?`
+    ).bind(indevida ? "cobranca_indevida" : status, setor, data, canal, proximo, agoraISO(), at.aluno_id));
+  }
+  await env.DB.batch(stmts);
+  const novo = await env.DB.prepare("SELECT * FROM atendimentos WHERE id = ?").bind(id).first();
+  const aluno = await env.DB.prepare("SELECT * FROM alunos WHERE id = ?").bind(at.aluno_id).first();
+  return json({ atendimento: atendSaida(novo), aluno: aluno ? alunoSaida(aluno) : null });
 }
 
 async function excluirAtendimento(env, eu, id) {

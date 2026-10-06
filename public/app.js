@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v79";
+  var VERSAO = "06/10 · v80";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -619,7 +619,7 @@
       var mens = t.mensalidadesNegociadas || [];
       var origem = t.alunoId !== curId && alunos[t.alunoId] ? ' <span class="tag origem">registrado no ' + (carteiraDe(alunos[t.alunoId]) === "contraturno" ? "Contraturno" : "Painel") + "</span>" : "";
       return '<div class="tl-it"><div class="tl-top"><span><b>' + br(t.data) + '</b> <span class="who2">' + esc(t.responsavel || "—") + "</span>" + origem + "</span>" +
-        (podeExcluir ? '<button type="button" class="tl-del" data-del="' + esc(t.id) + '">Excluir</button>' : "") + "</div>" +
+        (podeExcluir ? '<span><button type="button" class="tl-del tl-edit-btn" data-edit="' + esc(t.id) + '">Editar</button> <button type="button" class="tl-del" data-del="' + esc(t.id) + '">Excluir</button></span>' : "") + "</div>" +
         '<div class="tags"><span class="tag">' + esc(t.canal || "—") + "</span>" + (t.setor ? '<span class="tag">' + esc(t.setor) + "</span>" : "") + pill(t.statusResultante || "sem_contato", true) + "</div>" +
         "<div><b>" + esc(t.motivo || "") + "</b>" + (t.observacao ? " — " + esc(t.observacao) : "") + "</div>" +
         (t.proximoRetorno ? '<div class="tl-extra">Próximo retorno: ' + br(t.proximoRetorno) + "</div>" : "") +
@@ -631,7 +631,48 @@
         "</div>";
     }).join("");
   }
+  // Editar atendimento: o formulário abre no próprio item do histórico
+  function opcoesHtml(lista, atual) {
+    var l = lista.slice(); if (atual && l.indexOf(atual) === -1) l.unshift(atual);
+    return l.map(function (v) { return '<option value="' + esc(v) + '"' + (v === atual ? " selected" : "") + ">" + esc(v) + "</option>"; }).join("");
+  }
+  function abrirEdicaoAtend(id) {
+    var t = null; atends.forEach(function (x) { if (x.id === id) t = x; }); if (!t) return;
+    var it = document.querySelector('#dTl [data-edit="' + id + '"]').closest(".tl-it");
+    if (it.querySelector(".tl-form")) return;
+    var f = document.createElement("div"); f.className = "tl-form stack"; f.style.marginTop = "10px";
+    f.innerHTML = '<div class="grid3">' +
+      '<div class="field"><label>Data</label><input type="date" class="e-data" value="' + esc(t.data || "") + '"></div>' +
+      '<div class="field"><label>Canal</label><select class="e-canal">' + opcoesHtml(CANAIS, t.canal) + "</select></div>" +
+      '<div class="field"><label>Setor</label><select class="e-setor"><option value="">—</option>' + opcoesHtml(SETORES, t.setor) + "</select></div>" +
+      '<div class="field"><label>Motivo</label><select class="e-motivo">' + opcoesHtml(MOTIVOS, t.motivo) + "</select></div>" +
+      '<div class="field"><label>Status após o atendimento</label><select class="e-status">' + STATUS.map(function (s) { return '<option value="' + s.k + '"' + (s.k === (t.statusResultante || "sem_contato") ? " selected" : "") + ">" + s.l + "</option>"; }).join("") + "</select></div>" +
+      '<div class="field"><label>Próximo retorno</label><input type="date" class="e-prox" value="' + esc(t.proximoRetorno || "") + '"></div>' +
+      '<div class="field"><label>Valor recuperado (R$)</label><input type="number" step="0.01" min="0" class="e-rec" value="' + (Number(t.valorRecuperado) || 0) + '"></div>' +
+      "</div>" +
+      '<div class="field"><label>Observação</label><textarea class="e-obs" rows="3">' + esc(t.observacao || "") + "</textarea></div>" +
+      ((t.mensalidadesNegociadas || []).length ? '<div class="meta">As mensalidades negociadas deste atendimento não mudam aqui (para mudar, exclua e registre de novo).</div>' : "") +
+      '<div class="row-end" style="gap:8px"><button type="button" class="btn ghost small e-cancel">Cancelar</button><button type="button" class="btn primary small e-save">Salvar alterações</button></div>';
+    it.appendChild(f);
+    f.querySelector(".e-cancel").addEventListener("click", function () { f.remove(); });
+    f.querySelector(".e-save").addEventListener("click", function () {
+      var btn = this; btn.disabled = true; btn.textContent = "Salvando…";
+      api("PATCH", "/api/atendimentos/" + encodeURIComponent(id), {
+        data: f.querySelector(".e-data").value, canal: f.querySelector(".e-canal").value, setor: f.querySelector(".e-setor").value,
+        motivo: f.querySelector(".e-motivo").value, statusResultante: f.querySelector(".e-status").value,
+        proximoRetorno: f.querySelector(".e-prox").value || null, valorRecuperado: f.querySelector(".e-rec").value || 0,
+        observacao: f.querySelector(".e-obs").value.trim()
+      }).then(function (d) {
+        atends = atends.map(function (x) { return x.id === id ? d.atendimento : x; });
+        atends.sort(function (a, b) { return (b.data || "").localeCompare(a.data || "") || (b.createdAt || "").localeCompare(a.createdAt || ""); });
+        if (d.aluno) alunos[d.aluno.id] = d.aluno;
+        var aberto = curId; renderTudo(); if (aberto) abrirAluno(aberto);
+        toast("Atendimento atualizado.");
+      }).catch(function (x) { btn.disabled = false; btn.textContent = "Salvar alterações"; toast(x.message); });
+    });
+  }
   $("dTl").addEventListener("click", function (e) {
+    var ed = e.target.closest(".tl-edit-btn"); if (ed) { abrirEdicaoAtend(ed.getAttribute("data-edit")); return; }
     var b = e.target.closest(".tl-del"); if (!b) return;
     if (!b.classList.contains("armed")) {
       document.querySelectorAll(".tl-del.armed").forEach(function (x) { x.classList.remove("armed"); x.textContent = "Excluir"; });
