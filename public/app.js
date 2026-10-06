@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "05/10 · v72";
+  var VERSAO = "06/10 · v73";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -242,7 +242,7 @@
     regular: { titulo: "Painel de cobrança", arquivo: "relatorio_cobranca_" },
     contraturno: { titulo: "Contraturno", arquivo: "relatorio_contraturno_" }
   };
-  var FILTROS = ["fBusca", "fStatus", "fFaixa", "fSetor", "fAtend", "fOrdem"];
+  var FILTROS = ["fBusca", "fStatus", "fFaixa", "fAno", "fSetor", "fAtend", "fOrdem"];
   var filtrosPorCarteira = {};
   function trocarCarteira(nova) {
     if (nova === carteira) return;
@@ -417,10 +417,22 @@
     $("btnHoje").classList.toggle("on", soHoje);
     $("btnArquivados").textContent = showArch ? "Ver ativos" : "Arquivados";
 
+    // ano: pelo vencimento das parcelas em aberto (sem o detalhe das parcelas, pelo vencimento do aluno)
+    function parcelasDoAno(a) {
+      var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc.filter(function (p) { return p && p[0]; }) : [];
+      return pv.length ? pv : a.vencimento ? [[a.vencimento, Number(a.valorAberto) || 0]] : [];
+    }
+    var anosQtd = {};
+    todos.forEach(function (a) {
+      if (!!a.arquivado !== showArch) return;
+      var vistos = {}; parcelasDoAno(a).forEach(function (p) { var y = String(p[0]).slice(0, 4); if (/^\d{4}$/.test(y) && !vistos[y]) { vistos[y] = 1; anosQtd[y] = (anosQtd[y] || 0) + 1; } });
+    });
+    var fano = prepararSelect($("fAno"), [{ v: "", l: "Todos os anos" }].concat(Object.keys(anosQtd).sort().reverse().map(function (y) { return { v: y, l: "Parcelas de " + y + " (" + anosQtd[y] + ")" }; })), "");
     var q = $("fBusca").value.trim().toLowerCase(), fs = $("fStatus").value, ffx = $("fFaixa").value, fset = $("fSetor").value, fa = $("fAtend").value;
     var ord = soHoje ? "retorno" : $("fOrdem").value, h = hoje();
     var f = todos.filter(function (a) {
       if (!!a.arquivado !== showArch) return false;
+      if (fano && !parcelasDoAno(a).some(function (p) { return String(p[0]).slice(0, 4) === fano; })) return false;
       if (q && ((a.nome || "") + " " + (a.responsavel || "") + " " + (a.ra || "")).toLowerCase().indexOf(q) === -1) return false;
       if (fs && (a.status || "sem_contato") !== fs) return false;
       if (ffx && (!(Number(a.valorAberto) > 0) || faixaDoAluno(a, h) !== ffx)) return false;
@@ -435,7 +447,10 @@
       if (ord === "recente") return ((b.ultimoContato && b.ultimoContato.data) || "").localeCompare((a.ultimoContato && a.ultimoContato.data) || "");
       return (a.proximoRetorno || "9999").localeCompare(b.proximoRetorno || "9999");
     });
-    $("count").textContent = f.length + (f.length === 1 ? " aluno encontrado" : " alunos encontrados") + (showArch ? " · arquivados" : "") + (soHoje ? " · retorno hoje ou atrasado" : "");
+    var valAno = 0;
+    if (fano) f.forEach(function (a) { parcelasDoAno(a).forEach(function (p) { if (String(p[0]).slice(0, 4) === fano) valAno += Number(p[1]) || 0; }); });
+    $("count").textContent = f.length + (f.length === 1 ? " aluno encontrado" : " alunos encontrados") + (showArch ? " · arquivados" : "") + (soHoje ? " · retorno hoje ou atrasado" : "") +
+      (fano ? " · " + money(valAno) + " em parcelas com vencimento em " + fano : "");
 
     var tb = $("tbody");
     if (!f.length) {
@@ -461,7 +476,7 @@
     }).join("");
   }
   $("tbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirAluno(tr.getAttribute("data-id")); });
-  ["fBusca", "fStatus", "fFaixa", "fSetor", "fAtend", "fOrdem"].forEach(function (id) { $(id).addEventListener("input", renderPainel); });
+  ["fBusca", "fStatus", "fFaixa", "fAno", "fSetor", "fAtend", "fOrdem"].forEach(function (id) { $(id).addEventListener("input", renderPainel); });
   $("btnHoje").addEventListener("click", function () { soHoje = !soHoje; if (soHoje) $("fOrdem").value = "retorno"; renderPainel(); });
   $("btnArquivados").addEventListener("click", function () { showArch = !showArch; renderPainel(); });
 
