@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v89";
+  var VERSAO = "06/10 · v90";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2901,7 +2901,7 @@
     $("jcAcordoParc").innerHTML = "";
     $("jcNovaObs").value = "";
     var b = $("jcExcluir"); b.classList.remove("armed"); b.textContent = "Excluir caso";
-    preencherFicha(c); carregarHistCaso(c.id);
+    preencherFicha(c); carregarHistCaso(c.id); carregarNegs(c.id);
     abrir("mJurCaso");
   }
   function salvarCasoJur(dados) {
@@ -2969,6 +2969,135 @@
         }).join("") + "</tbody></table></div>" : '<div class="meta">Nenhuma competência importada ainda para este aluno.</div>';
     }).catch(function () { el.innerHTML = '<div class="meta">Não foi possível carregar o histórico.</div>'; });
   }
+
+  // ---- negociações do caso: dívida atualizada, acordo, entrada e parcelas (o restante do acordo
+  // depois da entrada é dividido igualmente; o arredondamento fica na última parcela)
+  var negsCaso = [], negEdit = null;
+  function somarMeses(iso, n) {
+    var y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1 + n, d = +iso.slice(8, 10);
+    y += Math.floor(m / 12); m = ((m % 12) + 12) % 12;
+    var ult = new Date(y, m + 1, 0).getDate();
+    return y + "-" + pad2(m + 1) + "-" + pad2(Math.min(d, ult));
+  }
+  function calcNeg(acordo, entrada, n) {
+    var resto = Math.round((acordo - entrada) * 100) / 100, base = n ? Math.floor(resto / n * 100) / 100 : 0, vals = [];
+    for (var i = 0; i < n; i++) vals.push(i === n - 1 ? Math.round((resto - base * (n - 1)) * 100) / 100 : base);
+    return { resto: resto, vals: vals };
+  }
+  function renderNegLista() {
+    $("jcNegLista").innerHTML = negsCaso.length ? negsCaso.map(function (n) {
+      var cr = n.cronograma || [], desc = (Number(n.divida) || 0) - (Number(n.acordo) || 0);
+      return '<div class="neg-card" data-neg="' + esc(n.id) + '"><div class="spread" style="align-items:flex-start"><div><b>Acordo de ' + money(n.acordo) + "</b>" + (n.divida ? ' <span class="meta">sobre dívida atualizada de ' + money(n.divida) + (desc > 0.009 ? " · desconto " + money(desc) : "") + "</span>" : "") +
+        '<div class="meta">' + (Number(n.entrada) > 0 ? "Entrada " + money(n.entrada) + " em " + br(n.dataEntrada) : "Sem entrada") + (cr.length ? " · " + cr.length + "x de " + money(cr[0][1]) + (cr.length > 1 && cr[cr.length - 1][1] !== cr[0][1] ? " (última " + money(cr[cr.length - 1][1]) + ")" : "") + " · de " + br(cr[0][0]) + " a " + br(cr[cr.length - 1][0]) : "") + "</div>" +
+        '<div class="meta">Registrada por ' + esc(n.criadoPor || "—") + " em " + dataCurta(n.criadoEm) + (n.atualizadoEm ? " · alterada por " + esc(n.atualizadoPor || "") + " em " + dataCurta(n.atualizadoEm) : "") + "</div>" + (n.obs ? '<div class="meta">' + esc(n.obs) + "</div>" : "") + "</div>" +
+        '<span class="neg-acoes"><button type="button" class="linkbtn" data-neg-editar>Editar</button> <button type="button" class="linkbtn danger" data-neg-excluir>Excluir</button></span></div>' +
+        '<details style="margin-top:6px"><summary class="meta" style="cursor:pointer">Ver parcelas</summary><div class="table-wrap" style="margin-top:6px;max-height:240px;overflow:auto"><table class="data compacta"><thead><tr><th>Parcela</th><th>Vencimento</th><th class="right">Valor</th></tr></thead><tbody>' +
+        (Number(n.entrada) > 0 ? "<tr><td>Entrada</td><td>" + br(n.dataEntrada) + '</td><td class="tabular right">' + money(n.entrada) + "</td></tr>" : "") +
+        cr.map(function (p, i) { return "<tr><td>" + (i + 1) + "/" + cr.length + "</td><td>" + br(p[0]) + '</td><td class="tabular right">' + money(p[1]) + "</td></tr>"; }).join("") +
+        '<tr><td><b>Total</b></td><td></td><td class="tabular right"><b>' + money(n.acordo) + "</b></td></tr></tbody></table></div></details></div>";
+    }).join("") : '<div class="meta" style="margin-bottom:6px">Nenhuma negociação registrada.</div>';
+  }
+  function carregarNegs(id) {
+    negsCaso = []; renderNegLista(); fecharNegForm();
+    api("GET", "/api/juridico/" + encodeURIComponent(id) + "/historico").then(function (d) {
+      if (!casoJur || casoJur.id !== id) return;
+      negsCaso = d.negociacoes || []; renderNegLista();
+    }).catch(function () { /* a lista fica vazia */ });
+  }
+  function fecharNegForm() { negEdit = null; $("jcNegForm").hidden = true; $("jcNegForm").innerHTML = ""; $("jcNegNova").hidden = false; }
+  function abrirNegForm(n) {
+    negEdit = n;
+    var f = $("jcNegForm");
+    f.innerHTML = '<div class="grid3">' +
+      '<div class="field"><label for="negDivida">Valor da dívida atualizado (R$)</label><input id="negDivida" type="number" step="0.01" min="0"></div>' +
+      '<div class="field"><label for="negAcordo">Valor do acordo (R$)</label><input id="negAcordo" type="number" step="0.01" min="0"></div>' +
+      '<div class="field"><label for="negEntrada">Valor da entrada (R$)</label><input id="negEntrada" type="number" step="0.01" min="0"></div>' +
+      '<div class="field"><label for="negDataEnt">Data da entrada</label><input id="negDataEnt" type="date"></div>' +
+      '<div class="field"><label for="negQtd">Quantidade de parcelas</label><input id="negQtd" type="number" step="1" min="0" max="120"></div>' +
+      '<div class="field"><label for="negPrimVenc">Vencimento da 1ª parcela</label><input id="negPrimVenc" type="date"></div>' +
+      '</div><div class="hint" style="margin:-4px 0 8px">As parcelas vencem no mesmo dia dos meses seguintes; dá para alterar a data de cada uma na tabela.</div>' +
+      '<div class="neg-calc" id="negCalc"></div><div id="negCron"></div>' +
+      '<div class="field"><label for="negObs">Observação</label><input id="negObs" maxlength="1000" placeholder="Ex.: solicitado pela assessoria em …, forma de pagamento…"></div>' +
+      '<div class="form-err" id="negErr" hidden></div>' +
+      '<div class="row-end" style="justify-content:flex-start"><button type="button" class="btn primary small" id="negSalvar">' + (n ? "Salvar alterações" : "Salvar negociação") + '</button><button type="button" class="btn ghost small" id="negCancelar">Cancelar</button></div>';
+    var cr = n ? n.cronograma || [] : [];
+    $("negDivida").value = n && n.divida != null ? n.divida : (casoJur && Number(casoJur.valorAberto) > 0 ? casoJur.valorAberto : "");
+    $("negAcordo").value = n ? n.acordo : ""; $("negEntrada").value = n && Number(n.entrada) > 0 ? n.entrada : "";
+    $("negDataEnt").value = n ? n.dataEntrada || "" : hoje(); $("negQtd").value = n ? n.parcelas || "" : "";
+    $("negPrimVenc").value = cr.length ? cr[0][0] : "";
+    $("negObs").value = n ? n.obs || "" : "";
+    f.dataset.vencs = JSON.stringify(cr.map(function (p) { return p[0]; }));
+    f.hidden = false; $("jcNegNova").hidden = true;
+    recalcNeg();
+    $("negAcordo").focus();
+  }
+  function lerVencsNeg() { try { return JSON.parse($("jcNegForm").dataset.vencs || "[]"); } catch (x) { return []; } }
+  // refaz as datas mês a mês a partir da 1ª; com "manter", as que já existem (mudadas à mão) ficam
+  function gerarVencsNeg(manter) {
+    var n = Math.min(120, parseInt($("negQtd").value, 10) || 0), pv = $("negPrimVenc").value, atual = lerVencsNeg(), out = [];
+    for (var i = 0; i < n; i++) out.push(manter && atual[i] ? atual[i] : pv ? somarMeses(pv, i) : "");
+    $("jcNegForm").dataset.vencs = JSON.stringify(out);
+  }
+  function recalcNeg() {
+    var acordo = parseFloat($("negAcordo").value) || 0, entrada = parseFloat($("negEntrada").value) || 0, divida = parseFloat($("negDivida").value) || 0;
+    var n = Math.max(0, Math.min(120, parseInt($("negQtd").value, 10) || 0)), vencs = lerVencsNeg(), de = $("negDataEnt").value;
+    var c = calcNeg(acordo, entrada, n);
+    $("negCalc").innerHTML = acordo > 0 ? '<div class="fx-itens">' +
+      (divida > 0 ? '<div><div class="fx-num tabular">' + money(Math.max(0, divida - acordo)) + '</div><div class="fx-lbl">desconto sobre a dívida' + (divida > acordo ? " (" + String(Math.round((divida - acordo) / divida * 1000) / 10).replace(".", ",") + "%)" : "") + "</div></div>" : "") +
+      '<div><div class="fx-num tabular">' + money(entrada) + '</div><div class="fx-lbl">entrada' + (entrada > 0 && de ? " em " + br(de) : "") + "</div></div>" +
+      '<div><div class="fx-num tabular">' + money(Math.max(0, c.resto)) + '</div><div class="fx-lbl">restante a parcelar</div></div>' +
+      (n ? '<div><div class="fx-num tabular" style="color:var(--brand)">' + n + "x " + money(c.vals[0]) + '</div><div class="fx-lbl">valor de cada parcela' + (n > 1 && c.vals[n - 1] !== c.vals[0] ? " (última " + money(c.vals[n - 1]) + ")" : "") + "</div></div>" : "") +
+      "</div>" + (entrada > acordo ? '<div class="meta" style="color:var(--danger)">A entrada é maior que o valor do acordo.</div>' : "") : '<div class="meta">Informe o valor do acordo para calcular as parcelas.</div>';
+    $("negCron").innerHTML = n && acordo > 0 ? '<div class="table-wrap" style="max-height:260px;overflow:auto;margin-bottom:10px"><table class="data compacta"><thead><tr><th>Parcela</th><th>Vencimento</th><th class="right">Valor</th></tr></thead><tbody>' +
+      (entrada > 0 ? "<tr><td>Entrada</td><td>" + (de ? br(de) : '<span class="muted">informe a data</span>') + '</td><td class="tabular right">' + money(entrada) + "</td></tr>" : "") +
+      c.vals.map(function (v, i) { return "<tr><td>" + (i + 1) + "/" + n + '</td><td><input type="date" class="neg-venc" data-i="' + i + '" value="' + esc(vencs[i] || "") + '"></td><td class="tabular right">' + money(v) + "</td></tr>"; }).join("") +
+      '<tr><td><b>Total</b></td><td></td><td class="tabular right"><b>' + money(acordo) + "</b></td></tr></tbody></table></div>" : "";
+  }
+  $("jcNegNova").addEventListener("click", function () { abrirNegForm(null); });
+  $("jcNegForm").addEventListener("input", function (e) {
+    var id = e.target.id;
+    if (e.target.classList.contains("neg-venc")) {
+      var v = lerVencsNeg(); v[+e.target.getAttribute("data-i")] = e.target.value; this.dataset.vencs = JSON.stringify(v); return;
+    }
+    if (id === "negObs") return;
+    if ((id === "negDataEnt" || id === "negQtd") && !$("negPrimVenc").value && $("negDataEnt").value && parseInt($("negQtd").value, 10) > 0) $("negPrimVenc").value = somarMeses($("negDataEnt").value, 1);
+    if (id === "negPrimVenc") gerarVencsNeg(false);
+    else if (id === "negQtd" || id === "negDataEnt") gerarVencsNeg(true);
+    recalcNeg();
+  });
+  $("jcNegForm").addEventListener("click", function (e) {
+    if (e.target.id === "negCancelar") return fecharNegForm();
+    if (e.target.id !== "negSalvar") return;
+    var btn = e.target, n = Math.min(120, parseInt($("negQtd").value, 10) || 0), vencs = lerVencsNeg().slice(0, n);
+    mostrarErro($("negErr"), "");
+    var dados = { divida: parseFloat($("negDivida").value) || 0, acordo: parseFloat($("negAcordo").value) || 0, entrada: parseFloat($("negEntrada").value) || 0,
+      dataEntrada: $("negDataEnt").value, parcelas: n, vencimentos: vencs, obs: $("negObs").value.trim() };
+    if (!(dados.acordo > 0)) return mostrarErro($("negErr"), "Informe o valor do acordo.");
+    if (dados.entrada > dados.acordo) return mostrarErro($("negErr"), "A entrada não pode ser maior que o valor do acordo.");
+    if (dados.entrada > 0 && !dados.dataEntrada) return mostrarErro($("negErr"), "Informe a data da entrada.");
+    if (dados.acordo - dados.entrada > 0.009 && !n) return mostrarErro($("negErr"), "Informe a quantidade de parcelas.");
+    for (var i = 0; i < n; i++) if (!vencs[i]) return mostrarErro($("negErr"), "Informe o vencimento da " + (i + 1) + "ª parcela.");
+    btn.disabled = true;
+    var cid = casoJur.id, editando = !!negEdit, url = "/api/juridico/" + encodeURIComponent(cid) + "/negociacoes" + (negEdit ? "/" + encodeURIComponent(negEdit.id) : "");
+    api(editando ? "PATCH" : "POST", url, dados).then(function (d) {
+      if (!casoJur || casoJur.id !== cid) return;
+      negsCaso = d.negociacoes || []; fecharNegForm(); renderNegLista();
+      atualizarFicha(d, editando ? "Negociação alterada." : "Negociação registrada.");
+    }).catch(function (x) { btn.disabled = false; mostrarErro($("negErr"), x.message); });
+  });
+  $("jcNegLista").addEventListener("click", function (e) {
+    var card = e.target.closest("[data-neg]"); if (!card || !casoJur) return;
+    var id = card.getAttribute("data-neg"), n = null; negsCaso.forEach(function (x) { if (x.id === id) n = x; });
+    if (!n) return;
+    if (e.target.closest("[data-neg-editar]")) return abrirNegForm(n);
+    var b = e.target.closest("[data-neg-excluir]"); if (!b) return;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
+    var cid = casoJur.id;
+    api("DELETE", "/api/juridico/" + encodeURIComponent(cid) + "/negociacoes/" + encodeURIComponent(id)).then(function (d) {
+      if (!casoJur || casoJur.id !== cid) return;
+      negsCaso = d.negociacoes || []; renderNegLista(); atualizarFicha(d, "Negociação excluída.");
+    }).catch(function (x) { toast(x.message); });
+  });
 
   // novo caso (só entra na carteira; os valores vêm do relatório de inadimplência)
   function prepararNovoCaso() {

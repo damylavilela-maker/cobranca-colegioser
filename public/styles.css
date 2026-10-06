@@ -426,3 +426,12 @@ table.data.compacta td.right{white-space:nowrap}
 .faixa-box .fx-num{font-size:22px;font-weight:700}
 .faixa-box .fx-lbl{font-size:12.5px;opacity:.8}
 .filters input[type=date]{flex:0 1 160px}
+.neg-card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.neg-acoes{display:inline-flex;gap:10px;white-space:nowrap}
+.neg-form{border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px}
+.neg-calc{margin-bottom:10px}
+.neg-calc .fx-itens{display:flex;flex-wrap:wrap;gap:10px 32px}
+.neg-calc .fx-num{font-size:18px;font-weight:700}
+.neg-calc .fx-lbl{font-size:12px;opacity:.8}
+.neg-venc{padding:4px 6px;width:auto}
+@media (max-width:640px){.neg-form .grid3{grid-template-columns:1fr}}

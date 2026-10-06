@@ -173,6 +173,10 @@ const SCHEMA = [
   // parcelas do acordo GM de cada caso (vindas da planilha da carteira)
   `CREATE TABLE IF NOT EXISTS jur_acordo_parcelas (id TEXT PRIMARY KEY, caso_id TEXT NOT NULL, acordo TEXT NOT NULL DEFAULT '', parcela TEXT NOT NULL DEFAULT '', vencimento TEXT NOT NULL DEFAULT '', valor REAL, pago REAL, data_pagamento TEXT NOT NULL DEFAULT '', saldo REAL, situacao TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_jur_acordo_caso ON jur_acordo_parcelas(caso_id)`,
+  // negociações registradas na ficha do caso (acordo pedido pela assessoria e feito no sistema):
+  // dívida atualizada, acordo, entrada e as parcelas com vencimento (cronograma em JSON [[venc, valor]])
+  `CREATE TABLE IF NOT EXISTS jur_negociacoes (id TEXT PRIMARY KEY, caso_id TEXT NOT NULL, divida REAL, acordo REAL, entrada REAL, data_entrada TEXT NOT NULL DEFAULT '', parcelas INTEGER NOT NULL DEFAULT 0, cronograma TEXT NOT NULL DEFAULT '[]', obs TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '', atualizado_em TEXT NOT NULL DEFAULT '', atualizado_por TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS idx_jur_neg_caso ON jur_negociacoes(caso_id)`,
   // aba Cheques: cheques devolvidos e cheques recebidos (tipo), como nas abas da planilha CHEQUES_SER
   `CREATE TABLE IF NOT EXISTS cheques (
     id TEXT PRIMARY KEY, tipo TEXT NOT NULL, chave TEXT NOT NULL DEFAULT '',
@@ -445,6 +449,9 @@ async function rotear(req, env, url) {
     if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
     if (partes.length === 2 && m === "DELETE") { exigirAdmin(eu); return excluirCasoJur(env, partes[1]); }
     if (partes.length === 3 && partes[2] === "obs" && m === "POST") return novaObsJur(req, env, eu, partes[1]);
+    if (partes.length === 3 && partes[2] === "negociacoes" && m === "POST") return salvarNegociacaoJur(req, env, eu, partes[1], null);
+    if (partes.length === 4 && partes[2] === "negociacoes" && m === "PATCH") return salvarNegociacaoJur(req, env, eu, partes[1], partes[3]);
+    if (partes.length === 4 && partes[2] === "negociacoes" && m === "DELETE") return excluirNegociacaoJur(env, eu, partes[1], partes[3]);
     if (partes.length === 4 && partes[2] === "obs" && m === "PATCH") return editarObsJur(req, env, eu, partes[1], partes[3]);
     if (partes.length === 4 && partes[2] === "obs" && m === "DELETE") return excluirObsJur(env, eu, partes[1], partes[3]);
   }
@@ -1836,6 +1843,7 @@ async function excluirCasoJur(env, id) {
     env.DB.prepare("DELETE FROM jur_obs WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_hist WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_acordo_parcelas WHERE caso_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM jur_negociacoes WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_casos WHERE id = ?").bind(id)
   ]);
   return json({ ok: true });
@@ -2077,11 +2085,74 @@ async function historicoCasoJur(env, id) {
   await buscarCasoJur(env, id);
   const r = (await env.DB.prepare("SELECT * FROM jur_hist WHERE caso_id = ? ORDER BY mes").bind(id).all()).results;
   const ap = (await env.DB.prepare("SELECT * FROM jur_acordo_parcelas WHERE caso_id = ? ORDER BY acordo, vencimento").bind(id).all()).results;
-  return json({ acordoParcelas: ap.map((p) => ({ acordo: p.acordo, parcela: p.parcela, vencimento: p.vencimento, valor: p.valor, pago: p.pago, dataPagamento: p.data_pagamento, saldo: p.saldo, situacao: p.situacao })), historico: r.map((h) => {
+  return json({ negociacoes: await negociacoesDoCaso(env, id), acordoParcelas: ap.map((p) => ({ acordo: p.acordo, parcela: p.parcela, vencimento: p.vencimento, valor: p.valor, pago: p.pago, dataPagamento: p.data_pagamento, saldo: p.saldo, situacao: p.situacao })), historico: r.map((h) => {
     let contas = {};
     try { contas = JSON.parse(h.contas || "{}"); } catch (e) { contas = {}; }
     return { mes: h.mes, valorAberto: h.valor_aberto, valorNegociado: h.valor_negociado, parcelasAberto: h.parcelas_aberto, parcelasNegociado: h.parcelas_negociado, contas, ausente: !!h.ausente, movimento: h.movimento, conferir: h.conferir };
   }) });
+}
+
+// ---- negociações do caso (acordo pedido pela assessoria e realizado no sistema)
+function negSaida(n) {
+  let cron = [];
+  try { cron = JSON.parse(n.cronograma || "[]"); } catch (e) { cron = []; }
+  return { id: n.id, divida: n.divida, acordo: n.acordo, entrada: n.entrada, dataEntrada: n.data_entrada, parcelas: n.parcelas, cronograma: cron, obs: n.obs,
+    criadoEm: n.criado_em, criadoPor: n.criado_por, atualizadoEm: n.atualizado_em, atualizadoPor: n.atualizado_por };
+}
+function dataBRw(d) { return d ? d.slice(8, 10) + "/" + d.slice(5, 7) + "/" + d.slice(0, 4) : "—"; }
+async function negociacoesDoCaso(env, id) {
+  return (await env.DB.prepare("SELECT * FROM jur_negociacoes WHERE caso_id = ? ORDER BY criado_em DESC").bind(id).all()).results.map(negSaida);
+}
+async function casoComNegociacoes(env, id) {
+  return json({ caso: casoSaida(await buscarCasoJur(env, id), await obsDoCaso(env, id)), negociacoes: await negociacoesDoCaso(env, id) });
+}
+// O servidor refaz a conta: (acordo − entrada) dividido pelas parcelas, com o arredondamento
+// na última. As datas de vencimento vêm da tela (uma por parcela).
+async function salvarNegociacaoJur(req, env, eu, casoId, negId) {
+  await buscarCasoJur(env, casoId);
+  const b = await corpo(req);
+  const divida = numero(b.divida), acordo = numero(b.acordo), entrada = numero(b.entrada);
+  const n = Math.max(0, Math.min(120, parseInt(b.parcelas, 10) || 0));
+  const dataEntrada = dataISO(b.dataEntrada);
+  if (!(acordo > 0)) throw new HttpError(400, "Informe o valor do acordo.");
+  if (entrada < 0 || entrada > acordo) throw new HttpError(400, "A entrada não pode ser maior que o valor do acordo.");
+  if (entrada > 0 && !dataEntrada) throw new HttpError(400, "Informe a data da entrada.");
+  const resto = Math.round((acordo - entrada) * 100) / 100;
+  if (resto > 0.009 && !n) throw new HttpError(400, "Informe a quantidade de parcelas.");
+  const vencs = Array.isArray(b.vencimentos) ? b.vencimentos : [];
+  const base = n ? Math.floor(resto / n * 100) / 100 : 0, cron = [];
+  for (let i = 0; i < n; i++) {
+    const v = dataISO(vencs[i]);
+    if (!v) throw new HttpError(400, `Informe o vencimento da ${i + 1}ª parcela.`);
+    cron.push([v, i === n - 1 ? Math.round((resto - base * (n - 1)) * 100) / 100 : base]);
+  }
+  const obs = texto(b.obs, 1000), agora = agoraISO();
+  let antes = null;
+  if (negId) {
+    antes = await env.DB.prepare("SELECT * FROM jur_negociacoes WHERE id = ? AND caso_id = ?").bind(negId, casoId).first();
+    if (!antes) throw new HttpError(404, "Negociação não encontrada.");
+  }
+  const id = negId || novoId();
+  const resumo = `dívida atualizada ${reais(divida)} · acordo ${reais(acordo)} · entrada ${reais(entrada)}${entrada > 0 ? " em " + dataBRw(dataEntrada) : ""}` +
+    (n ? ` · ${n}x de ${reais(cron[0][1])}${n > 1 && cron[n - 1][1] !== cron[0][1] ? " (última " + reais(cron[n - 1][1]) + ")" : ""}, 1º vencimento ${dataBRw(cron[0][0])}` : "") + (obs ? ` · ${obs}` : "");
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR REPLACE INTO jur_negociacoes (id, caso_id, divida, acordo, entrada, data_entrada, parcelas, cronograma, obs, criado_em, criado_por, atualizado_em, atualizado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(id, casoId, divida, acordo, entrada, dataEntrada, n, JSON.stringify(cron), obs, antes ? antes.criado_em : agora, antes ? antes.criado_por : eu.nome, negId ? agora : "", negId ? eu.nome : ""),
+    insertObsJur(env, casoId, agora, (negId ? "Negociação alterada: " : "Negociação registrada: ") + resumo + ".", eu),
+    env.DB.prepare("UPDATE jur_casos SET atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agora, eu.nome, casoId)
+  ]);
+  return casoComNegociacoes(env, casoId);
+}
+async function excluirNegociacaoJur(env, eu, casoId, negId) {
+  const n = await env.DB.prepare("SELECT * FROM jur_negociacoes WHERE id = ? AND caso_id = ?").bind(negId, casoId).first();
+  if (!n) throw new HttpError(404, "Negociação não encontrada.");
+  if (eu.perfil !== "admin" && n.criado_por !== eu.nome) throw new HttpError(403, "Só quem registrou a negociação (ou um administrador) pode excluí-la.");
+  const agora = agoraISO();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM jur_negociacoes WHERE id = ?").bind(negId),
+    insertObsJur(env, casoId, agora, `Negociação excluída (acordo ${reais(n.acordo)}, registrada em ${dataBRw(String(n.criado_em).slice(0, 10))}).`, eu)
+  ]);
+  return casoComNegociacoes(env, casoId);
 }
 
 // Relatórios de inadimplência de uma competência (mês de referência). Só os alunos que já estão
