@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v82";
+  var VERSAO = "06/10 · v83";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -204,7 +204,8 @@
         marcarSync(true);
         renderTudo();
         // ficha aberta: o histórico mostra na hora o que colegas registraram (o formulário não é mexido)
-        if (!$("mDetalhe").hidden && alunos[curId]) renderTimeline();
+        // (com um atendimento sendo editado no histórico, ele não é redesenhado: a edição não se perde)
+        if (!$("mDetalhe").hidden && alunos[curId] && !document.querySelector("#dTl .tl-form")) renderTimeline();
       })
       .catch(function (e) { marcarSync(false); if (e.status !== 401 && e.status !== 403) toast(e.message); });
   }
