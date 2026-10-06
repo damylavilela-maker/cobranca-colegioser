@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v73";
+  var VERSAO = "06/10 · v74";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -770,7 +770,14 @@
   });
 
   // novo aluno
-  $("btnNovo").addEventListener("click", function () { $("formNovo").reset(); abrir("mNovo"); setTimeout(function () { $("nNome").focus(); }, 30); });
+  $("btnNovo").addEventListener("click", function () { if (!baseCarregada) carregarBaseDados(); $("formNovo").reset(); abrir("mNovo"); setTimeout(function () { $("nNome").focus(); }, 30); });
+  // RA digitado: nome, turma, responsável e contato vêm da Base de dados (só onde está em branco)
+  $("nRa").addEventListener("change", function () {
+    var ra = this.value.trim().toLowerCase().replace(/^0+/, ""); if (!ra) return;
+    var b = null; baseAlunos.forEach(function (x) { if (String(x.ra || "").trim().toLowerCase().replace(/^0+/, "") === ra) b = x; });
+    if (!b) return;
+    [["nNome", "nome"], ["nTurma", "turma"], ["nResp", "responsavel"], ["nTel", "telefone"], ["nEmail", "email"]].forEach(function (p) { if (!$(p[0]).value.trim() && b[p[1]]) $(p[0]).value = b[p[1]]; });
+  });
   $("formNovo").addEventListener("submit", function (e) {
     e.preventDefault();
     api("POST", "/api/alunos", {

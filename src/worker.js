@@ -302,6 +302,10 @@ export default {
         const regOut = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('regularizacao_out2026_para_set', ?)").bind(agora).run();
         if (!regOut.meta || regOut.meta.changes > 0) await env.DB.prepare(
           "UPDATE atendimentos SET data = '2026-09-30' WHERE motivo = 'Regularização via importação de planilha' AND data >= '2026-10-01' AND data <= '2026-10-31'").run();
+        // Uma vez: com a busca na base melhorada (RA sem zeros, RA de irmãos, nome cortado), completa de
+        // novo os alunos do Painel e do Contraturno com os dados da Base de dados.
+        const baseCt = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('alunos_base_202610', ?)").bind(agora).run();
+        if (!baseCt.meta || baseCt.meta.changes > 0) await sincronizarComBase(env);
         // Uma vez (pedido em 05/10/2026): limpa os "Regularizado" do Painel. Todos voltam para
         // "Sem contato" e o recuperado lançado automaticamente na regularização pela importação é
         // apagado (atendimentos registrados pela equipe ficam). O relatório é importado de novo depois.
@@ -827,6 +831,9 @@ async function criarAluno(req, env) {
   const b = await corpo(req);
   if (!texto(b.nome)) throw new HttpError(400, "Informe o nome do aluno.");
   const id = novoId();
+  // cadastro manual: o que ficou em branco (nome completo, turma, responsável, contato) vem da Base de dados
+  const bx = acharNaBase(await carregarBase(env), b);
+  if (bx) { const c = completarComBase(b, bx); ["ra", "nome", "turma", "responsavel", "telefone", "email"].forEach((k) => { if (!texto(b[k]) || k === "nome") b[k] = c[k]; }); }
   const dados = { ...b, carteira: carteiraValida(b.carteira), status: "sem_contato", atendenteResponsavel: "", ultimoContato: null, proximoRetorno: null, arquivado: false, createdAt: null, updatedAt: null };
   await env.DB.prepare(insertSQL("alunos", ALUNO_COLS)).bind(...alunoValores(dados, id)).run();
   return json({ aluno: alunoSaida(await buscarAluno(env, id)) });
@@ -1384,23 +1391,44 @@ async function listarBase(env) {
 // Índices da base: por RA e, para quem vem sem RA, por nome (só quando o nome é único na base).
 async function carregarBase(env) {
   const r = (await env.DB.prepare("SELECT * FROM base_alunos").all()).results;
-  const porRa = {}, porNome = {}, repetido = {};
+  const porRa = {}, porRaNum = {}, porNome = {}, repetido = {};
   r.forEach((b) => {
-    if (b.ra) porRa[b.ra.trim().toLowerCase()] = b;
+    if (b.ra) { porRa[b.ra.trim().toLowerCase()] = b; const d = soDigitosRa(b.ra); if (d) porRaNum[d] = b; }
     const n = normNome(b.nome);
     if (!n) return;
     if (porNome[n] && porNome[n].ra !== b.ra) repetido[n] = true;
     porNome[n] = b;
   });
   Object.keys(repetido).forEach((n) => { delete porNome[n]; });
-  return { porRa, porNome, vazia: !r.length };
+  return { porRa, porRaNum, porNome, nomes: Object.keys(porNome), vazia: !r.length };
 }
+function soDigitosRa(ra) { const s = String(ra || "").trim(); return /^\d+$/.test(s) ? s.replace(/^0+/, "") : ""; }
 
-function acharNaBase(base, o) {
+// Acha o aluno na Base de dados: pelo RA (também sem zeros à esquerda e, em RA de irmãos
+// "14223/14206", por cada parte); se não achar, pelo nome — igual ou, quando o relatório corta o
+// nome, pelo único nome da base que começa com ele (ou com o qual ele começa).
+function acharNaBase(base, o, estrito) {
   if (!base || base.vazia) return null;
+  // estrito (parcelas da Serasa): só RA exato ou, sem RA, nome exato, como sempre foi
+  if (estrito) { const r0 = texto(o.ra, 30).toLowerCase(); return r0 ? base.porRa[r0] || null : base.porNome[normNome(o.nome)] || null; }
   const ra = texto(o.ra, 30).toLowerCase();
-  if (ra) return base.porRa[ra] || null;
-  return base.porNome[normNome(o.nome)] || null;
+  if (ra) {
+    const direto = base.porRa[ra] || base.porRaNum[soDigitosRa(ra)];
+    if (direto) return direto;
+    const partes = ra.split(/[\/,;|]+/).map((p) => p.trim()).filter(Boolean);
+    if (partes.length > 1) {
+      const achados = partes.map((p) => base.porRa[p] || base.porRaNum[soDigitosRa(p)]).filter(Boolean);
+      const n0 = normNome(o.nome).split(" ")[0];
+      const mesmoNome = achados.find((b) => n0 && normNome(b.nome).split(" ")[0] === n0);
+      if (mesmoNome || achados.length) return mesmoNome || achados[0];
+    }
+  }
+  const n = normNome(o.nome);
+  if (!n) return null;
+  if (base.porNome[n]) return base.porNome[n];
+  if (n.split(" ").length < 2 || n.length < 8) return null;
+  const cand = base.nomes.filter((bn) => bn.startsWith(n + " ") || n.startsWith(bn + " "));
+  return cand.length === 1 ? base.porNome[cand[0]] : null;
 }
 
 // Aluno do Painel/Contraturno: os dados cadastrais da base valem mais que os do relatório
@@ -1408,7 +1436,8 @@ function acharNaBase(base, o) {
 function completarComBase(r, bx) {
   const o = { ...r };
   o.ra = texto(r.ra, 30) || bx.ra;
-  if (bx.nome) o.nome = bx.nome;
+  // RA de irmãos ("14223/14206"): o nome com os dois alunos fica como está; só o contato vem da base
+  if (bx.nome && !/[\/,;|]/.test(texto(r.ra, 30))) o.nome = bx.nome;
   ["turma", "responsavel", "telefone", "email"].forEach((c) => { if (bx[c]) o[c] = bx[c]; });
   return o;
 }
@@ -1417,7 +1446,7 @@ function completarComBase(r, bx) {
 // então trocar o nome não duplica; corrige nomes que vieram cortados de um PDF). Sem RA, o nome
 // faz parte da identificação e não muda. O responsável só é preenchido se estiver vazio.
 function completarSerasaComBase(l, base) {
-  const bx = acharNaBase(base, l);
+  const bx = acharNaBase(base, l, true);
   if (!bx) return l;
   const o = { ...l };
   if (texto(o.ra) && bx.nome) o.nome = bx.nome;
