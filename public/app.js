@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v84";
+  var VERSAO = "06/10 · v85";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -471,6 +471,28 @@
     });
     var valAno = 0;
     if (fano) f.forEach(function (a) { if (a.indevido) return; parcelasDoAno(a).forEach(function (p) { if (String(p[0]).slice(0, 4) === fano) valAno += Number(p[1]) || 0; }); });
+    // faixa de atraso escolhida: quadro com o valor em aberto dos alunos dessa faixa e, separado, só o
+    // dos boletos que estão nessa faixa (os demais boletos desses alunos são de outras faixas)
+    var fb = $("faixaBox");
+    if (ffx) {
+      var fxTot = 0, fxBol = 0, fxParc = 0, fxN = 0;
+      f.forEach(function (a) {
+        if (a.indevido) return;
+        var v = Number(a.valorAberto) || 0; fxTot += v; fxN++;
+        var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc.filter(function (p) { return p && /^\d{4}-\d{2}-\d{2}/.test(String(p[0])); }) : [];
+        if (!pv.length) { fxBol += v; fxParc += a.parcelasAberto || 1; return; }
+        pv.forEach(function (p) {
+          var d = diasDesde(String(p[0]).slice(0, 10), h), k = d < 1 ? "avencer" : d >= 91 ? "90" : d >= 61 ? "61" : d >= 31 ? "31" : "1";
+          if (k === ffx) { fxBol += Number(p[1]) || 0; fxParc++; }
+        });
+      });
+      var fxi = faixaInfo(ffx);
+      fb.innerHTML = '<div class="fx-titulo">Faixa de atraso: <b>' + esc(fxi.l) + '</b></div><div class="fx-itens">' +
+        '<div><div class="fx-num tabular">' + money(fxTot) + '</div><div class="fx-lbl">em aberto dos ' + fxN + (fxN === 1 ? " aluno" : " alunos") + " desta faixa (todas as parcelas deles)</div></div>" +
+        (ffx !== "sem" ? '<div><div class="fx-num tabular" style="color:var(--' + fxi.c + ')">' + money(fxBol) + '</div><div class="fx-lbl">só nos ' + fxParc + (fxParc === 1 ? " boleto" : " boletos") + " " + (ffx === "avencer" ? "que ainda não venceram" : "vencidos há " + esc(fxi.l.toLowerCase())) + "</div></div>" : "") +
+        "</div>";
+      fb.hidden = false;
+    } else { fb.hidden = true; fb.innerHTML = ""; }
     $("count").textContent = f.length + (f.length === 1 ? " aluno encontrado" : " alunos encontrados") + (showArch ? " · arquivados" : "") + (soHoje ? " · retorno hoje ou atrasado" : "") +
       (fano ? " · " + money(valAno) + " em parcelas com vencimento em " + fano : "");
 
