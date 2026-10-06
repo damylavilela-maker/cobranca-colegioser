@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v75";
+  var VERSAO = "06/10 · v76";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -379,19 +379,32 @@
     var selMes = '<select class="kpi-mes" id="kpiMesRecup" aria-label="Mês do valor recuperado">' + meses.map(function (m) {
       return '<option value="' + m.v + '"' + (m.v === mesRecup ? " selected" : "") + ">" + m.l + "</option>";
     }).join("") + "</select>";
-    // "Valor em aberto": "Atual" = soma de hoje dos alunos ativos; um mês = o total do relatório
-    // importado com aquele mês de referência (registro mês a mês, carregado só quando se escolhe um mês)
-    if (mesAberto && !meses.some(function (m) { return m.v === mesAberto; })) mesAberto = "";
+    // "Valor em aberto" distribuído pelo mês de vencimento dos boletos: cada parcela em aberto entra no
+    // mês em que venceu. Aluno sem o detalhe das parcelas entra pelo vencimento dele quando tem 1 parcela;
+    // com várias parcelas e sem o detalhe, não dá para dividir (aparece no aviso).
+    var porMesV = {}, semDet = { v: 0, n: 0 };
+    vis.forEach(function (a) {
+      if (a.indevido || !(Number(a.valorAberto) > 0)) return;
+      var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc.filter(function (p) { return p && /^\d{4}-\d{2}/.test(String(p[0])); }) : [];
+      if (!pv.length && (a.parcelasAberto || 1) <= 1 && /^\d{4}-\d{2}/.test(a.vencimento || "")) pv = [[a.vencimento, Number(a.valorAberto) || 0]];
+      if (!pv.length) { semDet.v += Number(a.valorAberto) || 0; semDet.n++; return; }
+      var vistos = {};
+      pv.forEach(function (p) {
+        var k = String(p[0]).slice(0, 7), g = porMesV[k] || (porMesV[k] = { v: 0, parc: 0, alunos: 0 });
+        g.v += Number(p[1]) || 0; g.parc++; if (!vistos[k]) { vistos[k] = 1; g.alunos++; }
+      });
+    });
+    var mesesV = Object.keys(porMesV).sort();
+    if (mesAberto && !porMesV[mesAberto]) mesAberto = "";
     var abertoMes = tot, subAberto = "";
     if (mesAberto) {
-      var hc = histCarteira[carteira];
-      if (!hc) { abertoMes = null; subAberto = "Carregando o relatório do mês…"; carregarHistCarteira(carteira); }
-      else if (hc.erro) { abertoMes = null; subAberto = "Não consegui carregar o registro mensal. Tente de novo."; }
-      else if (hc.meses[mesAberto]) { abertoMes = hc.meses[mesAberto].valorAberto; subAberto = hc.meses[mesAberto].alunos + " aluno(s) no relatório deste mês"; }
-      else { abertoMes = null; subAberto = "Nenhum relatório importado com este mês de referência"; }
+      var gm = porMesV[mesAberto];
+      abertoMes = gm.v;
+      subAberto = gm.parc + " boleto(s) vencido(s) neste mês, de " + gm.alunos + " aluno(s)";
     }
-    var selAberto = '<select class="kpi-mes" id="kpiMesAberto" aria-label="Mês do relatório"><option value="">Atual (todos os alunos ativos)</option>' + meses.map(function (m) {
-      return '<option value="' + m.v + '"' + (m.v === mesAberto ? " selected" : "") + ">Relatório de " + m.l + " de " + anoR + "</option>";
+    if (semDet.n && mesAberto) subAberto += " · " + money(semDet.v) + " de " + semDet.n + " aluno(s) sem o vencimento de cada parcela não entram nos meses";
+    var selAberto = '<select class="kpi-mes" id="kpiMesAberto" aria-label="Mês de vencimento dos boletos"><option value="">Atual (todos os alunos ativos)</option>' + mesesV.map(function (k) {
+      return '<option value="' + k + '"' + (k === mesAberto ? " selected" : "") + ">Vencidos em " + MESES[parseInt(k.slice(5, 7), 10) - 1] + " de " + k.slice(0, 4) + "</option>";
     }).join("") + "</select>";
     var tiles = [
       { n: vis.length, l: "Alunos em acompanhamento" },
