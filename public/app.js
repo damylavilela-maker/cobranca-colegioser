@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v86";
+  var VERSAO = "06/10 · v87";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2024,6 +2024,7 @@
       if (/^\d{4}-\d{2}/.test(x.dataInclusao || "")) mesesInc[x.dataInclusao.slice(0, 7)] = (mesesInc[x.dataInclusao.slice(0, 7)] || 0) + 1;
       var r = (x.respInclusao || "").trim(); if (r) colabs[r] = (colabs[r] || 0) + 1;
     });
+    ["Damyla Vilela", "Daniela Andrade"].forEach(function (n) { if (!colabs[n]) colabs[n] = 0; }); // colaboradoras da Serasa aparecem mesmo sem inclusão ainda
     prepararSelect($("sMes"), [{ v: "", l: "Mês de inclusão: todos" }].concat(Object.keys(mesesInc).sort().reverse().map(function (k) {
       return { v: k, l: "Incluídas em " + MESES[parseInt(k.slice(5, 7), 10) - 1].toLowerCase() + "/" + k.slice(0, 4) + " (" + mesesInc[k] + ")" };
     })), $("sMes").value || "");
