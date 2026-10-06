@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v76";
+  var VERSAO = "06/10 · v77";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -14,7 +14,8 @@
     { k: "aguardando_retorno", l: "Aguardando retorno", c: "warn" },
     { k: "retornar_contato", l: "Retornar contato", c: "brand" },
     { k: "regularizado", l: "Regularizado", c: "success" },
-    { k: "sem_previsao", l: "Sem previsão", c: "danger" }
+    { k: "sem_previsao", l: "Sem previsão", c: "danger" },
+    { k: "cobranca_indevida", l: "Cobrança indevida", c: "gray" }
   ];
   var MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
   var DIAS_SEMANA = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."];
@@ -407,7 +408,7 @@
       return '<option value="' + k + '"' + (k === mesAberto ? " selected" : "") + ">Vencidos em " + MESES[parseInt(k.slice(5, 7), 10) - 1] + " de " + k.slice(0, 4) + "</option>";
     }).join("") + "</select>";
     var tiles = [
-      { n: vis.length, l: "Alunos em acompanhamento" },
+      { n: vis.filter(function (a) { return !a.indevido; }).length, l: "Alunos em acompanhamento" },
       { n: abertoMes == null ? "—" : money(abertoMes), l: "Valor em aberto " + selAberto, cls: "lead", sub: subAberto },
       { n: money(recuperadoNoMes(mesRecup, carteira)), l: "Recuperado em " + selMes, c: "success" },
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
@@ -749,7 +750,7 @@
       (d.vinculados || []).forEach(function (v) { alunos[v.id] = v; });
       var nasDuas = (d.vinculados || []).some(function (v) { return carteiraDe(v) !== carteiraDe(d.aluno); });
       if (d.aluno.indevido) delete histCarteira[carteira];
-      toast(d.aluno.indevido && /indevida/i.test(d.atendimento.motivo || "") ? "Cobrança indevida registrada: o valor deste aluno saiu do total de inadimplência." : "Atendimento registrado em nome de " + primeiroNome(eu.nome) + (nasDuas ? " — aparece no Painel e no Contraturno." : "."));
+      toast(d.aluno.indevido && (/indevida/i.test(d.atendimento.motivo || "") || d.atendimento.statusResultante === "cobranca_indevida") ? "Cobrança indevida registrada: o valor deste aluno saiu do total de inadimplência." : "Atendimento registrado em nome de " + primeiroNome(eu.nome) + (nasDuas ? " — aparece no Painel e no Contraturno." : "."));
       abrirAluno(d.aluno.id); renderTudo();
     }).catch(function (x) { toast("Não foi possível salvar: " + x.message); })
       .then(function () { btn.disabled = false; });

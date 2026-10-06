@@ -10,7 +10,7 @@ const MAX_TENTATIVAS = 5;
 const BLOQUEIO_MIN = 15;
 const FUSO = "America/Sao_Paulo";
 
-const STATUS = ["sem_contato", "em_negociacao", "amortizando", "aguardando_retorno", "retornar_contato", "regularizado", "sem_previsao"];
+const STATUS = ["sem_contato", "em_negociacao", "amortizando", "aguardando_retorno", "retornar_contato", "regularizado", "sem_previsao", "cobranca_indevida"];
 const DIA_VENCIMENTO_MENSALIDADE = 5;
 
 const SCHEMA = [
@@ -308,6 +308,9 @@ export default {
         // novo os alunos do Painel e do Contraturno com os dados da Base de dados.
         const baseCt = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('alunos_base_202610', ?)").bind(agora).run();
         if (!baseCt.meta || baseCt.meta.changes > 0) await sincronizarComBase(env);
+        // Uma vez: quem já foi marcado como cobrança indevida (pelo motivo) fica com o status novo
+        const stInd = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('status_cobranca_indevida', ?)").bind(agora).run();
+        if (!stInd.meta || stInd.meta.changes > 0) await env.DB.prepare("UPDATE alunos SET status = 'cobranca_indevida' WHERE indevido = 1").run();
         // Uma vez (pedido em 05/10/2026): limpa os "Regularizado" do Painel. Todos voltam para
         // "Sem contato" e o recuperado lançado automaticamente na regularização pela importação é
         // apagado (atendimentos registrados pela equipe ficam). O relatório é importado de novo depois.
@@ -862,8 +865,11 @@ async function alterarAluno(req, env, id) {
   sets.push("atualizado_em = ?"); vals.push(agoraISO());
   await env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, id).run();
   // desfez a cobrança indevida: o valor volta para o total do último mês registrado
-  if (b.indevido === false) await env.DB.prepare(
-    "UPDATE alunos_hist SET presente = 1, valor_aberto = (SELECT valor_aberto FROM alunos WHERE id = ?) WHERE aluno_id = ? AND mes = (SELECT MAX(mes) FROM alunos_hist WHERE aluno_id = ?)").bind(id, id, id).run();
+  // (e o status "Cobrança indevida" volta para "Sem contato")
+  if (b.indevido === false) await env.DB.batch([
+    env.DB.prepare("UPDATE alunos_hist SET presente = 1, valor_aberto = (SELECT valor_aberto FROM alunos WHERE id = ?) WHERE aluno_id = ? AND mes = (SELECT MAX(mes) FROM alunos_hist WHERE aluno_id = ?)").bind(id, id, id),
+    env.DB.prepare("UPDATE alunos SET status = 'sem_contato' WHERE id = ? AND status = 'cobranca_indevida'").bind(id)
+  ]);
   return json({ aluno: alunoSaida(await buscarAluno(env, id)) });
 }
 
@@ -1042,7 +1048,9 @@ async function criarAtendimento(req, env, eu) {
   const aluno = await buscarAluno(env, texto(b.alunoId, 40));
   const data = dataISO(b.data) || hojeISO();
   const canal = texto(b.canal, 30), setor = texto(b.setor, 40);
-  const status = statusValido(b.statusResultante);
+  // cobrança indevida (pelo motivo ou pelo status): o status fica "Cobrança indevida" e o valor sai do total
+  const indevida = /^cobran[cç]a indevida$/i.test(texto(b.motivo, 150)) || b.statusResultante === "cobranca_indevida";
+  const status = indevida ? "cobranca_indevida" : statusValido(b.statusResultante);
   const proximo = dataOuNull(b.proximoRetorno);
   const mens = mensalidadesValidas(b.mensalidadesNegociadas);
   const totalNegociado = numero(mens.reduce((s, m) => s + m.valor, 0));
@@ -1063,7 +1071,7 @@ async function criarAtendimento(req, env, eu) {
   const vals = [status, eu.nome, setor, data, canal, proximo, agora];
   if (temValorNovo) { sets.push("valor_aberto = ?"); vals.push(valorNovo); }
   // motivo "Cobrança indevida": o valor do aluno sai do total de inadimplência (não é recuperado)
-  const indevida = /^cobran[cç]a indevida$/i.test(texto(b.motivo, 150));
+
   if (indevida) sets.push("indevido = 1");
   stmts.push(env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, aluno.id));
   if (indevida) stmts.push(env.DB.prepare(
