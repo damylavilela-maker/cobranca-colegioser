@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v83";
+  var VERSAO = "06/10 · v84";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -371,6 +371,13 @@
     if (e.target.id === "kpiMesRecup") { mesRecup = e.target.value; renderPainel(); }
     if (e.target.id === "kpiMesAberto") { mesAberto = e.target.value; if (histCarteira[carteira] && histCarteira[carteira].erro) delete histCarteira[carteira]; renderPainel(); }
   });
+  // Regularizados por um atendimento da equipe (quem ficou regularizado só porque não veio no
+  // relatório da importação não entra nesta contagem)
+  function regularizadosManuais(vis) {
+    var ultimo = {};
+    atends.forEach(function (t) { var u = ultimo[t.alunoId]; if (!u || (t.data || "") > (u.data || "") || ((t.data || "") === (u.data || "") && (t.createdAt || "") > (u.createdAt || ""))) ultimo[t.alunoId] = t; });
+    return vis.filter(function (a) { return a.status === "regularizado" && ultimo[a.id] && atendManual(ultimo[a.id]); }).length;
+  }
   function renderKpis(vis) {
     var tot = 0, c = {};
     vis.forEach(function (a) { if (!a.indevido) tot += Number(a.valorAberto) || 0; var k = a.status || "sem_contato"; c[k] = (c[k] || 0) + 1; });
@@ -415,7 +422,7 @@
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
       { n: c.em_negociacao || 0, l: "Em negociação", c: "info" },
       { n: c.aguardando_retorno || 0, l: "Aguardando retorno", c: "warn" },
-      { n: c.regularizado || 0, l: "Regularizados", c: "success" }
+      { n: regularizadosManuais(vis), l: "Regularizados", c: "success" }
     ];
     $("kpis").innerHTML = tiles.map(function (t) {
       return '<div class="kpi ' + (t.cls || "") + '"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ' title="' + esc(t.n) + '">' + t.n + '</div><div class="lbl">' + t.l + "</div>" + (t.sub ? '<div class="kpi-sub">' + esc(t.sub) + "</div>" : "") + "</div>";
