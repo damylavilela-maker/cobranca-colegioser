@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v80";
+  var VERSAO = "06/10 · v81";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -569,7 +569,7 @@
       (d.meses || []).forEach(function (m) { hist[m.mes] = m; });
       atends.forEach(function (t) {
         if (!t.data || carteiraDe(alunos[t.alunoId]) !== c) return;
-        var k = t.data.slice(0, 7); nAt[k] = (nAt[k] || 0) + 1; rec[k] = (rec[k] || 0) + (Number(t.valorRecuperado) || 0);
+        var k = t.data.slice(0, 7); if (atendManual(t)) nAt[k] = (nAt[k] || 0) + 1; rec[k] = (rec[k] || 0) + (Number(t.valorRecuperado) || 0);
       });
       var lista = Object.keys(hist).concat(Object.keys(nAt).filter(function (k) { return !hist[k]; })).sort();
       if (!lista.length) { $("mMensalRes").innerHTML = '<div class="import-summary">Ainda não há meses registrados. Ao importar o relatório do mês, o valor em aberto de cada aluno fica registrado aqui.</div>'; return; }
@@ -1468,11 +1468,14 @@
     return sel.value;
   }
 
+  // atendimento registrado pela equipe (a regularização automática da importação não é atendimento)
+  var MOTIVO_REG_AUTO = "Regularização via importação de planilha";
+  function atendManual(a) { return a && a.motivo !== MOTIVO_REG_AUTO; }
   function renderEvolucao() {
     var dias = [];
     for (var i = 13; i >= 0; i--) { var d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); dias.push(isoLocal(d)); }
     var porDia = {}; dias.forEach(function (x) { porDia[x] = 0; });
-    atends.forEach(function (a) { if (porDia[a.data] !== undefined) porDia[a.data]++; });
+    atends.forEach(function (a) { if (atendManual(a) && porDia[a.data] !== undefined) porDia[a.data]++; });
     var mx = Math.max.apply(null, dias.map(function (x) { return porDia[x]; })) || 1, h = hoje();
     $("days").innerHTML = dias.map(function (x) {
       var v = porDia[x];
@@ -1480,14 +1483,21 @@
     }).join("");
     $("dayLbls").innerHTML = dias.map(function (x) { return "<span>" + Number(x.slice(8)) + "</span>"; }).join("");
 
-    $("feed").innerHTML = atends.length ? atends.slice(0, 12).map(function (a) {
+    var manuais = atends.filter(atendManual);
+    $("feed").innerHTML = manuais.length ? manuais.slice(0, 12).map(function (a) {
       return '<div class="feed-it"><span class="w">' + br(a.data) + "</span><b>" + esc(a.alunoNome || "—") + "</b> · " + esc(a.canal || "") +
         '<div class="o">' + (a.responsavel ? esc(a.responsavel) + ": " : "") + esc((a.observacao || a.motivo || "").slice(0, 120)) + "</div></div>";
     }).join("") : '<div class="muted">Nenhum atendimento registrado ainda.</div>';
 
-    var cc = {}; atends.forEach(function (a) { cc[a.canal || "—"] = (cc[a.canal || "—"] || 0) + 1; });
+    var cc = {}; manuais.forEach(function (a) { cc[a.canal || "—"] = (cc[a.canal || "—"] || 0) + 1; });
     barras("barCanal", CANAIS.map(function (c) { return { l: c, v: cc[c] || 0 }; }), Math.max.apply(null, CANAIS.map(function (c) { return cc[c] || 0; })));
-    var vis = listaCarteira("regular").filter(function (a) { return !a.arquivado; }), sc = {};
+    // status: quem ficou "Regularizado" só pela importação (não veio no relatório) não entra aqui;
+    // conta o regularizado registrado num atendimento da equipe
+    var ultimoAt = {}; atends.forEach(function (t) { var u = ultimoAt[t.alunoId]; if (!u || (t.data || "") > (u.data || "") || ((t.data || "") === (u.data || "") && (t.createdAt || "") > (u.createdAt || ""))) ultimoAt[t.alunoId] = t; });
+    var vis = listaCarteira("regular").filter(function (a) {
+      if (a.arquivado) return false;
+      return !(a.status === "regularizado" && (!ultimoAt[a.id] || !atendManual(ultimoAt[a.id])));
+    }), sc = {};
     vis.forEach(function (a) { var k = a.status || "sem_contato"; sc[k] = (sc[k] || 0) + 1; });
     barras("barStatus", STATUS.map(function (s) { return { l: s.l, v: sc[s.k] || 0, c: s.c }; }), vis.length);
     renderFaixaAlunos();
@@ -1531,7 +1541,7 @@
     var meses = Object.keys(set).sort().reverse();
     var mesSel = prepararSelect($("ctrlMesSel"), meses.map(function (m) { return { v: m, l: cap(MESES[parseInt(m.slice(5, 7), 10) - 1]) + "/" + m.slice(0, 4) }; }), mesAtual());
     var ano = parseInt(mesSel.slice(0, 4), 10), mesN = parseInt(mesSel.slice(5, 7), 10);
-    var doMes = atends.filter(function (a) { return a.data && a.data.slice(0, 7) === mesSel; });
+    var doMes = atends.filter(function (a) { return atendManual(a) && a.data && a.data.slice(0, 7) === mesSel; });
     var tb = $("ctrlTable");
     // colunas só para atendimentos com atendente identificada (registros antigos sem nome ficam de fora)
     var semNome = doMes.filter(function (a) { var n = (a.responsavel || "").trim(); return !n || n === "—"; }).length;
