@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v78";
+  var VERSAO = "06/10 · v79";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1567,9 +1567,35 @@
     barras("faixaAlunosList", rows, Math.max.apply(null, rows.map(function (r) { return r.v; })), function (n) { return n + (n === 1 ? " aluno" : " alunos"); });
     // valor em aberto de cada faixa ao passar o mouse
     [].forEach.call($("faixaAlunosList").querySelectorAll(".bar"), function (el, i) { el.title = rows[i].l + ": " + rows[i].v + " aluno(s) · " + money(val[rows[i].k] || 0) + " em aberto"; });
-    $("faixaAlunosNota").textContent = total + " aluno(s) com valor em aberto · " + FAIXAS_ATRASO.map(function (f) { return f.l.toLowerCase() + ": " + money(val[f.k] || 0); }).join(" · ");
+    $("faixaAlunosNota").textContent = total + " aluno(s) com valor em aberto · " + FAIXAS_ATRASO.map(function (f) { return f.l.toLowerCase() + ": " + money(val[f.k] || 0); }).join(" · ") + " · clique numa faixa para ver os alunos";
+    [].forEach.call($("faixaAlunosList").querySelectorAll(".bar"), function (el, i) { el.setAttribute("data-faixa", rows[i].k); el.setAttribute("data-rot", rows[i].l); el.style.cursor = "pointer"; });
   }
   $("faixaAlunosCart").addEventListener("change", renderFaixaAlunos);
+  // clique numa faixa: janela com os alunos dela (clicar no aluno abre a ficha)
+  $("faixaAlunosList").addEventListener("click", function (e) {
+    var bar = e.target.closest && e.target.closest(".bar[data-faixa]"); if (!bar) return;
+    var k = bar.getAttribute("data-faixa"), cart = $("faixaAlunosCart").value, h = hoje();
+    var lista0 = cart === "todas" ? listaCarteira("regular").concat(listaCarteira("contraturno")) : listaCarteira(cart);
+    var dela = lista0.filter(function (a) { return !a.arquivado && !a.indevido && Number(a.valorAberto) > 0 && faixaDoAluno(a, h) === k; })
+      .sort(function (a, b) { return (Number(b.valorAberto) || 0) - (Number(a.valorAberto) || 0); });
+    var tot = dela.reduce(function (s, a) { return s + (Number(a.valorAberto) || 0); }, 0);
+    $("mFaixaT").textContent = "Alunos — " + bar.getAttribute("data-rot");
+    $("mFaixaSub").textContent = dela.length + " aluno(s) · " + money(tot) + " em aberto · " + (cart === "todas" ? "Painel e Contraturno" : cart === "contraturno" ? "Contraturno" : "Painel");
+    $("mFaixaRes").innerHTML = '<div class="table-wrap" style="max-height:60vh;overflow:auto"><table class="data compacta"><thead><tr><th>Aluno</th><th>Aba</th><th class="right">Valor em aberto</th><th>Parcela mais antiga</th><th>Status</th></tr></thead><tbody>' +
+      dela.map(function (a) {
+        var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc.filter(function (p) { return p && p[0]; }) : [];
+        var venc = pv.length ? pv.map(function (p) { return p[0]; }).sort()[0] : a.vencimento, dias = venc ? diasDesde(venc, h) : 0;
+        return '<tr class="click" data-aluno="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + '</div><div class="meta">' + esc(a.responsavel || "sem responsável") + (a.ra ? " · RA " + esc(a.ra) : "") + "</div></td>" +
+          "<td>" + (carteiraDe(a) === "contraturno" ? "Contraturno" : "Painel") + '</td><td class="tabular right"><b>' + money(a.valorAberto) + "</b>" + (a.parcelasAberto > 1 ? '<div class="meta">' + a.parcelasAberto + " parcelas</div>" : "") + "</td>" +
+          '<td class="tabular">' + (venc ? br(venc) + (dias > 0 ? '<div class="meta">' + dias + " dias em atraso</div>" : "") : '<span class="muted">—</span>') + "</td>" +
+          "<td>" + pill(a.status || "sem_contato") + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+    abrir("mFaixa");
+  });
+  $("mFaixaRes").addEventListener("click", function (e) {
+    var tr = e.target.closest && e.target.closest("tr[data-aluno]"); if (!tr) return;
+    var id = tr.getAttribute("data-aluno"); fecharModais(); abrirAluno(id);
+  });
   ["anoEvolSel", "mensEvolAnoSel", "ctrlMesSel"].forEach(function (id) { $(id).addEventListener("change", renderEvolucao); });
   $("btnEvolAtualizar").addEventListener("click", function () { var b = this; b.disabled = true; carregar().then(function () { b.disabled = false; toast("Evolução atualizada."); }); });
 
