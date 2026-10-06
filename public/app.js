@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v77";
+  var VERSAO = "06/10 · v78";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -524,7 +524,7 @@
         : a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "") +
       (a.indevido ? '<div class="arch-banner">Cobrança indevida: o valor deste aluno (' + money(a.valorAberto) + ') não entra no total de inadimplência. <button type="button" class="linkbtn" id="btnDesfazerIndevido">Desfazer</button></div>' : "") +
       (outra ? '<div class="link-banner"><b>Também está no ' + (carteiraDe(outra) === "contraturno" ? "Contraturno" : "Painel") + "</b> (" + money(outra.valorAberto) + " em aberto, " + st(outra.status).l.toLowerCase() +
-        "). Os atendimentos aparecem nas duas abas; o status e o valor em aberto são de cada aba.</div>" : "");
+        "). Os atendimentos aparecem nas duas abas; o status registrado no Painel vale também no Contraturno; o valor em aberto é de cada aba.</div>" : "");
     carregarHistMesAluno(a);
     $("btnArquivarAluno").textContent = a.arquivado ? "Reativar aluno" : "Arquivar aluno"; $("btnArquivarAluno").hidden = !!a.juridico;
     var bj = $("btnJurAluno"); bj.classList.remove("armed"); bj.textContent = a.juridico ? "Voltar ao painel" : "Retirar do painel (jurídico)";

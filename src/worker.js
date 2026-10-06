@@ -1081,10 +1081,14 @@ async function criarAtendimento(req, env, eu) {
   // lá: atualiza último atendimento, próximo retorno e atendente. Status e valor em aberto
   // continuam próprios de cada carteira.
   const vinculados = await alunosVinculados(env, aluno);
+  // Atendimento feito no Painel: o status do mesmo aluno no Contraturno acompanha o do Painel
+  // (menos "Cobrança indevida", que vale só para o valor da carteira onde foi registrada).
+  const statusVaiJunto = (aluno.carteira || "regular") !== "contraturno" && status !== "cobranca_indevida";
   for (const v of vinculados) {
+    const levaStatus = statusVaiJunto && v.carteira === "contraturno" && !v.indevido;
     stmts.push(env.DB.prepare(
-      "UPDATE alunos SET atendente_responsavel = ?, ultimo_contato_data = ?, ultimo_contato_canal = ?, proximo_retorno = ?, atualizado_em = ? WHERE id = ?"
-    ).bind(eu.nome, data, canal, proximo, agora, v.id));
+      `UPDATE alunos SET atendente_responsavel = ?, ultimo_contato_data = ?, ultimo_contato_canal = ?, proximo_retorno = ?, atualizado_em = ?${levaStatus ? ", status = ?" : ""} WHERE id = ?`
+    ).bind(eu.nome, data, canal, proximo, agora, ...(levaStatus ? [status] : []), v.id));
   }
   await env.DB.batch(stmts);
 
