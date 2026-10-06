@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v85";
+  var VERSAO = "06/10 · v86";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2018,6 +2018,19 @@
     var anos = {}; p.forEach(function (x) { if (x.vencimento) anos[x.vencimento.slice(0, 4)] = 1; });
     prepararSelect($("sAno"), [{ v: "", l: "Todos os anos" }].concat(Object.keys(anos).sort().reverse().map(function (y) { return { v: y, l: "Vencimento em " + y }; })), $("sAno").value || "");
 
+    // mês, data e colaborador da inclusão no Serasa
+    var mesesInc = {}, colabs = {};
+    p.forEach(function (x) {
+      if (/^\d{4}-\d{2}/.test(x.dataInclusao || "")) mesesInc[x.dataInclusao.slice(0, 7)] = (mesesInc[x.dataInclusao.slice(0, 7)] || 0) + 1;
+      var r = (x.respInclusao || "").trim(); if (r) colabs[r] = (colabs[r] || 0) + 1;
+    });
+    prepararSelect($("sMes"), [{ v: "", l: "Mês de inclusão: todos" }].concat(Object.keys(mesesInc).sort().reverse().map(function (k) {
+      return { v: k, l: "Incluídas em " + MESES[parseInt(k.slice(5, 7), 10) - 1].toLowerCase() + "/" + k.slice(0, 4) + " (" + mesesInc[k] + ")" };
+    })), $("sMes").value || "");
+    prepararSelect($("sColab"), [{ v: "", l: "Colaborador: todos" }].concat(Object.keys(colabs).sort(function (a, b) { return a.localeCompare(b); }).map(function (k) {
+      return { v: esc(k), l: esc(k) + " (" + colabs[k] + ")" };
+    })), $("sColab").value || "");
+    var fmi = $("sMes").value, fdi = $("sData").value, fco = $("sColab").value;
     var q = $("sBusca").value.trim().toLowerCase(), fm = $("sMentor").value, fs = $("sSerasa").value, fa = $("sAno").value, ord = $("sOrdem").value;
     var qDig = q.replace(/\D/g, "");
     function bate(filtro, v) { return !filtro || (filtro === "__pendente" ? !v : v === filtro); }
@@ -2028,6 +2041,9 @@
       }
       if (!bate(fm, x.mentor) || !bate(fs, x.serasa)) return false;
       if (fa && (x.vencimento || "").slice(0, 4) !== fa) return false;
+      if (fmi && (x.dataInclusao || "").slice(0, 7) !== fmi) return false;
+      if (fdi && (x.dataInclusao || "").slice(0, 10) !== fdi) return false;
+      if (fco && (x.respInclusao || "").trim() !== fco) return false;
       return true;
     });
     // Uma linha por aluno: todas as parcelas dele (dentro dos filtros) ficam juntas.
@@ -2152,7 +2168,7 @@
     var ids = Object.keys(porPeriodo);
     periodoSel = ids.length === 1 ? (ids[0] || SEM_PERIODO) : "";
     try { localStorage.setItem("ser_periodo", periodoSel); } catch (x) { /* sem armazenamento */ }
-    ["sBusca", "sMentor", "sSerasa", "sAno"].forEach(function (id) { $(id).value = ""; });
+    ["sBusca", "sMentor", "sSerasa", "sAno", "sMes", "sData", "sColab"].forEach(function (id) { $(id).value = ""; });
     serSel = {}; serLimite = 300;
     renderSerasa();
   }
@@ -2168,7 +2184,7 @@
       sel.value = atual;
     }
   }
-  ["sBusca", "sMentor", "sSerasa", "sAno", "sOrdem"].forEach(function (id) { $(id).addEventListener("input", function () { serLimite = 300; renderSerasa(); }); });
+  ["sBusca", "sMentor", "sSerasa", "sAno", "sMes", "sData", "sColab", "sOrdem"].forEach(function (id) { $(id).addEventListener("input", function () { serLimite = 300; renderSerasa(); }); });
   $("serMais").addEventListener("click", function () { serLimite += 300; renderSerasa(); });
   function grupoPorChave(k) { for (var i = 0; i < serGrupos.length; i++) if (serGrupos[i].chave === k) return serGrupos[i]; return null; }
   $("serTbody").addEventListener("click", function (e) {
