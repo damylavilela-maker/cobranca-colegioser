@@ -2,11 +2,11 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "06/10 · v74";
+  var VERSAO = "06/10 · v75";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
-  var MOTIVOS = ["Cobrança de parcela em atraso", "Negociação de acordo", "Confirmação de pagamento", "Atualização de dados cadastrais", "Solicitação da família", "Retorno de contato agendado", "Encaminhamento ao jurídico", "Outro"];
+  var MOTIVOS = ["Cobrança de parcela em atraso", "Negociação de acordo", "Confirmação de pagamento", "Atualização de dados cadastrais", "Solicitação da família", "Retorno de contato agendado", "Encaminhamento ao jurídico", "Cobrança indevida", "Outro"];
   var STATUS = [
     { k: "sem_contato", l: "Sem contato", c: "gray" },
     { k: "em_negociacao", l: "Em negociação", c: "info" },
@@ -371,7 +371,7 @@
   });
   function renderKpis(vis) {
     var tot = 0, c = {};
-    vis.forEach(function (a) { tot += Number(a.valorAberto) || 0; var k = a.status || "sem_contato"; c[k] = (c[k] || 0) + 1; });
+    vis.forEach(function (a) { if (!a.indevido) tot += Number(a.valorAberto) || 0; var k = a.status || "sem_contato"; c[k] = (c[k] || 0) + 1; });
     // "Recuperado em": o mês é escolhido na própria caixa (janeiro a dezembro do ano atual;
     // começa no mês atual)
     var anoR = new Date().getFullYear(), meses = MESES.map(function (nm, i) { return { v: anoR + "-" + pad2(i + 1), l: nm }; });
@@ -448,7 +448,7 @@
       return (a.proximoRetorno || "9999").localeCompare(b.proximoRetorno || "9999");
     });
     var valAno = 0;
-    if (fano) f.forEach(function (a) { parcelasDoAno(a).forEach(function (p) { if (String(p[0]).slice(0, 4) === fano) valAno += Number(p[1]) || 0; }); });
+    if (fano) f.forEach(function (a) { if (a.indevido) return; parcelasDoAno(a).forEach(function (p) { if (String(p[0]).slice(0, 4) === fano) valAno += Number(p[1]) || 0; }); });
     $("count").textContent = f.length + (f.length === 1 ? " aluno encontrado" : " alunos encontrados") + (showArch ? " · arquivados" : "") + (soHoje ? " · retorno hoje ou atrasado" : "") +
       (fano ? " · " + money(valAno) + " em parcelas com vencimento em " + fano : "");
 
@@ -465,7 +465,7 @@
         var atras = !a.arquivado && pr < h, eHoje = pr === h;
         pc = '<span class="' + (atras ? "late" : eHoje ? "today" : "") + '">' + br(pr) + "</span>" + (atras ? '<div class="meta late" style="font-weight:400">atrasado</div>' : eHoje ? '<div class="meta">hoje</div>' : "");
       } else pc = '<span class="muted">—</span>';
-      return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + (a.juridico ? ' <span class="tag">jurídico</span>' : "") + '</div><div class="meta">' +
+      return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + (a.juridico ? ' <span class="tag">jurídico</span>' : "") + (a.indevido ? ' <span class="tag">cobrança indevida</span>' : "") + '</div><div class="meta">' +
         esc(a.responsavel || "sem responsável informado") + (a.ra ? " · RA " + esc(a.ra) : "") + (a.turma ? " · " + esc(a.turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + (a.parcelasAberto > 1 ? '<div class="meta">' + a.parcelasAberto + " parcelas</div>" : "") + "</td>" +
         "<td>" + pill(a.status || "sem_contato") + "</td>" +
@@ -508,6 +508,7 @@
     $("dArchBanner").innerHTML =
       (a.juridico ? '<div class="arch-banner">Aluno retirado do painel (encaminhado ao jurídico). Não entra nos totais e as importações o ignoram. Use “Voltar ao painel” para desfazer.</div>'
         : a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "") +
+      (a.indevido ? '<div class="arch-banner">Cobrança indevida: o valor deste aluno (' + money(a.valorAberto) + ') não entra no total de inadimplência. <button type="button" class="linkbtn" id="btnDesfazerIndevido">Desfazer</button></div>' : "") +
       (outra ? '<div class="link-banner"><b>Também está no ' + (carteiraDe(outra) === "contraturno" ? "Contraturno" : "Painel") + "</b> (" + money(outra.valorAberto) + " em aberto, " + st(outra.status).l.toLowerCase() +
         "). Os atendimentos aparecem nas duas abas; o status e o valor em aberto são de cada aba.</div>" : "");
     carregarHistMesAluno(a);
@@ -734,7 +735,8 @@
       atends.unshift(d.atendimento); alunos[d.aluno.id] = d.aluno;
       (d.vinculados || []).forEach(function (v) { alunos[v.id] = v; });
       var nasDuas = (d.vinculados || []).some(function (v) { return carteiraDe(v) !== carteiraDe(d.aluno); });
-      toast("Atendimento registrado em nome de " + primeiroNome(eu.nome) + (nasDuas ? " — aparece no Painel e no Contraturno." : "."));
+      if (d.aluno.indevido) delete histCarteira[carteira];
+      toast(d.aluno.indevido && /indevida/i.test(d.atendimento.motivo || "") ? "Cobrança indevida registrada: o valor deste aluno saiu do total de inadimplência." : "Atendimento registrado em nome de " + primeiroNome(eu.nome) + (nasDuas ? " — aparece no Painel e no Contraturno." : "."));
       abrirAluno(d.aluno.id); renderTudo();
     }).catch(function (x) { toast("Não foi possível salvar: " + x.message); })
       .then(function () { btn.disabled = false; });
@@ -755,6 +757,15 @@
     api("PATCH", "/api/alunos/" + encodeURIComponent(curId), { juridico: !a.juridico }).then(function (d) {
       alunos[d.aluno.id] = d.aluno; fecharModais(); renderTudo();
       toast(d.aluno.juridico ? "Aluno retirado do painel (jurídico). As próximas importações vão ignorá-lo." : "Aluno voltou ao painel.");
+    }).catch(function (x) { toast(x.message); });
+  });
+  // desfazer a cobrança indevida: o valor do aluno volta para o total de inadimplência
+  $("dArchBanner").addEventListener("click", function (e) {
+    if (!e.target || e.target.id !== "btnDesfazerIndevido") return;
+    var id = curId;
+    api("PATCH", "/api/alunos/" + encodeURIComponent(id), { indevido: false }).then(function (d) {
+      alunos[d.aluno.id] = d.aluno; delete histCarteira[carteira]; renderTudo(); abrirAluno(id);
+      toast("Cobrança indevida desfeita: o valor voltou para o total.");
     }).catch(function (x) { toast(x.message); });
   });
   $("btnEditarDados").addEventListener("click", function () { $("dInfoView").hidden = true; $("dInfoEdit").hidden = false; this.hidden = true; $("eNome").focus(); });
@@ -1531,7 +1542,7 @@
     var cart = $("faixaAlunosCart").value, h = hoje(), por = {}, val = {}, total = 0;
     var lista0 = cart === "todas" ? listaCarteira("regular").concat(listaCarteira("contraturno")) : listaCarteira(cart);
     lista0.forEach(function (a) {
-      if (a.arquivado || !(Number(a.valorAberto) > 0)) return;
+      if (a.arquivado || a.indevido || !(Number(a.valorAberto) > 0)) return;
       var k = faixaDoAluno(a, h);
       por[k] = (por[k] || 0) + 1; val[k] = (val[k] || 0) + (Number(a.valorAberto) || 0); total++;
     });

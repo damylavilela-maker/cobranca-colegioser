@@ -241,6 +241,8 @@ export default {
         if (!cols.includes("parcelas_venc")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN parcelas_venc TEXT NOT NULL DEFAULT '[]'").run();
         // aluno retirado do painel por ter ido ao jurídico: fica arquivado e as importações o ignoram
         if (!cols.includes("juridico")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN juridico INTEGER NOT NULL DEFAULT 0").run();
+        // cobrança indevida (motivo do atendimento): o valor do aluno sai do total de inadimplência
+        if (!cols.includes("indevido")) await env.DB.prepare("ALTER TABLE alunos ADD COLUMN indevido INTEGER NOT NULL DEFAULT 0").run();
         // Cada parcela da Serasa pertence a um período (como uma linha pertence a uma aba da planilha).
         const colsSer = (await env.DB.prepare("PRAGMA table_info(serasa)").all()).results.map((c) => c.name);
         if (!colsSer.includes("periodo_id")) await env.DB.prepare("ALTER TABLE serasa ADD COLUMN periodo_id TEXT NOT NULL DEFAULT ''").run();
@@ -764,7 +766,7 @@ function alunoSaida(r) {
     valorAberto: r.valor_aberto, parcelasAberto: r.parcelas_aberto, vencimento: r.vencimento || "",
     status: r.status, setor: r.setor, atendenteResponsavel: r.atendente_responsavel,
     ultimoContato: r.ultimo_contato_data ? { data: r.ultimo_contato_data, canal: r.ultimo_contato_canal || "" } : null,
-    proximoRetorno: r.proximo_retorno || null, arquivado: !!r.arquivado, juridico: !!r.juridico,
+    proximoRetorno: r.proximo_retorno || null, arquivado: !!r.arquivado, juridico: !!r.juridico, indevido: !!r.indevido, indevido: !!r.indevido,
     ultimaAtualizacaoFinanceira: r.ultima_atualizacao_financeira || null,
     createdAt: r.criado_em, updatedAt: r.atualizado_em, carteira: r.carteira || "regular", parcelasVenc: lerParcelasVenc(r.parcelas_venc)
   };
@@ -846,7 +848,7 @@ async function alterarAluno(req, env, id) {
     nome: (v) => { const t = texto(v, 150); if (!t) throw new HttpError(400, "O nome do aluno não pode ficar em branco."); return t; },
     ra: (v) => texto(v, 30), turma: (v) => texto(v, 80), responsavel: (v) => texto(v, 150),
     telefone: (v) => texto(v, 60), email: (v) => texto(v, 150), setor: (v) => texto(v, 40),
-    valorAberto: numero, vencimento: dataISO, arquivado: (v) => (v ? 1 : 0), juridico: (v) => (v ? 1 : 0)
+    valorAberto: numero, vencimento: dataISO, arquivado: (v) => (v ? 1 : 0), juridico: (v) => (v ? 1 : 0), indevido: (v) => (v ? 1 : 0)
   };
   // retirar do painel (jurídico) arquiva junto; voltar ao painel reativa
   if (b.juridico !== undefined && b.arquivado === undefined) b.arquivado = !!b.juridico;
@@ -859,6 +861,9 @@ async function alterarAluno(req, env, id) {
   if (!sets.length) throw new HttpError(400, "Nada para alterar.");
   sets.push("atualizado_em = ?"); vals.push(agoraISO());
   await env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, id).run();
+  // desfez a cobrança indevida: o valor volta para o total do último mês registrado
+  if (b.indevido === false) await env.DB.prepare(
+    "UPDATE alunos_hist SET presente = 1, valor_aberto = (SELECT valor_aberto FROM alunos WHERE id = ?) WHERE aluno_id = ? AND mes = (SELECT MAX(mes) FROM alunos_hist WHERE aluno_id = ?)").bind(id, id, id).run();
   return json({ aluno: alunoSaida(await buscarAluno(env, id)) });
 }
 
@@ -912,7 +917,8 @@ async function importarPlanilha(req, env) {
       if (achado.status === "regularizado" && numero(r.valorAberto) > 0) sets.push("status = 'sem_contato'");
       stmts.push(env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, achado.id));
       tocados.add(achado.id);
-      foto.push([achado.id, vals[0], vals[1], 1]);
+      // cobrança indevida: o valor é atualizado na ficha, mas não entra no total do mês
+      foto.push(achado.indevido ? [achado.id, 0, 0, 0] : [achado.id, vals[0], vals[1], 1]);
       atualizados++;
     } else {
       const id = novoId();
@@ -1056,7 +1062,12 @@ async function criarAtendimento(req, env, eu) {
   const sets = ["status = ?", "atendente_responsavel = ?", "setor = ?", "ultimo_contato_data = ?", "ultimo_contato_canal = ?", "proximo_retorno = ?", "arquivado = juridico", "atualizado_em = ?"];
   const vals = [status, eu.nome, setor, data, canal, proximo, agora];
   if (temValorNovo) { sets.push("valor_aberto = ?"); vals.push(valorNovo); }
+  // motivo "Cobrança indevida": o valor do aluno sai do total de inadimplência (não é recuperado)
+  const indevida = /^cobran[cç]a indevida$/i.test(texto(b.motivo, 150));
+  if (indevida) sets.push("indevido = 1");
   stmts.push(env.DB.prepare(`UPDATE alunos SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, aluno.id));
+  if (indevida) stmts.push(env.DB.prepare(
+    "UPDATE alunos_hist SET presente = 0, valor_aberto = 0 WHERE aluno_id = ? AND mes = (SELECT MAX(mes) FROM alunos_hist WHERE aluno_id = ?)").bind(aluno.id, aluno.id));
 
   // Se o mesmo aluno está na outra carteira (Painel ↔ Contraturno), o contato também vale
   // lá: atualiza último atendimento, próximo retorno e atendente. Status e valor em aberto
