@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v100";
+  var VERSAO = "07/10 · v101";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2620,6 +2620,9 @@
     return n ? "n:" + n : "id:" + c.id;
   }
   function temAcordo(c) { return Number((c.acordo || {}).valor) > 0; }
+  // composição dos casos no quadro do filtro: cada caso em um grupo só
+  var jurGrupoSel = "";
+  function grupoComp(c) { return c.status === "quitado" ? "quit" : temAcordo(c) ? "acordo" : Number(c.valorAberto) > 0 ? "aberto" : "sem"; }
   // irmãos (inclui o próprio): quem tem o acordo primeiro, depois pelo nome
   function irmaosDe(c) {
     var k = chaveResp(c);
@@ -2749,16 +2752,15 @@
   function qtdParc(n) { return n ? '<div class="meta">' + n + (n === 1 ? " parcela" : " parcelas") + "</div>" : ""; }
   function renderTabelaJur() {
     var vis = filtrarJur();
-    var somaAb = 0, somaNeg = 0; vis.forEach(function (c) { somaAb += Number(c.valorAberto) || 0; somaNeg += Number(c.valorNegociado) || 0; });
     // carteira ou status escolhido: quadro com os valores dos casos filtrados, igual ao quadro por
     // carteira da Evolução (negociado, pago e em atraso pelo Acordo GM de cada aluno)
     var cb = $("jurCartBox"), stSel = $("jStatus").value;
     if (jurCartSel || stSel) {
-      var hj = hoje(), t = { ab: 0, nAb: 0, ext: 0, jud: 0, out: 0, nAc: 0, pago: 0, atraso: 0 }, cmp = { quit: 0, acordo: 0, aberto: 0, sem: 0 };
+      var hj = hoje(), t = { ab: 0, nAb: 0, ext: 0, jud: 0, out: 0, nAc: 0, pago: 0, atraso: 0 }, cmp = { quit: 0, acordo: 0, aberto: 0, sem: 0 }, cmpSem = [];
       vis.forEach(function (c) {
         var a = Number(c.valorAberto) || 0, ac = c.acordo || {}, v = Number(ac.valor) || 0;
         // composição dos casos (cada caso em um grupo só, para a soma bater com o total)
-        if (c.status === "quitado") cmp.quit++; else if (v > 0) cmp.acordo++; else if (a > 0) cmp.aberto++; else cmp.sem++;
+        cmp[grupoComp(c)]++; if (grupoComp(c) === "sem") cmpSem.push(c);
         t.ab += a; if (a > 0) t.nAb++;
         if (!(v > 0)) return;
         t.nAc++;
@@ -2779,10 +2781,17 @@
         item(t.atraso, "danger", "parcelas em atraso") +
         "</div>" +
         '<div class="fx-comp"><b>' + vis.length + (vis.length === 1 ? " caso" : " casos") + "</b> = " +
-        [[cmp.aberto, "em aberto (sem acordo)", "danger"], [cmp.acordo, "com acordo GM", "info"], [cmp.quit, cmp.quit === 1 ? "quitado" : "quitados", "success"], [cmp.sem, "sem valor e não quitados", "gray"]]
-          .filter(function (x, i) { return x[0] || i < 3; }).map(function (x) { return '<span style="color:var(--' + x[2] + ')"><b>' + x[0] + "</b> " + x[1] + "</span>"; }).join(" + ") + "</div>";
+        [[cmp.aberto, "em aberto (sem acordo)", "danger", "aberto"], [cmp.acordo, "com acordo GM", "info", "acordo"], [cmp.quit, cmp.quit === 1 ? "quitado" : "quitados", "success", "quit"], [cmp.sem, "sem valor e não quitados", "gray", "sem"]]
+          .filter(function (x, i) { return x[0] || i < 3; }).map(function (x) {
+            return '<button type="button" class="fx-grupo' + (jurGrupoSel === x[3] ? " on" : "") + '" data-grupo="' + x[3] + '" title="Mostrar só estes casos na lista" style="color:var(--' + x[2] + ')"><b>' + x[0] + "</b> " + x[1] + "</button>";
+          }).join(" + ") +
+        (jurGrupoSel ? ' <button type="button" class="linkbtn" data-grupo="">Mostrar todos</button>' : '<span class="meta"> · clique em um grupo para ver os casos</span>') +
+        (cmpSem.length && cmpSem.length <= 5 ? '<div class="meta" style="margin-top:4px">Sem valor e não quitados: ' + cmpSem.map(function (c) { return esc(c.aluno || "—") + (c.ra ? " (RA " + esc(c.ra) + ")" : ""); }).join(", ") + "</div>" : "") + "</div>";
       cb.hidden = false;
-    } else { cb.hidden = true; cb.innerHTML = ""; }
+    } else { cb.hidden = true; cb.innerHTML = ""; jurGrupoSel = ""; }
+    // grupo da composição escolhido no quadro (clique): a lista mostra só esses casos
+    if (jurGrupoSel) vis = vis.filter(function (c) { return grupoComp(c) === jurGrupoSel; });
+    var somaAb = 0, somaNeg = 0; vis.forEach(function (c) { somaAb += Number(c.valorAberto) || 0; somaNeg += Number(c.valorNegociado) || 0; });
     var nResp = {}; vis.forEach(function (c) { nResp[chaveResp(c)] = 1; });
     $("jurCount").textContent = vis.length + " de " + casosJur.length + " casos · " + Object.keys(nResp).length + " responsáveis financeiros · em aberto " + money(somaAb) + " · negociado " + money(somaNeg);
     $("jurVazio").hidden = vis.length > 0;
@@ -2808,6 +2817,7 @@
   }
   ["jBusca", "jStatus", "jConferir", "jAgrupar"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; if (id === "jAgrupar") { try { localStorage.setItem("jur_agrupar", this.value); } catch (x) { /* sem armazenamento */ } } renderTabelaJur(); }); });
   try { $("jAgrupar").value = localStorage.getItem("jur_agrupar") || ""; } catch (x) { /* sem armazenamento */ }
+  $("jurCartBox").addEventListener("click", function (e) { var b = e.target.closest("[data-grupo]"); if (!b) return; var g = b.getAttribute("data-grupo"); jurGrupoSel = jurGrupoSel === g ? "" : g; jurLimite = 300; renderTabelaJur(); });
   $("jurMais").addEventListener("click", function () { jurLimite += 300; renderTabelaJur(); });
   $("jurTbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirCasoJur(tr.getAttribute("data-id")); });
   $("jurQuitarLote").addEventListener("click", function () {
