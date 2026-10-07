@@ -177,6 +177,8 @@ const SCHEMA = [
   // dívida atualizada, acordo, entrada e as parcelas com vencimento (cronograma em JSON [[venc, valor]])
   `CREATE TABLE IF NOT EXISTS jur_negociacoes (id TEXT PRIMARY KEY, caso_id TEXT NOT NULL, divida REAL, acordo REAL, entrada REAL, data_entrada TEXT NOT NULL DEFAULT '', parcelas INTEGER NOT NULL DEFAULT 0, cronograma TEXT NOT NULL DEFAULT '[]', obs TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '', atualizado_em TEXT NOT NULL DEFAULT '', atualizado_por TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_jur_neg_caso ON jur_negociacoes(caso_id)`,
+  // pagamentos lidos do relatório de recebimento (a chave impede lançar a mesma parcela duas vezes)
+  `CREATE TABLE IF NOT EXISTS jur_recebimentos (chave TEXT PRIMARY KEY, caso_id TEXT NOT NULL, ra TEXT NOT NULL DEFAULT '', aluno TEXT NOT NULL DEFAULT '', parcela TEXT NOT NULL DEFAULT '', vencimento TEXT NOT NULL DEFAULT '', data_pagamento TEXT NOT NULL DEFAULT '', valor REAL NOT NULL DEFAULT 0, conta TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`,
   // aba Cheques: cheques devolvidos e cheques recebidos (tipo), como nas abas da planilha CHEQUES_SER
   `CREATE TABLE IF NOT EXISTS cheques (
     id TEXT PRIMARY KEY, tipo TEXT NOT NULL, chave TEXT NOT NULL DEFAULT '',
@@ -445,6 +447,7 @@ async function rotear(req, env, url) {
     if (partes[1] === "inadimplencia" && m === "POST") return inadimplenciaJuridico(req, env, eu);
     if (partes[1] === "competencias" && m === "GET") return competenciasJuridico(env);
     if (partes[1] === "quitar-sem-valor" && m === "POST") return quitarSemValorJur(req, env, eu);
+    if (partes[1] === "recebimentos" && m === "POST") return recebimentosJuridico(req, env, eu);
     if (partes.length === 3 && partes[2] === "historico" && m === "GET") return historicoCasoJur(env, partes[1]);
     if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
     if (partes.length === 2 && m === "DELETE") { exigirAdmin(eu); return excluirCasoJur(env, partes[1]); }
@@ -1844,6 +1847,7 @@ async function excluirCasoJur(env, id) {
     env.DB.prepare("DELETE FROM jur_hist WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_acordo_parcelas WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_negociacoes WHERE caso_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM jur_recebimentos WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_casos WHERE id = ?").bind(id)
   ]);
   return json({ ok: true });
@@ -2219,6 +2223,101 @@ async function excluirNegociacaoJur(env, eu, casoId, negId) {
     insertObsJur(env, casoId, agora, `Negociação excluída (acordo ${reais(n.acordo)}, registrada em ${dataBRw(String(n.criado_em).slice(0, 10))}).`, eu)
   ]);
   return casoComNegociacoes(env, casoId);
+}
+
+// ---- relatório de recebimento (parcelas pagas do acordo GM). O aluno é achado pelo RA; o
+// pagamento baixa a parcela do acordo (ou o saldo, sem as parcelas) e fica registrado nas
+// tratativas de TODOS os alunos do mesmo responsável financeiro (CPF; sem CPF, o nome), porque o
+// acordo sai no nome de um filho só. Acordo sem saldo depois do pagamento: todos ficam Quitado.
+// A mesma parcela paga não é lançada duas vezes (importar o relatório de novo não duplica).
+function chaveRespJur(c) {
+  const cpf = String(c.cpf || "").replace(/\D/g, "");
+  if (cpf.length >= 11) return "cpf:" + cpf;
+  const n = normNome(c.responsavel);
+  return n ? "n:" + n : "id:" + c.id;
+}
+async function recebimentosJuridico(req, env, eu) {
+  const b = await corpo(req);
+  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 5000) : [];
+  if (!linhas.length) throw new HttpError(400, "Nenhum pagamento encontrado no relatório.");
+  const conta = texto(b.conta, 120), hj = hojeISO();
+  const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0").all()).results;
+  const idx = indiceCasosJur(casos), porGrupo = {};
+  casos.forEach((c) => { (porGrupo[chaveRespJur(c)] = porGrupo[chaveRespJur(c)] || []).push(c); });
+  const parcDe = {};
+  (await env.DB.prepare("SELECT * FROM jur_acordo_parcelas").all()).results.forEach((p) => { (parcDe[p.caso_id] = parcDe[p.caso_id] || []).push(p); });
+  const ja = new Set((await env.DB.prepare("SELECT chave FROM jur_recebimentos").all()).results.map((r) => r.chave));
+  const mexidos = {}, parcMexidas = new Set(), novos = [], obs = [], saida = [], vistos = new Set();
+  for (const l of linhas) {
+    const ra = texto(l.ra, 30), aluno = texto(l.aluno, 150), parcela = texto(l.parcela, 10).replace(/^0+(?=\d)/, "");
+    const venc = dataISO(l.vencimento), pgto = dataISO(l.dataPagamento), valor = numero(l.valor);
+    if (!(valor > 0)) continue;
+    const chave = [ra || normNome(aluno), parcela, venc, pgto, valor.toFixed(2)].join("|");
+    const item = { ra, aluno, parcela, vencimento: venc, dataPagamento: pgto, valor, situacao: "", casoAluno: "", carteira: "", alunosResp: [] };
+    saida.push(item);
+    if (ja.has(chave) || vistos.has(chave)) { item.situacao = "ja_importado"; continue; }
+    vistos.add(chave);
+    const achados = acharCasosJur(idx, ra, aluno);
+    if (!achados.length) { item.situacao = "fora"; continue; }
+    const c = achados.find((x) => Number(x.acordo_valor) > 0) || achados[0];
+    const grupo = (porGrupo[chaveRespJur(c)] || [c]).slice().sort((x, y) => (x.id === c.id ? -1 : y.id === c.id ? 1 : 0));
+    item.situacao = "novo"; item.casoAluno = c.aluno; item.carteira = c.carteira; item.alunosResp = grupo.map((x) => x.aluno);
+    // baixa a parcela do acordo: pelo número da parcela; sem ele, pelo vencimento
+    const ps = parcDe[c.id] || [];
+    const alvo = ps.find((p) => String(p.parcela || "").replace(/^0+(?=\d)/, "") === parcela && (!venc || !p.vencimento || p.vencimento === venc) && Number(p.saldo) > 0.009)
+      || ps.find((p) => venc && p.vencimento === venc && Number(p.saldo) > 0.009);
+    if (alvo) {
+      alvo.pago = r2((Number(alvo.pago) || 0) + valor);
+      alvo.saldo = r2(Math.max(0, (Number(alvo.valor) || 0) - alvo.pago));
+      alvo.data_pagamento = pgto || alvo.data_pagamento;
+      if (alvo.saldo <= 0.009) alvo.situacao = "Paga";
+      parcMexidas.add(alvo);
+      item.parcelaBaixada = true;
+    }
+    const m = mexidos[c.id] || (mexidos[c.id] = { c, pagoSemParc: 0, vencerSemParc: 0 });
+    if (!ps.length) { m.pagoSemParc += valor; if (venc && venc >= hj) m.vencerSemParc += valor; }
+    novos.push({ chave, c, item });
+    const txt = "Recebimento (relatório de recebimento" + (conta ? " — " + conta : "") + "): parcela " + (parcela || "—") + " do acordo" +
+      (venc ? ", vencimento " + dataBRw(venc) : "") + ", paga em " + dataBRw(pgto) + ": " + reais(valor) +
+      (grupo.length > 1 ? " — pagamento em nome de " + c.aluno + ", vale para os " + grupo.length + " alunos do responsável." : ".");
+    grupo.forEach((x) => obs.push({ id: x.id, data: pgto ? pgto + "T12:00:00.000Z" : agoraISO(), t: txt }));
+  }
+  // novo resumo do acordo de cada caso que recebeu pagamento
+  const quitar = [];
+  Object.values(mexidos).forEach((m) => {
+    const c = m.c, ps = parcDe[c.id] || [];
+    if (ps.length) {
+      c.acordo_pago = r2(ps.reduce((s, p) => s + (Number(p.pago) || 0), 0));
+      c.acordo_saldo_aberto = r2(ps.reduce((s, p) => s + (Number(p.saldo) || 0), 0));
+      c.acordo_saldo_vencer = r2(ps.filter((p) => p.vencimento && p.vencimento >= hj).reduce((s, p) => s + (Number(p.saldo) || 0), 0));
+      c.acordo_parc_vencer = ps.filter((p) => p.vencimento && p.vencimento >= hj && Number(p.saldo) > 0.009).length;
+    } else {
+      c.acordo_pago = r2((Number(c.acordo_pago) || 0) + m.pagoSemParc);
+      if (c.acordo_saldo_aberto != null) c.acordo_saldo_aberto = r2(Math.max(0, Number(c.acordo_saldo_aberto) - m.pagoSemParc));
+      if (c.acordo_saldo_vencer != null) c.acordo_saldo_vencer = r2(Math.max(0, Math.min(Number(c.acordo_saldo_aberto ?? Infinity), Number(c.acordo_saldo_vencer) - m.vencerSemParc)));
+    }
+    m.quitou = Number(c.acordo_valor) > 0 && c.acordo_saldo_aberto != null && Number(c.acordo_saldo_aberto) <= 0.009;
+    if (m.quitou) (porGrupo[chaveRespJur(c)] || [c]).forEach((x) => { if (x.status !== "quitado" && !quitar.includes(x)) quitar.push(x); });
+  });
+  const resumo = {
+    linhas: saida.length, novos: novos.length, valorNovo: r2(novos.reduce((s, n) => s + n.item.valor, 0)),
+    jaImportados: saida.filter((x) => x.situacao === "ja_importado").length, fora: saida.filter((x) => x.situacao === "fora").length,
+    acordosQuitados: Object.values(mexidos).filter((m) => m.quitou).map((m) => m.c.aluno), alunosQuitados: quitar.map((x) => x.aluno)
+  };
+  if (b.simular) return json({ resumo, itens: saida });
+  const agora = agoraISO(), stmts = [];
+  novos.forEach((n) => stmts.push(env.DB.prepare("INSERT OR IGNORE INTO jur_recebimentos (chave, caso_id, ra, aluno, parcela, vencimento, data_pagamento, valor, conta, criado_em, criado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(n.chave, n.c.id, n.item.ra, n.item.aluno, n.item.parcela, n.item.vencimento, n.item.dataPagamento, n.item.valor, conta, agora, eu.nome)));
+  parcMexidas.forEach((p) => stmts.push(env.DB.prepare("UPDATE jur_acordo_parcelas SET pago = ?, saldo = ?, data_pagamento = ?, situacao = ? WHERE id = ?").bind(p.pago, p.saldo, p.data_pagamento || "", p.situacao || "", p.id)));
+  Object.values(mexidos).forEach((m) => stmts.push(env.DB.prepare("UPDATE jur_casos SET acordo_pago = ?, acordo_saldo_aberto = ?, acordo_saldo_vencer = ?, acordo_parc_vencer = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?")
+    .bind(m.c.acordo_pago ?? null, m.c.acordo_saldo_aberto ?? null, m.c.acordo_saldo_vencer ?? null, m.c.acordo_parc_vencer || 0, agora, eu.nome, m.c.id)));
+  obs.forEach((o) => stmts.push(insertObsJur(env, o.id, o.data, o.t, eu)));
+  quitar.forEach((x) => {
+    stmts.push(env.DB.prepare("UPDATE jur_casos SET status = 'quitado', atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agora, eu.nome, x.id));
+    stmts.push(insertObsJur(env, x.id, agora, "Status " + JUR_ST_ROTULO[jurStatusValido(x.status)] + " → Quitado (acordo GM sem saldo após o relatório de recebimento).", eu));
+  });
+  await executarEmLotes(env, stmts);
+  return json({ resumo, itens: saida, gravado: true });
 }
 
 // Relatórios de inadimplência de uma competência (mês de referência). Só os alunos que já estão

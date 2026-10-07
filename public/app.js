@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v98";
+  var VERSAO = "07/10 · v99";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3458,19 +3458,21 @@
   // ---- relatórios de inadimplência do mês
   var JUR_MODOS = {
     carteira: { t: "Importar carteira", s: "Planilha da carteira (use “Baixar modelo”): RA, Aluno, Carteira e Ano letivo, e também Status, CPF, link do Drive, extrato, motivo, data de envio, observações e o acordo GM. Se a planilha tiver uma aba com as parcelas do acordo (Acordo, Parcela, Vencimento, Valor, Pago, Saldo), elas entram na ficha de cada aluno. Célula vazia não apaga o que já está salvo. Responsável e contato vêm da Base de dados; valores em aberto e parcelas vêm do relatório de inadimplência.", b: "Importar alunos" },
-    inadimplencia: { t: "Importar relatórios de inadimplência do mês", s: "Envie os relatórios de inadimplência do mês (PDF do sistema com quebra por conta financeira, Excel ou CSV); pode mandar os dois juntos. Cada parcela vai para Valor em aberto ou Valor negociado conforme a conta financeira. Só os alunos que já estão na carteira entram; os outros são ignorados. O mês fica guardado no histórico e é comparado com o anterior. Quem não aparece no relatório mantém os valores e fica marcado para conferência. Nada é gravado antes de você conferir o resumo.", b: "Gravar competência" }
+    inadimplencia: { t: "Importar relatórios de inadimplência do mês", s: "Envie os relatórios de inadimplência do mês (PDF do sistema com quebra por conta financeira, Excel ou CSV); pode mandar os dois juntos. Cada parcela vai para Valor em aberto ou Valor negociado conforme a conta financeira. Só os alunos que já estão na carteira entram; os outros são ignorados. O mês fica guardado no histórico e é comparado com o anterior. Quem não aparece no relatório mantém os valores e fica marcado para conferência. Nada é gravado antes de você conferir o resumo.", b: "Gravar competência" },
+    recebimento: { t: "Importar relatório de recebimento", s: "PDF do relatório Recebimento do sistema (ou Excel/CSV com Aluno, Parc., Data vcto., Pago e Dt. pgto.). Cada pagamento baixa a parcela do acordo GM e fica registrado para todos os alunos do mesmo responsável financeiro. Importar o mesmo relatório de novo não lança o pagamento duas vezes.", b: "Registrar pagamentos" }
   };
   function abrirJurImp(modo) {
     jurModo = modo; jurPendentes = []; jurRelatorio = null; jurLendo = 0;
     $("jurImpRes").innerHTML = ""; $("jurFile").value = ""; $("jurRelFiltros").innerHTML = "";
     $("jurFile").multiple = modo === "inadimplencia";
-    $("jurFile").accept = modo === "inadimplencia" ? ".pdf,.xlsx,.xls,.csv,.txt" : ".xlsx,.xls,.csv,.txt";
+    $("jurFile").accept = modo !== "carteira" ? ".pdf,.xlsx,.xls,.csv,.txt" : ".xlsx,.xls,.csv,.txt"; jurReceb = null;
     $("jiTitulo").textContent = JUR_MODOS[modo].t; $("jiSub").textContent = JUR_MODOS[modo].s;
     var b = $("jurImpOk"); b.disabled = true; b.textContent = JUR_MODOS[modo].b;
     abrir("mJurImp");
   }
   $("btnJurImportar").addEventListener("click", function () { abrirJurImp("carteira"); });
   $("btnJurInadimp").addEventListener("click", function () { abrirJurImp("inadimplencia"); });
+  $("btnJurReceb").addEventListener("click", function () { abrirJurImp("recebimento"); });
 
   var REL_COLUNAS = {
     ra: ["ra", "codigo", "matricula", "cod", "cod. aluno", "codigo do aluno", "cod aluno"],
@@ -3536,6 +3538,7 @@
   }
   function receberArquivoJur(f) {
     if (jurModo === "carteira") return receberCarteiraJur(f);
+    if (jurModo === "recebimento") return receberRecebimentoJur(f);
     // os relatórios do mês se somam (pode mandar um de cada vez ou os dois juntos)
     if (!jurRelatorio) jurRelatorio = { arquivos: [], regras: {}, competencia: hoje().slice(0, 7), dataRel: hoje() };
     jurLendo++; $("jurImpOk").disabled = true; renderArquivosInad();
@@ -3544,6 +3547,121 @@
       R.arquivos = R.arquivos.filter(function (a) { return a.nome !== f.name; }).concat([{ nome: f.name, linhas: linhas }]);
     }).catch(function (x) { toast("Não foi possível ler " + f.name + ": " + x.message); })
       .then(function () { jurLendo--; if (!jurLendo && jurRelatorio) { montarFiltrosRelatorio(); simularRelatorioJur(); } });
+  }
+  // ---- relatório de recebimento (PDF do sistema; Excel/CSV com as mesmas colunas)
+  // Cada linha: "RA - NOME DO ALUNO", Parc., Data vcto., …, Pago, Dt. pgto. No PDF o nome longo
+  // quebra em duas linhas e os números ficam na altura do meio: cada linha de valores vai para o
+  // nome mais próximo. A conta financeira vem do filtro no topo do relatório.
+  var jurReceb = null;
+  function lerRecebimentoPDF(buf) {
+    return carregarPdfJs().then(function (pdfjs) { return pdfjs.getDocument({ data: buf }).promise; }).then(function (pdf) {
+      var paginas = [];
+      for (var n = 1; n <= pdf.numPages; n++) paginas.push(pdf.getPage(n).then(linhasDaPagina));
+      return Promise.all(paginas);
+    }).then(function (paginas) {
+      var conta = "", linhas = [], achouCab = false;
+      paginas.forEach(function (ls) {
+        var xParc = null, blocos = [], dados = [];
+        ls.forEach(function (l) {
+          var mc = /conta\s+financeira\s*:\s*(.+)$/i.exec(l.texto);
+          if (mc && !conta) { conta = mc[1].replace(/\s+V[ií]nculo.*$/i, "").trim(); return; }
+          if (xParc == null) {
+            var cp = l.cels.filter(function (c) { return /^parc\.?$/i.test(c.s); })[0];
+            if (cp && l.cels.some(function (c) { return /^aluno$/i.test(c.s); })) { xParc = cp.x; achouCab = true; }
+            return;
+          }
+          if (/^total/i.test(l.texto)) return;
+          var esq = l.cels.filter(function (c) { return c.x < xParc - 4; }).map(function (c) { return c.s; }).join(" ").trim();
+          var dir = [];
+          l.cels.filter(function (c) { return c.x >= xParc - 4; }).forEach(function (c) { c.s.split(/\s+/).forEach(function (t) { if (t) dir.push(t); }); });
+          var m = /^(\d{1,10})\s*-\s*(.+)$/.exec(esq);
+          if (m) blocos.push({ ra: m[1], nome: m[2].trim(), y0: l.y, y1: l.y });
+          else if (esq && blocos.length && l.y - blocos[blocos.length - 1].y1 < 30 && !/\d{2}\/\d{2}\/\d{4}/.test(esq)) { var b = blocos[blocos.length - 1]; b.nome += " " + esq; b.y1 = l.y; }
+          var datas = dir.filter(function (t) { return /^\d{2}\/\d{2}\/\d{4}$/.test(t); });
+          if (datas.length) dados.push({ y: l.y, toks: dir, datas: datas });
+        });
+        dados.forEach(function (d) {
+          var melhor = null, dist = Infinity;
+          blocos.forEach(function (b) { var x = d.y < b.y0 ? b.y0 - d.y : d.y > b.y1 ? d.y - b.y1 : 0; if (x < dist) { dist = x; melhor = b; } });
+          if (!melhor || dist > 30) return;
+          var parc = (d.toks.filter(function (t) { return /^\d{1,3}$/.test(t); })[0]) || "";
+          var vals = d.toks.filter(function (t) { return /^-?[\d.]*\d,\d{2}$/.test(t); });
+          if (!vals.length) return;
+          linhas.push({ ra: melhor.ra, aluno: melhor.nome, parcela: parc, vencimento: parseDateBR(d.datas[0]), dataPagamento: parseDateBR(d.datas[d.datas.length - 1]), valor: parseMoneyBR(vals[vals.length - 1]) });
+        });
+      });
+      if (!achouCab) throw new Error("não reconheci o relatório de recebimento (colunas Aluno, Parc., Data vcto., Pago, Dt. pgto).");
+      return { conta: conta, linhas: linhas };
+    });
+  }
+  function dataCelula(v) {
+    if (v instanceof Date && !isNaN(v)) return v.getFullYear() + "-" + pad2(v.getMonth() + 1) + "-" + pad2(v.getDate());
+    return parseDateBR(v);
+  }
+  function lerRecebimentoTabela(aoa) {
+    var cab = -1, h = [];
+    for (var i = 0; i < Math.min(aoa.length, 40); i++) {
+      var hh = (aoa[i] || []).map(normHeader);
+      if (hh.indexOf("aluno") !== -1 && hh.some(function (x) { return /^pago$|^valor pago/.test(x); })) { cab = i; h = hh; break; }
+    }
+    if (cab === -1) throw new Error("não achei as colunas Aluno e Pago no arquivo.");
+    var ix = { aluno: h.indexOf("aluno"), ra: colIndex(h, ["ra", "codigo"]), parc: colIndex(h, ["parc.", "parc", "parcela"]), venc: colIndex(h, ["data vcto.", "data vcto", "vencimento", "dt. vcto"]),
+      pago: h.findIndex(function (x) { return /^pago$|^valor pago/.test(x); }), pgto: colIndex(h, ["dt. pgto", "dt pgto", "data pgto", "data de pagamento", "data pagamento"]) };
+    var linhas = [];
+    aoa.slice(cab + 1).forEach(function (r) {
+      var a = String(r[ix.aluno] || "").trim(); if (!a || /^total/i.test(a)) return;
+      var m = /^(\d{1,10})\s*-\s*(.+)$/.exec(a), valor = typeof r[ix.pago] === "number" ? r[ix.pago] : parseMoneyBR(r[ix.pago]);
+      if (!(valor > 0)) return;
+      linhas.push({ ra: m ? m[1] : ix.ra !== -1 ? String(r[ix.ra] || "") : "", aluno: m ? m[2].trim() : a, parcela: ix.parc !== -1 ? String(r[ix.parc] || "").replace(/\.0+$/, "") : "",
+        vencimento: ix.venc !== -1 ? dataCelula(r[ix.venc]) : "", dataPagamento: ix.pgto !== -1 ? dataCelula(r[ix.pgto]) : "", valor: valor });
+    });
+    return linhas;
+  }
+  function receberRecebimentoJur(f) {
+    var out = $("jurImpRes"); out.innerHTML = '<div class="import-summary">Lendo ' + esc(f.name) + "…</div>"; $("jurImpOk").disabled = true; jurReceb = null;
+    new Promise(function (ok, erro) {
+      var r = new FileReader(); r.onerror = function () { erro(new Error("não foi possível abrir o arquivo")); }; r.onload = function () { ok(new Uint8Array(r.result)); }; r.readAsArrayBuffer(f);
+    }).then(function (buf) {
+      if (ehPDF(f)) return lerRecebimentoPDF(buf);
+      if (ehExcel(f)) return carregarXLSX().then(function (X) {
+        var wb = X.read(buf, { type: "array", cellDates: true }), ws = wb.Sheets[wb.SheetNames[0]];
+        return { conta: "", linhas: lerRecebimentoTabela(X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true })) };
+      });
+      var t = parseCSV(new TextDecoder("utf-8").decode(buf));
+      return { conta: "", linhas: lerRecebimentoTabela([t.raw || t.headers].concat(t.rows)) };
+    }).then(function (r) {
+      if (!r.linhas.length) throw new Error("não achei pagamentos no relatório.");
+      jurReceb = r;
+      return api("POST", "/api/juridico/recebimentos", { linhas: r.linhas, conta: r.conta, simular: true }).then(mostrarRecebJur);
+    }).catch(function (x) { out.innerHTML = '<div class="form-err">Não foi possível ler ' + esc(f.name) + ": " + esc(x.message) + "</div>"; });
+  }
+  var SIT_REC = { novo: ["Novo", "success"], ja_importado: ["Já importado", "gray"], fora: ["Não está no Painel jurídico", "warn"] };
+  function mostrarRecebJur(d) {
+    var R = d.resumo, out = $("jurImpRes");
+    out.innerHTML = '<div class="import-summary"><b>' + R.linhas + " pagamento(s) no relatório</b>" + (jurReceb.conta ? " · conta " + esc(jurReceb.conta) : "") + " · <b>" + R.novos + " novo(s)</b>, " + money(R.valorNovo) +
+      (R.jaImportados ? " · " + R.jaImportados + " já importado(s) antes (não entram de novo)" : "") + (R.fora ? " · " + R.fora + " de aluno(s) que não estão no Painel jurídico (ignorados)" : "") + ".</div>" +
+      (R.alunosQuitados.length ? '<div class="import-summary" style="color:var(--success)">Acordo sem saldo depois destes pagamentos: ficam <b>Quitado</b> ' + esc(R.alunosQuitados.join(", ")) + ".</div>" : "") +
+      '<div class="import-preview"><table><thead><tr><th>Aluno do relatório</th><th>Parcela</th><th>Vencimento</th><th>Pago em</th><th class="right">Valor</th><th>Situação</th></tr></thead><tbody>' +
+      d.itens.map(function (x) {
+        var s = SIT_REC[x.situacao] || ["—", "gray"];
+        return "<tr><td>" + esc(x.aluno) + (x.ra ? '<div class="meta">RA ' + esc(x.ra) + "</div>" : "") + "</td><td>" + esc(x.parcela || "—") + "</td><td>" + (x.vencimento ? br(x.vencimento) : "—") + "</td><td>" + (x.dataPagamento ? br(x.dataPagamento) : "—") +
+          '</td><td class="tabular right">' + money(x.valor) + '</td><td><span class="pill" style="color:var(--' + s[1] + ");background:var(--" + s[1] + '-soft)"><i></i>' + s[0] + "</span>" +
+          (x.situacao === "novo" && x.alunosResp.length > 1 ? '<div class="meta">vale para ' + x.alunosResp.length + " alunos: " + esc(x.alunosResp.join(", ")) + "</div>" : "") + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+    var b = $("jurImpOk"); b.disabled = !R.novos; b.textContent = R.novos ? "Registrar " + R.novos + " pagamento(s)" : "Nada novo para registrar";
+  }
+  function aplicarRecebJur(btn) {
+    if (!jurReceb) return;
+    btn.disabled = true; btn.textContent = "Gravando…";
+    api("POST", "/api/juridico/recebimentos", { linhas: jurReceb.linhas, conta: jurReceb.conta, simular: false }).then(function (d) {
+      jurReceb = null; btn.textContent = "Gravado";
+      $("jurImpRes").insertAdjacentHTML("afterbegin", '<p><b style="color:var(--success)">' + d.resumo.novos + " pagamento(s) registrado(s)</b> (" + money(d.resumo.valorNovo) + "): o acordo foi baixado e o recebimento ficou nas tratativas de todos os alunos de cada responsável." +
+        (d.resumo.alunosQuitados.length ? " Ficaram Quitado: " + esc(d.resumo.alunosQuitados.join(", ")) + "." : "") + "</p>");
+      toast(d.resumo.novos + " pagamento(s) registrado(s)."); return carregarJuridico();
+    }).catch(function (x) {
+      btn.disabled = false; btn.textContent = "Tentar de novo";
+      $("jurImpRes").insertAdjacentHTML("afterbegin", '<div class="form-err">Não foi possível gravar: ' + esc(x.message) + "</div>");
+    });
   }
   // Junta os relatórios do mês: a mesma parcela em dois relatórios conta uma vez só; a mesma
   // parcela com valor diferente em outro relatório é divergência (vale a do primeiro).
@@ -3716,7 +3834,7 @@
     });
   }
   ligarDropzone($("jurDrop"), $("jurFile"), null, receberArquivoJur);
-  $("jurImpOk").addEventListener("click", function () { if (jurModo === "carteira") aplicarCarteiraJur(this); else aplicarInad(this); });
+  $("jurImpOk").addEventListener("click", function () { if (jurModo === "carteira") aplicarCarteiraJur(this); else if (jurModo === "recebimento") aplicarRecebJur(this); else aplicarInad(this); });
 
   // evolução mensal (competências importadas)
   var graficosJur = {};
