@@ -2484,8 +2484,11 @@ async function inadimplenciaJuridico(req, env, eu) {
     }
     // aluno com caso em mais de uma carteira: a parcela vai para o caso cujo ano letivo é o ano do
     // vencimento; sem caso daquele ano, para a carteira mais recente
-    const anoVenc = texto(l.ano, 4);
-    const c = (anoVenc && achados.find((o) => texto(o.ano, 10) === anoVenc)) || achados[0];
+    // caso Quitado não recebe parcela nova quando o aluno tem caso aberto em outra carteira (o débito
+    // que voltou é da carteira em andamento, como na planilha da carteira)
+    const anoVenc = texto(l.ano, 4), ativos = achados.filter((o) => jurStatusValido(o.status) !== "quitado");
+    const cand = ativos.length ? ativos : achados;
+    const c = (anoVenc && cand.find((o) => texto(o.ano, 10) === anoVenc)) || cand[0];
     achados.forEach((o) => { if (o.id !== c.id && !outras[o.id]) outras[o.id] = { ra: o.ra, aluno: o.aluno, carteira: o.carteira, usado: c.carteira }; });
     // relatório exportado sem as linhas "Conta financeira" (já filtrado por grupo): vale o tipo
     // escolhido para o arquivo inteiro
@@ -2548,7 +2551,9 @@ async function inadimplenciaJuridico(req, env, eu) {
       // entrou em outra carteira. Só avisa quando o caso ainda tem valor e é a 1ª vez que acontece.
       const temValor = c.status !== "quitado" && (Number(c.valor_aberto) > 0 || Number(c.valor_negociado) > 0);
       const avisar = temValor && !(h && h.movimento === "outra_carteira");
-      movs.push({ c, presente: false, tipo: "outra_carteira", saiu: false, h,
+      // caso Quitado com valor antigo: as parcelas do relatório são do caso em andamento; este zera
+      const zerar = jurStatusValido(c.status) === "quitado" && (Number(c.valor_aberto) > 0 || Number(c.valor_negociado) > 0);
+      movs.push({ c, presente: false, tipo: "outra_carteira", saiu: false, h, zerar,
         conferir: !avisar ? "" : `O aluno consta no relatório de ${mesBR(mes)}, mas nenhuma parcela vence no ano letivo desta carteira (as parcelas foram para o caso da ${outras[c.id].usado}). Valores mantidos: conferir se o débito desta carteira foi pago ou renegociado.` });
       return;
     }
@@ -2630,6 +2635,10 @@ async function inadimplenciaJuridico(req, env, eu) {
         if (mudouStatus) t += ` Status ${JUR_ST_ROTULO[stAntes]} → ${JUR_ST_ROTULO[st]}.`;
         if (m.conferir) t += " Conferir: " + m.conferir;
         stmts.push(insertObsJur(env, c.id, agora, t, eu));
+      } else if (m.zerar) {
+        alterados++;
+        stmts.push(env.DB.prepare("UPDATE jur_casos SET valor_aberto = 0, valor_negociado = 0, parcelas = 0, parcelas_negociado = 0, parcelas_venc = '[]', conta_financeira = '', competencia = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(mes, agora, eu.nome, c.id));
+        stmts.push(insertObsJur(env, c.id, agora, `${ref}: caso Quitado; as parcelas do aluno no relatório foram para o caso da ${outras[c.id].usado}. Valores deste caso zerados (antes: em aberto ${reais(c.valor_aberto)}, negociado ${reais(c.valor_negociado)}).`, eu));
       } else if (m.conferir && m.conferir !== c.conferir_motivo) {
         alterados++;
         stmts.push(env.DB.prepare("UPDATE jur_casos SET flag_conflito = 1, conferir_motivo = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(m.conferir, agora, eu.nome, c.id));
