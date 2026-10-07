@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v99";
+  var VERSAO = "07/10 · v100";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2754,9 +2754,11 @@
     // carteira da Evolução (negociado, pago e em atraso pelo Acordo GM de cada aluno)
     var cb = $("jurCartBox"), stSel = $("jStatus").value;
     if (jurCartSel || stSel) {
-      var hj = hoje(), t = { ab: 0, nAb: 0, ext: 0, jud: 0, out: 0, nAc: 0, pago: 0, atraso: 0 };
+      var hj = hoje(), t = { ab: 0, nAb: 0, ext: 0, jud: 0, out: 0, nAc: 0, pago: 0, atraso: 0 }, cmp = { quit: 0, acordo: 0, aberto: 0, sem: 0 };
       vis.forEach(function (c) {
         var a = Number(c.valorAberto) || 0, ac = c.acordo || {}, v = Number(ac.valor) || 0;
+        // composição dos casos (cada caso em um grupo só, para a soma bater com o total)
+        if (c.status === "quitado") cmp.quit++; else if (v > 0) cmp.acordo++; else if (a > 0) cmp.aberto++; else cmp.sem++;
         t.ab += a; if (a > 0) t.nAb++;
         if (!(v > 0)) return;
         t.nAc++;
@@ -2775,7 +2777,10 @@
         item(neg, "info", "total negociado · " + t.nAc + (t.nAc === 1 ? " acordo" : " acordos") + '<br>extrajudicial ' + money(t.ext) + " · judicial " + money(t.jud) + (t.out > 0.009 ? " · sem tipo " + money(t.out) : "")) +
         item(t.pago, "success", "parcelas pagas") +
         item(t.atraso, "danger", "parcelas em atraso") +
-        "</div>";
+        "</div>" +
+        '<div class="fx-comp"><b>' + vis.length + (vis.length === 1 ? " caso" : " casos") + "</b> = " +
+        [[cmp.aberto, "em aberto (sem acordo)", "danger"], [cmp.acordo, "com acordo GM", "info"], [cmp.quit, cmp.quit === 1 ? "quitado" : "quitados", "success"], [cmp.sem, "sem valor e não quitados", "gray"]]
+          .filter(function (x, i) { return x[0] || i < 3; }).map(function (x) { return '<span style="color:var(--' + x[2] + ')"><b>' + x[0] + "</b> " + x[1] + "</span>"; }).join(" + ") + "</div>";
       cb.hidden = false;
     } else { cb.hidden = true; cb.innerHTML = ""; }
     var nResp = {}; vis.forEach(function (c) { nResp[chaveResp(c)] = 1; });

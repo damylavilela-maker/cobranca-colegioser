@@ -436,3 +436,4 @@ table.data.compacta td.right{white-space:nowrap}
 .neg-venc{padding:4px 6px;width:auto}
 @media (max-width:640px){.neg-form .grid3{grid-template-columns:1fr}}
 #jcIrmaos tr.sel td{background:var(--brand-soft, rgba(46,160,90,.12))}
+.faixa-box .fx-comp{margin-top:10px;padding-top:8px;border-top:1px solid var(--line);font-size:13px}
