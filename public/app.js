@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v103";
+  var VERSAO = "07/10 · v104";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2728,7 +2728,8 @@
       { n: money(ab), l: "Valor em aberto", c: "danger" },
       { n: money(g.tot), l: "Total negociado · " + sel, c: "info", s: g.n + (g.n === 1 ? " acordo" : " acordos") + " · extrajudicial " + money(g.ext) + " · judicial " + money(g.jud) },
       { n: money(g.pago), l: "Pago até o momento", c: "success", s: jurKpiCart ? esc(jurKpiCart) : "todas as carteiras" },
-      { n: money(Math.max(0, g.tot - g.pago)), l: "Negociado em aberto", c: "warn", s: "dos quais " + money(g.atraso) + " em atraso" },
+      { n: money(Math.max(0, g.tot - g.pago - g.atraso)), l: "Negociado a vencer", c: "warn", s: "saldo dos acordos ainda não vencido" },
+      { n: money(g.atraso), l: "Negociado em atraso", c: "danger", s: "parcelas do acordo vencidas e não pagas" },
       // uma casa decimal: com ~200 casos, cada caso vale meio ponto
       { n: (tot ? (quit / tot * 100).toFixed(1).replace(".", ",") : "0") + "%", l: "Quitados", c: "success", s: quit + " de " + tot + " casos" }
     ].map(kpiHtml).join("");
