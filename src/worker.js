@@ -329,7 +329,12 @@ export default {
         ].map((s) => env.DB.prepare(s)));
         schemaPronto = true;
       }
-      return await rotear(request, env, url);
+      const resp = await rotear(request, env, url);
+      // toda alteração bem-sucedida muda a "versão dos dados": as telas abertas perguntam só a versão
+      // a cada 30 s (1 leitura) e só baixam tudo de novo quando ela muda (limite diário de leituras do D1)
+      if (request.method !== "GET" && resp.ok && !/^\/api\/(login|logout|setup)$/.test(url.pathname))
+        await env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('versao_dados', ?)").bind(agoraISO() + "-" + Math.random().toString(36).slice(2, 8)).run();
+      return resp;
     } catch (e) {
       if (e instanceof HttpError) return json({ erro: e.message, codigo: e.code || null }, e.status);
       console.error(e && e.stack || e);
@@ -381,6 +386,10 @@ async function rotear(req, env, url) {
   const eu = await autenticar(req, env);
 
   if (caminho === "/api/me" && m === "GET") return json({ usuario: usuarioPublico(eu) });
+  if (caminho === "/api/versao" && m === "GET") {
+    const v = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'versao_dados'").first();
+    return json({ versao: v ? v.valor : "" });
+  }
   if (caminho === "/api/me/senha" && m === "POST") return trocarMinhaSenha(req, env, eu);
   if (eu.trocar_senha) throw new HttpError(403, "Troque sua senha provisória para continuar.", "trocar_senha");
 

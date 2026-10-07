@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v111";
+  var VERSAO = "07/10 · v112";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -192,7 +192,7 @@
   function carregar() {
     if (view === "juridico" && jurCarregado) carregarJuridico();
     if (view === "cheques" && chqCarregado) carregarCheques();
-    return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa"), api("GET", "/api/serasa/periodos")])
+    return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa"), api("GET", "/api/serasa/periodos"), api("GET", "/api/versao")])
       .then(function (r) {
         alunos = {}; r[0].alunos.forEach(function (a) { alunos[a.id] = a; });
         atends = r[1].atendimentos;
@@ -200,6 +200,7 @@
         parcelas = r[3].parcelas;
         negInicio = r[3].negInicio || "";
         periodos = r[4].periodos;
+        versaoDados = r[5].versao;
         ultimaCarga = Date.now();
         marcarSync(true);
         renderTudo();
@@ -221,11 +222,21 @@
       // as janelas abertas não são redesenhadas (quem está preenchendo não perde nada); só a
       // importação em andamento espera
       if (!$("mImportar").hidden || !$("mJurImp").hidden || !$("mChqImp").hidden) return;
-      carregar();
+      seMudou();
     }, 30000);
   }
+  // pergunta só a versão dos dados (1 leitura no banco) e baixa tudo de novo apenas quando alguém
+  // alterou algo desde a última carga — o banco gratuito tem limite diário de leituras
+  var versaoDados = null;
+  function seMudou() {
+    return api("GET", "/api/versao").then(function (d) {
+      if (versaoDados !== null && d.versao === versaoDados) { marcarSync(true); return; }
+      versaoDados = d.versao;
+      return carregar();
+    }).catch(function (e) { marcarSync(false); if (e.status !== 401 && e.status !== 403) toast(e.message); });
+  }
   function pararPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
-  document.addEventListener("visibilitychange", function () { if (!document.hidden && eu) carregar(); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && eu) seMudou(); });
 
   function renderTudo() {
     if (view === "painel" || view === "contraturno") renderPainel();
