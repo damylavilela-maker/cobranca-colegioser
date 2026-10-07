@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v97";
+  var VERSAO = "07/10 · v98";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2611,6 +2611,48 @@
   function jpill(k) { var s = jst(k); return '<span class="pill" style="color:var(--' + s.c + ');background:var(--' + s.c + '-soft)"><i></i>' + s.l + "</span>"; }
   function moneyOu(v) { return v === null || v === undefined || v === "" ? "—" : money(v); }
   function ultimaObs(c) { return c.obs && c.obs.length ? c.obs[0].texto : ""; }
+  // ---- responsável financeiro: os alunos do mesmo responsável (pelo CPF; sem CPF, pelo nome).
+  // O acordo GM pode sair no nome de um só aluno e cobrir os débitos dos irmãos.
+  function chaveResp(c) {
+    var cpf = String(c.cpf || "").replace(/\D/g, "");
+    if (cpf.length >= 11) return "cpf:" + cpf;
+    var n = normNome(c.responsavel);
+    return n ? "n:" + n : "id:" + c.id;
+  }
+  function temAcordo(c) { return Number((c.acordo || {}).valor) > 0; }
+  // irmãos (inclui o próprio): quem tem o acordo primeiro, depois pelo nome
+  function irmaosDe(c) {
+    var k = chaveResp(c);
+    return casosJur.filter(function (x) { return x.id === c.id || chaveResp(x) === k; }).sort(function (a, b) {
+      return (temAcordo(b) ? 1 : 0) - (temAcordo(a) ? 1 : 0) || (a.aluno || "").localeCompare(b.aluno || "", "pt-BR");
+    });
+  }
+  // o grupo tem débito ou acordo em andamento em algum aluno
+  function grupoComValor(c) {
+    return irmaosDe(c).some(function (x) { var a = x.acordo || {}; return Number(x.valorAberto) > 0 || Number(x.valorNegociado) > 0 || Number(a.saldoAberto) > 0.009; });
+  }
+  // lista por responsável: uma linha por responsável com os alunos (dentro dos filtros) embaixo
+  function htmlTabelaJurResp(vis) {
+    var grupos = {}, ordem = [];
+    vis.forEach(function (c) { var k = chaveResp(c), g = grupos[k]; if (!g) { g = grupos[k] = { k: k, itens: [], ab: 0 }; ordem.push(g); } g.itens.push(c); g.ab += Number(c.valorAberto) || 0; });
+    ordem.sort(function (a, b) { return b.ab - a.ab || (a.itens[0].responsavel || "").localeCompare(b.itens[0].responsavel || "", "pt-BR"); });
+    return ordem.slice(0, jurLimite).map(function (g) {
+      var c0 = g.itens[0], todos = irmaosDe(c0), ac = todos.filter(temAcordo), st = {}, carts = {}, ult = null;
+      g.itens.forEach(function (c) { st[c.status] = 1; if (c.carteira) carts[c.carteira] = 1; if (c.obs && c.obs[0] && (!ult || c.obs[0].data > ult.data)) ult = c.obs[0]; });
+      var abrirId = (ac.filter(function (x) { return g.itens.indexOf(x) !== -1; })[0] || g.itens[0]).id, ob = ult ? ult.texto : "";
+      var atual = g.itens.reduce(function (m, c) { return (c.atualizadoEm || "") > m ? c.atualizadoEm : m; }, "");
+      return '<tr class="click" data-id="' + esc(abrirId) + '"><td><div class="nome">' + esc(c0.responsavel || "Responsável não informado") + (todos.length > 1 ? ' <span class="tag">' + todos.length + " alunos</span>" : "") + "</div>" +
+        g.itens.map(function (c) {
+          return '<div class="meta">' + esc(c.aluno || "—") + (c.ra ? " · RA " + esc(c.ra) : "") + " · " + esc(c.carteira || "—") + " · " + money(c.valorAberto) + " em aberto" + (temAcordo(c) ? " · <b>acordo GM " + money(c.acordo.valor) + "</b>" : "") + "</div>";
+        }).join("") +
+        (todos.length > g.itens.length ? '<div class="meta muted">+ ' + (todos.length - g.itens.length) + " aluno(s) fora dos filtros</div>" : "") +
+        (ac.length && todos.length > 1 ? '<div class="meta">Acordo GM em nome de ' + esc(ac.map(function (x) { return x.aluno; }).join(", ")) + " (cobre os irmãos)</div>" : "") + "</td>" +
+        "<td>" + Object.keys(st).map(jpill).join(" ") + "</td>" +
+        "<td>" + Object.keys(carts).map(esc).join("<br>") + "</td>" +
+        '<td class="muted obs-cell">' + esc(ob ? (ob.length > 60 ? ob.slice(0, 60).trim() + "…" : ob) : "—") + "</td>" +
+        '<td class="muted">' + dataCurta(atual) + "</td></tr>";
+    }).join("");
+  }
   function dataHora(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
   function dataCurta(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? br(iso) : d.toLocaleDateString("pt-BR"); }
   function opcoesStatusJur() { return JUR_STATUS.map(function (s) { return { v: s.k, l: s.l }; }); }
@@ -2736,11 +2778,13 @@
         "</div>";
       cb.hidden = false;
     } else { cb.hidden = true; cb.innerHTML = ""; }
-    $("jurCount").textContent = vis.length + " de " + casosJur.length + " casos · em aberto " + money(somaAb) + " · negociado " + money(somaNeg);
+    var nResp = {}; vis.forEach(function (c) { nResp[chaveResp(c)] = 1; });
+    $("jurCount").textContent = vis.length + " de " + casosJur.length + " casos · " + Object.keys(nResp).length + " responsáveis financeiros · em aberto " + money(somaAb) + " · negociado " + money(somaNeg);
     $("jurVazio").hidden = vis.length > 0;
     $("jurVazio").textContent = casosJur.length ? "Nenhum caso encontrado com estes filtros." : "A carteira está vazia. Use “Importar carteira” ou “Novo caso” para incluir os alunos.";
     var turmaPorRa = {}; baseAlunos.forEach(function (b) { if (b.ra && b.turma) turmaPorRa[String(b.ra).trim().toLowerCase()] = b.turma; });
-    $("jurTbody").innerHTML = vis.slice(0, jurLimite).map(function (c) {
+    var porResp = $("jAgrupar").value === "resp";
+    $("jurTbody").innerHTML = porResp ? htmlTabelaJurResp(vis) : vis.slice(0, jurLimite).map(function (c) {
       var ob = ultimaObs(c), v = Number(c.valorAberto) || 0, turma = c.ra ? turmaPorRa[c.ra.trim().toLowerCase()] : "";
       return '<tr class="click" data-id="' + esc(c.id) + '">' +
         '<td><div class="nome">' + esc(c.aluno || "—") + (c.flagConflito ? ' <span class="pill" style="color:var(--warn);background:var(--warn-soft)" title="' + esc(c.conferirMotivo || "Precisa de conferência") + '"><i></i>Conferir</span>' : "") + '</div><div class="meta">' +
@@ -2752,11 +2796,13 @@
     }).join("");
     $("jurMais").hidden = vis.length <= jurLimite;
     // casos filtrados sem nenhum valor que ainda não estão Quitado
-    jurSemValor = vis.filter(function (c) { return c.status !== "quitado" && !(Number(c.valorAberto) > 0) && !(Number(c.valorNegociado) > 0); });
+    // (o aluno cujo débito está no acordo de um irmão não entra: o grupo ainda tem valor)
+    jurSemValor = vis.filter(function (c) { return c.status !== "quitado" && !(Number(c.valorAberto) > 0) && !(Number(c.valorNegociado) > 0) && !grupoComValor(c); });
     var bq = $("jurQuitarLote"); bq.hidden = !jurSemValor.length; bq.classList.remove("armed");
     bq.textContent = "Marcar como Quitado os " + jurSemValor.length + " caso(s) sem valor";
   }
-  ["jBusca", "jStatus", "jConferir"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; renderTabelaJur(); }); });
+  ["jBusca", "jStatus", "jConferir", "jAgrupar"].forEach(function (id) { $(id).addEventListener("input", function () { jurLimite = 300; if (id === "jAgrupar") { try { localStorage.setItem("jur_agrupar", this.value); } catch (x) { /* sem armazenamento */ } } renderTabelaJur(); }); });
+  try { $("jAgrupar").value = localStorage.getItem("jur_agrupar") || ""; } catch (x) { /* sem armazenamento */ }
   $("jurMais").addEventListener("click", function () { jurLimite += 300; renderTabelaJur(); });
   $("jurTbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirCasoJur(tr.getAttribute("data-id")); });
   $("jurQuitarLote").addEventListener("click", function () {
@@ -2828,23 +2874,51 @@
   });
 
   // ficha do aluno
+  // tratativas: do responsável inteiro (todos os alunos dele). A mesma tratativa registrada nos
+  // vários alunos (mesmo texto, autor e minuto) aparece uma vez só; editar/excluir vale para todas.
+  var obsVis = [];
   function renderObsJur(c) {
-    $("jcObsLog").innerHTML = c.obs && c.obs.length ? c.obs.map(function (o) {
+    var irs = irmaosDe(c), porChave = {};
+    obsVis = [];
+    irs.forEach(function (x) {
+      var cx = x.id === c.id ? c : x;
+      (cx.obs || []).forEach(function (o) {
+        var k = (o.texto || "") + "|" + (o.autor || "") + "|" + String(o.data || "").slice(0, 16), g = porChave[k];
+        if (!g) { g = porChave[k] = { o: o, refs: [], alunos: [] }; obsVis.push(g); }
+        g.refs.push({ caso: cx.id, id: o.id }); g.alunos.push(cx.aluno || "");
+      });
+    });
+    obsVis.sort(function (a, b) { return String(b.o.data || "").localeCompare(String(a.o.data || "")); });
+    $("jcObsLog").innerHTML = obsVis.length ? obsVis.map(function (g, i) {
+      var o = g.o;
       // editar/excluir: quem registrou ou administrador (o servidor confere de novo)
       var pode = o.id && eu && (eu.perfil === "admin" || o.autor === eu.nome);
-      return '<div class="ob" data-obs="' + esc(o.id || "") + '"><div class="meta">' + dataHora(o.data) + (o.autor ? " · " + esc(o.autor) : "") +
+      return '<div class="ob" data-obs="' + i + '"><div class="meta">' + dataHora(o.data) + (o.autor ? " · " + esc(o.autor) : "") +
+        (irs.length > 1 ? " · " + (g.refs.length >= irs.length ? "todos os alunos" : esc(g.alunos.join(", "))) : "") +
         (o.editado_em ? " · editado" + (o.editado_por ? " por " + esc(o.editado_por) : "") + " em " + dataHora(o.editado_em) : "") +
         (pode ? '<span class="ob-acoes"><button type="button" class="linkbtn" data-ob-editar>Editar</button><button type="button" class="linkbtn danger" data-ob-excluir>Excluir</button></span>' : "") +
         '</div><div class="ob-texto">' + esc(o.texto) + "</div></div>";
     }).join("") : '<div class="ob-vazio">Nenhuma tratativa registrada ainda.</div>';
   }
   function atualizarFicha(d, msg) { trocarCaso(d.caso); casoJur = d.caso; preencherFicha(d.caso); renderJuridico(); if (msg) toast(msg); }
+  // uma chamada por vez (um aluno depois do outro); devolve a lista de respostas
+  function emSequencia(lista, fn) {
+    var out = [];
+    return lista.reduce(function (p, x) { return p.then(function () { return fn(x).then(function (d) { out.push(d); }); }); }, Promise.resolve()).then(function () { return out; });
+  }
+  // várias respostas (uma por aluno): atualiza todos e redesenha a ficha do aluno aberto
+  function atualizarVarios(lista, msg) {
+    var atualId = casoJur && casoJur.id;
+    lista.forEach(function (d) { if (d && d.caso) trocarCaso(d.caso); });
+    casosJur.forEach(function (x) { if (x.id === atualId) casoJur = x; });
+    if (casoJur) preencherFicha(casoJur);
+    renderJuridico(); if (msg) toast(msg);
+  }
   $("jcObsLog").addEventListener("click", function (e) {
     var el = e.target.closest(".ob"); if (!el || !casoJur) return;
-    var id = el.getAttribute("data-obs"), o = null;
-    (casoJur.obs || []).forEach(function (x) { if (x.id === id) o = x; });
-    if (!o) return;
-    var url = "/api/juridico/" + encodeURIComponent(casoJur.id) + "/obs/" + encodeURIComponent(id);
+    var g = obsVis[+el.getAttribute("data-obs")]; if (!g) return;
+    var o = g.o;
+    function url(r) { return "/api/juridico/" + encodeURIComponent(r.caso) + "/obs/" + encodeURIComponent(r.id); }
     if (e.target.closest("[data-ob-editar]")) {
       el.querySelector(".ob-texto").innerHTML = '<textarea rows="3" class="ob-edit">' + esc(o.texto) + '</textarea><div class="row-end" style="justify-content:flex-start;margin-top:4px">' +
         '<button type="button" class="btn primary small" data-ob-salvar>Salvar</button><button type="button" class="btn ghost small" data-ob-cancelar>Cancelar</button></div>';
@@ -2855,18 +2929,40 @@
       var t = el.querySelector("textarea").value.trim();
       if (!t) return mostrarErro($("jcErr"), "A tratativa não pode ficar em branco. Para apagar, use Excluir.");
       e.target.disabled = true;
-      api("PATCH", url, { texto: t }).then(function (d) { mostrarErro($("jcErr"), ""); atualizarFicha(d, "Tratativa corrigida."); })
+      emSequencia(g.refs, function (r) { return api("PATCH", url(r), { texto: t }); }).then(function (l) { mostrarErro($("jcErr"), ""); atualizarVarios(l, "Tratativa corrigida."); })
         .catch(function (x) { e.target.disabled = false; mostrarErro($("jcErr"), x.message); });
     } else if (e.target.closest("[data-ob-excluir]")) {
       var b = e.target.closest("[data-ob-excluir]");
       if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar exclusão"; return; }
-      api("DELETE", url).then(function (d) { mostrarErro($("jcErr"), ""); atualizarFicha(d, "Tratativa excluída."); })
+      emSequencia(g.refs, function (r) { return api("DELETE", url(r)); }).then(function (l) { mostrarErro($("jcErr"), ""); atualizarVarios(l, "Tratativa excluída."); })
         .catch(function (x) { mostrarErro($("jcErr"), x.message); });
     }
+  });
+  $("jcIrmaos").addEventListener("click", function (e) {
+    var tr = e.target.closest("tr[data-irmao]"); if (!tr || !casoJur) return;
+    var id = tr.getAttribute("data-irmao");
+    if (id !== casoJur.id) abrirCasoJur(id);
   });
   function preencherFicha(c) {
     $("jcTitulo").textContent = c.aluno || "Caso";
     $("jcSub").textContent = "RA " + (c.ra || "—") + " · " + (c.carteira || "—") + " · ano letivo " + (c.ano || "—") + (c.competencia ? " · ref. " + mesBR(c.competencia) : "");
+    // responsável com mais de um aluno: a ficha é do responsável, com os alunos dele
+    var irs = irmaosDe(c);
+    $("jcIrmaosBox").hidden = irs.length < 2;
+    if (irs.length > 1) {
+      $("jcTitulo").textContent = c.responsavel || c.aluno || "Responsável";
+      $("jcSub").textContent = "Responsável financeiro · " + irs.length + " alunos · aberto: " + (c.aluno || "—") + " (RA " + (c.ra || "—") + " · " + (c.carteira || "—") + " · ano letivo " + (c.ano || "—") + ")";
+      var t = { ab: 0, neg: 0, ac: 0, pago: 0 }, comAc = irs.filter(temAcordo);
+      $("jcIrmaos").innerHTML = '<div class="table-wrap"><table class="data compacta"><thead><tr><th>Aluno</th><th>Carteira</th><th>Status</th><th class="right">Em aberto</th><th class="right">Negociado</th><th>Acordo GM</th></tr></thead><tbody>' +
+        irs.map(function (x) {
+          var a = x.acordo || {}; t.ab += Number(x.valorAberto) || 0; t.neg += Number(x.valorNegociado) || 0;
+          if (temAcordo(x)) { t.ac += Number(a.valor) || 0; t.pago += Number(a.pago) || 0; }
+          return '<tr class="click' + (x.id === c.id ? " sel" : "") + '" data-irmao="' + esc(x.id) + '"><td><b>' + esc(x.aluno || "—") + "</b>" + (x.id === c.id ? ' <span class="tag">aberto</span>' : "") + '<div class="meta">RA ' + esc(x.ra || "—") + "</div></td>" +
+            "<td>" + esc(x.carteira || "—") + "</td><td>" + jpill(x.status) + '</td><td class="tabular right">' + money(x.valorAberto) + '</td><td class="tabular right">' + money(x.valorNegociado) +
+            "</td><td>" + (temAcordo(x) ? esc(a.tipo || "Acordo") + " · " + money(a.valor) + '<div class="meta">pago ' + money(a.pago) + "</div>" : comAc.length ? '<span class="meta">no acordo de ' + esc(comAc[0].aluno) + "</span>" : '<span class="muted">—</span>') + "</td></tr>";
+        }).join("") +
+        '<tr><td><b>Total do responsável</b></td><td></td><td></td><td class="tabular right"><b>' + money(t.ab) + '</b></td><td class="tabular right"><b>' + money(t.neg) + "</b></td><td>" + (t.ac ? "<b>" + money(t.ac) + '</b><div class="meta">pago ' + money(t.pago) + "</div>" : "—") + "</td></tr></tbody></table></div>";
+    }
     $("jcConflito").hidden = !c.flagConflito;
     $("jcConflitoTxt").textContent = c.conferirMotivo || "Este caso precisa de conferência.";
     $("jcContato").innerHTML = '<div class="meta">Responsável: <b>' + esc(c.responsavel || "—") + "</b> · Telefone: " + esc(c.celular || "—") + " · E-mail: " + esc(c.email || "—") +
@@ -2900,10 +2996,13 @@
   function salvarCasoJur(dados) {
     return api("PATCH", "/api/juridico/" + encodeURIComponent(casoJur.id), dados).then(function (d) { atualizarFicha(d); return d; });
   }
-  // status salva sozinho (fica registrado nas tratativas)
+  // status salva sozinho (fica registrado nas tratativas) e vale para todos os alunos do responsável
   $("jcStatus").addEventListener("change", function () {
     mostrarErro($("jcErr"), "");
-    salvarCasoJur({ status: this.value }).then(function () { toast("Status salvo."); }).catch(function (x) { mostrarErro($("jcErr"), x.message); });
+    var st = this.value, alvo = irmaosDe(casoJur).filter(function (x) { return x.id === casoJur.id || x.status !== st; });
+    emSequencia(alvo, function (x) { return api("PATCH", "/api/juridico/" + encodeURIComponent(x.id), { status: st }); })
+      .then(function (l) { atualizarVarios(l, alvo.length > 1 ? "Status salvo para os " + alvo.length + " alunos do responsável." : "Status salvo."); })
+      .catch(function (x) { mostrarErro($("jcErr"), x.message); });
   });
   $("jcSalvarDados").addEventListener("click", function () {
     if (!$("jcAluno").value.trim()) return mostrarErro($("jcErr"), "Informe o nome do aluno.");
@@ -2917,8 +3016,10 @@
     var t = $("jcNovaObs").value.trim();
     if (!t) return mostrarErro($("jcErr"), "Escreva a tratativa antes de adicionar.");
     var btn = this; btn.disabled = true; mostrarErro($("jcErr"), "");
-    api("POST", "/api/juridico/" + encodeURIComponent(casoJur.id) + "/obs", { texto: t }).then(function (d) {
-      $("jcNovaObs").value = ""; atualizarFicha(d, "Tratativa registrada.");
+    // registrada em todos os alunos do responsável (aparece uma vez só na ficha)
+    var alvo = irmaosDe(casoJur);
+    emSequencia(alvo, function (x) { return api("POST", "/api/juridico/" + encodeURIComponent(x.id) + "/obs", { texto: t }); }).then(function (l) {
+      $("jcNovaObs").value = ""; atualizarVarios(l, alvo.length > 1 ? "Tratativa registrada para os " + alvo.length + " alunos do responsável." : "Tratativa registrada.");
     }).catch(function (x) { mostrarErro($("jcErr"), x.message); }).then(function () { btn.disabled = false; });
   });
   // aviso de conferência: some só quando alguém marca como conferido

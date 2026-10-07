@@ -435,3 +435,4 @@ table.data.compacta td.right{white-space:nowrap}
 .neg-calc .fx-lbl{font-size:12px;opacity:.8}
 .neg-venc{padding:4px 6px;width:auto}
 @media (max-width:640px){.neg-form .grid3{grid-template-columns:1fr}}
+#jcIrmaos tr.sel td{background:var(--brand-soft, rgba(46,160,90,.12))}

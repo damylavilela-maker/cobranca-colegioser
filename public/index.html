@@ -299,6 +299,7 @@
             <option value="ausente">Não constam no relatório</option>
             <option value="outra_carteira">Parcelas em outra carteira</option>
           </select>
+          <select id="jAgrupar" aria-label="Ver a lista por aluno ou por responsável financeiro"><option value="">Ver por aluno</option><option value="resp">Ver por responsável financeiro</option></select>
         </div>
         <div class="faixa-box" id="jurCartBox" hidden></div>
         <div class="spread" style="align-items:center;gap:10px;flex-wrap:wrap"><div class="count" id="jurCount"></div><button type="button" class="btn ghost small" id="jurQuitarLote" hidden></button></div>
@@ -581,6 +582,11 @@
     <div class="m-body">
       <div class="form-err" id="jcConflito" style="background:var(--warn-soft);color:var(--warn)" hidden><b>Conferir:</b> <span id="jcConflitoTxt"></span> <button type="button" class="btn ghost small" id="jcConferido" style="margin-left:8px">Marcar como conferido</button></div>
       <div id="jcContato" style="margin-bottom:12px"></div>
+      <div class="field" id="jcIrmaosBox" hidden>
+        <label>Alunos deste responsável financeiro</label>
+        <div id="jcIrmaos"></div>
+        <span class="hint">Clique em um aluno para ver o acordo, a evolução e os dados dele. Status e tratativas registrados aqui valem para todos os alunos do responsável.</span>
+      </div>
       <div class="field" id="jcAcordoBox" hidden>
         <label>Acordo GM</label>
         <div id="jcAcordo"></div>
