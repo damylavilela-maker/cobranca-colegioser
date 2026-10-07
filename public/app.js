@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v106";
+  var VERSAO = "07/10 · v107";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2793,28 +2793,30 @@
     // carteira da Evolução (negociado, pago e em atraso pelo Acordo GM de cada aluno)
     var cb = $("jurCartBox"), stSel = $("jStatus").value;
     if (jurCartSel || stSel) {
-      var hj = hoje(), t = { ab: 0, nAb: 0, ext: 0, jud: 0, out: 0, nAc: 0, pago: 0, atraso: 0 }, cmp = { quit: 0, acordo: 0, aberto: 0, sem: 0 }, cmpSem = [];
+      var hj = hoje(), t = { ab: 0, nAb: 0, ext: 0, jud: 0, out: 0, nAc: 0, pago: 0, atraso: 0 }, cmp = { quit: 0, acordo: 0, aberto: 0, sem: 0 }, cmpSem = [], lstAb = [], lstAt = [], lstNeg = [], lstPago = [];
       vis.forEach(function (c) {
         var a = Number(c.valorAberto) || 0, ac = c.acordo || {}, v = Number(ac.valor) || 0;
         // composição dos casos (cada caso em um grupo só, para a soma bater com o total)
         cmp[grupoComp(c)]++; if (grupoComp(c) === "sem") cmpSem.push(c);
-        t.ab += a; if (a > 0) t.nAb++;
+        t.ab += a; if (a > 0) { t.nAb++; lstAb.push([c.aluno, a]); }
         if (!(v > 0)) return;
         t.nAc++;
         if (/extrajudicial/i.test(ac.tipo || "")) t.ext += v; else if (/judicial/i.test(ac.tipo || "")) t.jud += v; else t.out += v;
-        t.pago += Number(ac.pago) || 0;
-        t.atraso += atrasoAcordo(c, hj);
+        t.pago += Number(ac.pago) || 0; lstNeg.push([c.aluno, v]); if (Number(ac.pago) > 0) lstPago.push([c.aluno, Number(ac.pago)]);
+        var at = atrasoAcordo(c, hj); t.atraso += at; if (at > 0.009) lstAt.push([c.aluno, at]);
       });
       var ci = carteiraAtual(), neg = t.ext + t.jud + t.out, stL = "";
       opcoesStatusJur().forEach(function (o) { if (o.v === stSel) stL = o.l; });
-      function item(v, cor, lbl) { return '<div><div class="fx-num tabular"' + (cor ? ' style="color:var(--' + cor + ')"' : "") + ">" + money(v) + '</div><div class="fx-lbl">' + lbl + "</div></div>"; }
+      // passar o mouse: quais alunos formam o valor (maiores primeiro)
+      function dica(l) { l.sort(function (x, y) { return y[1] - x[1]; }); return l.slice(0, 40).map(function (x) { return (x[0] || "—") + ": " + money(x[1]); }).join("\n") + (l.length > 40 ? "\n… e mais " + (l.length - 40) : ""); }
+      function item(v, cor, lbl, tit) { return "<div" + (tit ? " class=\"fx-dica\" title=\"" + esc(tit) + "\"" : "") + "><div class=\"fx-num tabular\"" + (cor ? " style=\"color:var(--" + cor + ")\"" : "") + ">" + money(v) + "</div><div class=\"fx-lbl\">" + lbl + "</div></div>"; }
       cb.innerHTML = '<div class="fx-titulo">' + (jurCartSel ? "Carteira: <b>" + esc(jurCartSel) + "</b>" + (ci && ci.ano ? " · ano letivo " + esc(ci.ano) : "") : "Todas as carteiras") +
         (stSel ? " · status <b>" + esc(stL || stSel) + "</b>" : "") + " · " + vis.length + (vis.length === 1 ? " caso" : " casos") + (vis.length !== casosJur.filter(function (c) { return (!jurCartSel || c.carteira === jurCartSel) && (!stSel || c.status === stSel); }).length ? " (com a busca/movimentação)" : "") + '</div><div class="fx-itens">' +
-        item(t.ab, "danger", "em aberto · " + t.nAb + (t.nAb === 1 ? " caso" : " casos")) +
-        item(neg, "info", "total negociado · " + t.nAc + (t.nAc === 1 ? " acordo" : " acordos") + '<br>extrajudicial ' + money(t.ext) + " · judicial " + money(t.jud) + (t.out > 0.009 ? " · sem tipo " + money(t.out) : "")) +
-        item(t.pago, "success", "pago até o momento") +
+        item(t.ab, "danger", "em aberto · " + t.nAb + (t.nAb === 1 ? " caso" : " casos"), dica(lstAb)) +
+        item(neg, "info", "total negociado · " + t.nAc + (t.nAc === 1 ? " acordo" : " acordos") + '<br>extrajudicial ' + money(t.ext) + " · judicial " + money(t.jud) + (t.out > 0.009 ? " · sem tipo " + money(t.out) : ""), dica(lstNeg)) +
+        item(t.pago, "success", "pago até o momento", dica(lstPago)) +
         item(Math.max(0, neg - t.pago - t.atraso), "warn", "negociado a vencer") +
-        item(t.atraso, "danger", "negociado em atraso") +
+        item(t.atraso, "danger", "negociado em atraso", dica(lstAt)) +
         "</div>" +
         '<div class="fx-comp"><b>' + vis.length + (vis.length === 1 ? " caso" : " casos") + "</b> = " +
         [[cmp.aberto, "em aberto (sem acordo)", "danger", "aberto"], [cmp.acordo, "com acordo GM (inclui irmãos cobertos)", "info", "acordo"], [cmp.quit, cmp.quit === 1 ? "quitado" : "quitados", "success", "quit"], [cmp.sem, "sem valor e não quitados", "gray", "sem"]]
