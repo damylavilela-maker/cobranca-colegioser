@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v93";
+  var VERSAO = "07/10 · v94";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2728,18 +2728,31 @@
   function renderTabelaJur() {
     var vis = filtrarJur();
     var somaAb = 0, somaNeg = 0; vis.forEach(function (c) { somaAb += Number(c.valorAberto) || 0; somaNeg += Number(c.valorNegociado) || 0; });
-    // carteira escolhida: quadro com o valor em aberto da carteira inteira (sem os outros filtros)
-    var cb = $("jurCartBox");
-    if (jurCartSel) {
-      var ct = casosJur.filter(function (c) { return c.carteira === jurCartSel; }), cAb = 0, cNeg = 0, nAb = 0, nNeg = 0;
-      ct.forEach(function (c) {
-        var a = Number(c.valorAberto) || 0, g = Number(c.valorNegociado) || 0;
-        cAb += a; cNeg += g; if (a > 0) nAb++; if (g > 0) nNeg++;
+    // carteira ou status escolhido: quadro com os valores dos casos filtrados, igual ao quadro por
+    // carteira da Evolução (negociado, pago e em atraso pelo Acordo GM de cada aluno)
+    var cb = $("jurCartBox"), stSel = $("jStatus").value;
+    if (jurCartSel || stSel) {
+      var hj = hoje(), t = { ab: 0, nAb: 0, ext: 0, jud: 0, out: 0, nAc: 0, pago: 0, atraso: 0 };
+      vis.forEach(function (c) {
+        var a = Number(c.valorAberto) || 0, ac = c.acordo || {}, v = Number(ac.valor) || 0;
+        t.ab += a; if (a > 0) t.nAb++;
+        if (!(v > 0)) return;
+        t.nAc++;
+        if (/extrajudicial/i.test(ac.tipo || "")) t.ext += v; else if (/judicial/i.test(ac.tipo || "")) t.jud += v; else t.out += v;
+        t.pago += Number(ac.pago) || 0;
+        var parc = c.acordoParc || [];
+        t.atraso += parc.length ? parc.reduce(function (s, p) { return s + (p[0] && p[0] < hj ? Number(p[1]) || 0 : 0); }, 0)
+          : Math.max(0, (Number(ac.saldoAberto) || 0) - (Number(ac.saldoVencer) || 0));
       });
-      var ci = carteiraAtual();
-      cb.innerHTML = '<div class="fx-titulo">Carteira: <b>' + esc(jurCartSel) + "</b>" + (ci && ci.ano ? " · ano letivo " + esc(ci.ano) : "") + " · " + ct.length + (ct.length === 1 ? " caso" : " casos") + '</div><div class="fx-itens">' +
-        '<div><div class="fx-num tabular" style="color:var(--danger)">' + money(cAb) + '</div><div class="fx-lbl">em aberto · ' + nAb + (nAb === 1 ? " caso" : " casos") + " com valor em aberto</div></div>" +
-        '<div><div class="fx-num tabular" style="color:var(--info)">' + money(cNeg) + '</div><div class="fx-lbl">negociado · ' + nNeg + (nNeg === 1 ? " caso" : " casos") + "</div></div>" +
+      var ci = carteiraAtual(), neg = t.ext + t.jud + t.out, stL = "";
+      opcoesStatusJur().forEach(function (o) { if (o.v === stSel) stL = o.l; });
+      function item(v, cor, lbl) { return '<div><div class="fx-num tabular"' + (cor ? ' style="color:var(--' + cor + ')"' : "") + ">" + money(v) + '</div><div class="fx-lbl">' + lbl + "</div></div>"; }
+      cb.innerHTML = '<div class="fx-titulo">' + (jurCartSel ? "Carteira: <b>" + esc(jurCartSel) + "</b>" + (ci && ci.ano ? " · ano letivo " + esc(ci.ano) : "") : "Todas as carteiras") +
+        (stSel ? " · status <b>" + esc(stL || stSel) + "</b>" : "") + " · " + vis.length + (vis.length === 1 ? " caso" : " casos") + (vis.length !== casosJur.filter(function (c) { return (!jurCartSel || c.carteira === jurCartSel) && (!stSel || c.status === stSel); }).length ? " (com a busca/movimentação)" : "") + '</div><div class="fx-itens">' +
+        item(t.ab, "danger", "em aberto · " + t.nAb + (t.nAb === 1 ? " caso" : " casos")) +
+        item(neg, "info", "total negociado · " + t.nAc + (t.nAc === 1 ? " acordo" : " acordos") + '<br>extrajudicial ' + money(t.ext) + " · judicial " + money(t.jud) + (t.out > 0.009 ? " · sem tipo " + money(t.out) : "")) +
+        item(t.pago, "success", "parcelas pagas") +
+        item(t.atraso, "danger", "parcelas em atraso") +
         "</div>";
       cb.hidden = false;
     } else { cb.hidden = true; cb.innerHTML = ""; }
