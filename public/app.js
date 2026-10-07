@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v95";
+  var VERSAO = "07/10 · v96";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2668,26 +2668,6 @@
       { n: (tot ? (quit / tot * 100).toFixed(1).replace(".", ",") : "0") + "%", l: "Quitados", c: "success", s: quit + " de " + tot + " casos" },
       { n: conf, l: "Para conferir", c: "warn" }
     ].map(kpiHtml).join("");
-    // indicadores do último mês de referência importado (valores separados, nunca somados)
-    var C = jurComps[0], P = jurComps[1], el = $("jurKpisComp");
-    el.hidden = !C;
-    if (!C) return;
-    function varTxt(k) {
-      if (!P) return "";
-      var d = Math.round(((Number(C[k]) || 0) - (Number(P[k]) || 0)) * 100) / 100;
-      return d ? (d > 0 ? "+" : "−") + money(Math.abs(d)) + " vs " + mesBR(P.mes) : "sem variação vs " + mesBR(P.mes);
-    }
-    el.innerHTML = '<div class="comp-tit">Competência <b>' + mesBR(C.mes) + "</b>" + (P ? " · comparada com " + mesBR(P.mes) : " · primeira competência importada") + "</div>" +
-      '<div class="kpis k4">' + [
-        { n: C.noRelatorio + " de " + C.casos, l: "Alunos da carteira no relatório" },
-        { n: money(C.aberto), l: "Valor em aberto no mês", c: "danger", s: varTxt("aberto") },
-        { n: money(C.negociado), l: "Valor negociado GM no mês", c: "info", s: varTxt("negociado") },
-        { n: C.casosAberto + " · " + C.casosNegociado, l: "Casos em aberto · negociados" },
-        { n: C.reclassificados || 0, l: "Mudaram de classificação", c: "brand" },
-        { n: C.semMovimento || 0, l: "Sem movimentação" },
-        { n: C.sairam || 0, l: "Deixaram de constar", c: "warn" },
-        { n: C.foraDoPainel || 0, l: "Alunos do relatório fora da carteira", s: "ignorados" }
-      ].map(kpiHtml).join("") + "</div>";
   }
 
   function filtrarJur() {
