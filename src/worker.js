@@ -2063,7 +2063,26 @@ function compSaida(r) {
 async function competenciasJuridico(env) {
   const r = (await env.DB.prepare("SELECT * FROM jur_competencias ORDER BY mes").all()).results;
   const { regras } = await regrasContas(env);
-  return json({ competencias: r.map(compSaida), regras: Object.values(regras) });
+  // por competência: cada carteira (pela carteira atual do caso) e o negociado separado em
+  // renegociação extrajudicial e judicial (pela conta financeira de cada parcela)
+  const cartDe = {};
+  (await env.DB.prepare("SELECT id, carteira FROM jur_casos").all()).results.forEach((c) => { cartDe[c.id] = c.carteira || "Sem carteira"; });
+  const det = {};
+  (await env.DB.prepare("SELECT mes, caso_id, valor_aberto, valor_negociado, contas FROM jur_hist WHERE ausente = 0").all()).results.forEach((h) => {
+    let contas = {};
+    try { contas = JSON.parse(h.contas || "{}") || {}; } catch (e) { contas = {}; }
+    let ext = 0, jud = 0;
+    Object.keys(contas).forEach((k) => { const v = Number(contas[k]) || 0; if (/extrajudicial/i.test(k)) ext += v; else if (/judicial/i.test(k)) jud += v; });
+    const neg = Number(h.valor_negociado) || 0, ab = Number(h.valor_aberto) || 0, outros = Math.max(0, neg - ext - jud);
+    const d = det[h.mes] || (det[h.mes] = { extrajudicial: 0, judicial: 0, outrosNeg: 0, casosExt: 0, casosJud: 0, carteiras: {} });
+    d.extrajudicial += ext; d.judicial += jud; d.outrosNeg += outros; if (ext > 0.009) d.casosExt++; if (jud > 0.009) d.casosJud++;
+    const k = cartDe[h.caso_id] || "Sem carteira";
+    const g = d.carteiras[k] || (d.carteiras[k] = { alunos: 0, aberto: 0, extrajudicial: 0, judicial: 0, outrosNeg: 0 });
+    g.alunos++; g.aberto += ab; g.extrajudicial += ext; g.judicial += jud; g.outrosNeg += outros;
+  });
+  const rd = (o) => { Object.keys(o).forEach((k) => { if (typeof o[k] === "number") o[k] = r2(o[k]); }); return o; };
+  Object.values(det).forEach((d) => { rd(d); Object.values(d.carteiras).forEach(rd); });
+  return json({ competencias: r.map((x) => ({ ...compSaida(x), detalhe: det[x.mes] || null })), regras: Object.values(regras) });
 }
 // Casos escolhidos na tela que não têm valor nenhum (em aberto e negociado zerados ou vazios):
 // ficam Quitado, com o aviso de conferência apagado e o registro nas tratativas. O servidor
