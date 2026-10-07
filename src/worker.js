@@ -2060,16 +2060,11 @@ function compSaida(r) {
   try { resumo = JSON.parse(r.resumo || "{}"); } catch (e) { resumo = {}; }
   return { mes: r.mes, dataRelatorio: r.data_relatorio || "", importadoEm: r.importado_em || "", importadoPor: r.importado_por || "", arquivos: r.arquivos || "", ...resumo };
 }
-async function competenciasJuridico(env) {
-  const r = (await env.DB.prepare("SELECT * FROM jur_competencias ORDER BY mes").all()).results;
-  const { regras } = await regrasContas(env);
-  // por competência: cada carteira (pela carteira atual do caso) e o negociado separado em
-  // renegociação extrajudicial e judicial (pela conta financeira de cada parcela)
-  const cartDe = {}, casosAc = (await env.DB.prepare("SELECT id, carteira, arquivado, acordo_tipo, acordo_valor, acordo_pago, acordo_saldo_aberto, acordo_saldo_vencer FROM jur_casos").all()).results;
-  casosAc.forEach((c) => { cartDe[c.id] = c.carteira || "Sem carteira"; });
-  // acordo GM de cada caso (o mesmo da ficha do aluno): valor do acordo por tipo (extrajudicial ou
-  // judicial), quanto já foi pago e quanto está em atraso (parcelas vencidas com saldo; sem as
-  // parcelas, saldo em aberto − a vencer)
+// Acordo GM de cada caso (o mesmo da ficha do aluno), somado por carteira: valor do acordo por tipo
+// (extrajudicial ou judicial), quanto já foi pago e quanto está em atraso (parcelas vencidas com
+// saldo; sem as parcelas, saldo em aberto − a vencer). Cada competência guarda esta posição ao ser
+// importada; a mais recente mostra a posição de hoje.
+async function acordosPorCarteira(env, casosAc) {
   const hj = hojeISO(), atrasoDe = {}, temParc = {};
   (await env.DB.prepare("SELECT caso_id, vencimento, saldo FROM jur_acordo_parcelas").all()).results.forEach((p) => {
     temParc[p.caso_id] = 1;
@@ -2086,6 +2081,17 @@ async function competenciasJuridico(env) {
     g.saldo += Number(c.acordo_saldo_aberto) || 0;
     g.atraso += temParc[c.id] ? (atrasoDe[c.id] || 0) : Math.max(0, (Number(c.acordo_saldo_aberto) || 0) - (Number(c.acordo_saldo_vencer) || 0));
   });
+  Object.values(acordos).forEach((g) => { Object.keys(g).forEach((k) => { if (k !== "casos") g[k] = r2(g[k]); }); });
+  return acordos;
+}
+async function competenciasJuridico(env) {
+  const r = (await env.DB.prepare("SELECT * FROM jur_competencias ORDER BY mes").all()).results;
+  const { regras } = await regrasContas(env);
+  // por competência: cada carteira (pela carteira atual do caso) e o negociado separado em
+  // renegociação extrajudicial e judicial (pela conta financeira de cada parcela)
+  const cartDe = {}, casosAc = (await env.DB.prepare("SELECT id, carteira, arquivado, acordo_tipo, acordo_valor, acordo_pago, acordo_saldo_aberto, acordo_saldo_vencer FROM jur_casos").all()).results;
+  casosAc.forEach((c) => { cartDe[c.id] = c.carteira || "Sem carteira"; });
+  const acordos = await acordosPorCarteira(env, casosAc);
   const det = {}, grupoDe = {};
   // grupo de cada conta na competência (como foi classificada na importação): só as contas do grupo
   // "negociado" entram no extrajudicial/judicial, para fechar com o valor negociado do mês
@@ -2121,8 +2127,9 @@ async function competenciasJuridico(env) {
   });
   const rd = (o) => { Object.keys(o).forEach((k) => { if (typeof o[k] === "number") o[k] = r2(o[k]); }); return o; };
   Object.values(det).forEach((d) => { rd(d); Object.values(d.carteiras).forEach(rd); Object.values(d.foraNeg).forEach(rd); });
-  Object.values(acordos).forEach(rd);
-  return json({ competencias: r.map((x) => ({ ...compSaida(x), detalhe: det[x.mes] || null })), acordos, regras: Object.values(regras) });
+
+  const ultimaComp = r.length ? r[r.length - 1].mes : "";
+  return json({ competencias: r.map((x) => { const s = compSaida(x); return { ...s, detalhe: det[x.mes] || null, acordos: x.mes !== ultimaComp && s.acordos ? s.acordos : acordos, acordosAtual: x.mes === ultimaComp || !s.acordos }; }), acordos, regras: Object.values(regras) });
 }
 // Casos escolhidos na tela que não têm valor nenhum (em aberto e negociado zerados ou vazios):
 // ficam Quitado, com o aviso de conferência apagado e o registro nas tratativas. O servidor
@@ -2350,8 +2357,18 @@ async function inadimplenciaJuridico(req, env, eu) {
   };
   if (b.simular) return json(saida);
   if (pendentes.length) throw new HttpError(400, "Classifique as contas financeiras que não estão nas regras antes de gravar: " + pendentes.map((c) => c || "(sem conta)").join(", ") + ".");
+  // posição dos acordos GM nesta competência (fica guardada; a competência anterior mais recente,
+  // se ainda não tinha, guarda a posição de agora antes de deixar de ser a última)
+  const snapAcordos = atualizaPainel ? await acordosPorCarteira(env, casos) : null;
+  if (snapAcordos) resumo.acordos = snapAcordos;
 
   const agora = agoraISO(), stmts = [];
+  if (snapAcordos && ultima && ultima !== mes) {
+    const cu = comps.find((c) => c.mes === ultima);
+    let ru = {};
+    try { ru = JSON.parse((cu && cu.resumo) || "{}") || {}; } catch (e) { ru = {}; }
+    if (cu && !ru.acordos) { ru.acordos = snapAcordos; stmts.push(env.DB.prepare("UPDATE jur_competencias SET resumo = ? WHERE mes = ?").bind(JSON.stringify(ru), ultima)); }
+  }
   if (Object.keys(novas).length) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('jur_contas_regras', ?)").bind(JSON.stringify({ ...salvas, ...novas })));
   // a competência é gravada inteira de novo: importar o mesmo mês outra vez não duplica nada
   stmts.push(env.DB.prepare("DELETE FROM jur_hist WHERE mes = ?").bind(mes));

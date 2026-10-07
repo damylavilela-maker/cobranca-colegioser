@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v96";
+  var VERSAO = "07/10 · v97";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3639,41 +3639,55 @@
       if (jurTab !== "evolucao") { evoJurChave = ""; return; }
       var Chart = r[0], comps = r[1].competencias || [];
       Chart.defaults.color = corVar("muted"); Chart.defaults.borderColor = corVar("line"); Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
-      $("jCompNota").textContent = comps.length ? comps.length + " competência(s) importada(s), desde " + mesBR(comps[0].mes) + "." : "Nenhuma competência importada ainda. Use “Importar inadimplência” para gravar o primeiro mês.";
-      // em aberto e negociado em linhas separadas (nunca somados)
+      $("jCompNota").textContent = comps.length ? comps.length + " competência(s) importada(s), desde " + mesBR(comps[0].mes) + ". Alunos e valor em aberto vêm do relatório de inadimplência; negociado, parcelas pagas e em atraso vêm do Acordo GM de cada aluno (a soma das carteiras abaixo)." : "Nenhuma competência importada ainda. Use “Importar inadimplência” para gravar o primeiro mês.";
+      // cada competência com os mesmos números do quadro por carteira (somados): alunos e valor em
+      // aberto pelo relatório; negociado, pago e em atraso pelo Acordo GM de cada aluno
+      comps.forEach(function (c) {
+        var t = { alunos: 0, so: 0, aberto: Number(c.aberto) || 0, ext: 0, jud: 0, out: 0, pago: 0, atraso: 0, acordos: 0 };
+        var cs = (c.detalhe && c.detalhe.carteiras) || {};
+        Object.keys(cs).forEach(function (k) { t.alunos += (cs[k].alunos || 0) + (cs[k].soAcordo || 0); t.so += cs[k].soAcordo || 0; });
+        if (!c.detalhe) t.alunos = c.noRelatorio || 0;
+        var ac = c.acordos || {};
+        Object.keys(ac).forEach(function (k) { var g = ac[k]; t.ext += g.extrajudicial || 0; t.jud += g.judicial || 0; t.out += g.outros || 0; t.pago += g.pago || 0; t.atraso += g.atraso || 0; t.acordos += g.casos || 0; });
+        t.neg = t.ext + t.jud + t.out;
+        c.ind = t;
+      });
       graficoJur("jChartComp", {
         type: "line",
         data: { labels: comps.map(function (c) { return mesBR(c.mes); }), datasets: [
-          { label: "Valor em aberto", borderColor: corVar("danger"), backgroundColor: corVar("danger"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.aberto || 0; }) },
-          { label: "Valor negociado GM", borderColor: corVar("info"), backgroundColor: corVar("info"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.negociado || 0; }) }
+          { label: "Valor em aberto", borderColor: corVar("danger"), backgroundColor: corVar("danger"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.ind.aberto; }) },
+          { label: "Negociado extrajudicial", borderColor: corVar("info"), backgroundColor: corVar("info"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.ind.ext; }) },
+          { label: "Negociado judicial", borderColor: corVar("warn"), backgroundColor: corVar("warn"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.ind.jud; }) }
         ] },
         options: { scales: { y: { ticks: { callback: function (v) { return "R$ " + Number(v).toLocaleString("pt-BR"); } } } } }
       });
       function varCel(c, i, k) {
         if (!i) return "";
-        var d = Math.round(((Number(c[k]) || 0) - (Number(comps[i - 1][k]) || 0)) * 100) / 100;
+        var d = Math.round(((Number(c.ind[k]) || 0) - (Number(comps[i - 1].ind[k]) || 0)) * 100) / 100;
         return '<div class="meta">' + (d ? (d > 0 ? "+" : "−") + money(Math.abs(d)) : "sem variação") + "</div>";
       }
       $("jCompTabela").innerHTML = comps.slice().reverse().map(function (c) {
-        var i = comps.indexOf(c);
-        return "<tr><td><b>" + mesBR(c.mes) + '</b><div class="meta">' + (c.importadoPor ? esc(c.importadoPor) + " · " : "") + dataCurta(c.importadoEm) + '</div></td><td class="tabular right">' + (c.noRelatorio || 0) + " de " + (c.casos || 0) +
-          '</td><td class="tabular right">' + money(c.aberto) + varCel(c, i, "aberto") + '</td><td class="tabular right">' + money(c.negociado) + varCel(c, i, "negociado") +
-          (c.detalhe ? '<div class="meta">extrajudicial ' + money(c.detalhe.extrajudicial) + "<br>judicial " + money(c.detalhe.judicial) + (c.detalhe.outrosNeg > 0.009 ? "<br>outras " + money(c.detalhe.outrosNeg) : "") + "</div>" : "") +
-          '</td><td class="tabular right">' + (c.casosAberto || 0) + " · " + (c.casosNegociado || 0) + '</td><td class="tabular right">' + (c.reclassificados || 0) + '</td><td class="tabular right">' + (c.semMovimento || 0) +
+        var i = comps.indexOf(c), t = c.ind;
+        return "<tr><td><b>" + mesBR(c.mes) + '</b><div class="meta">' + (c.importadoPor ? esc(c.importadoPor) + " · " : "") + dataCurta(c.importadoEm) + "</div>" + (c.acordosAtual ? '<div class="meta">acordos: posição de hoje</div>' : "") +
+          '</td><td class="tabular right">' + t.alunos + '<div class="meta">' + (t.so ? (t.alunos - t.so) + " no relatório + " + t.so + " só com acordo" : "de " + (c.casos || 0) + " casos") + "</div>" +
+          '</td><td class="tabular right">' + money(t.aberto) + varCel(c, i, "aberto") + '</td><td class="tabular right">' + money(t.ext) + varCel(c, i, "ext") +
+          '</td><td class="tabular right">' + money(t.jud) + varCel(c, i, "jud") + '</td><td class="tabular right">' + money(t.neg) + '<div class="meta">' + t.acordos + (t.acordos === 1 ? " acordo" : " acordos") + "</div>" +
+          '</td><td class="tabular right" style="color:var(--success)">' + money(t.pago) + '</td><td class="tabular right" style="color:var(--danger)">' + money(t.atraso) +
+          '</td><td class="tabular right">' + (c.reclassificados || 0) + '</td><td class="tabular right">' + (c.semMovimento || 0) +
           '</td><td class="tabular right">' + (c.sairam || 0) + '</td><td class="tabular right">' + (c.conferir || 0) + "</td></tr>";
       }).join("");
       $("jCompVazio").hidden = comps.length > 0;
-      evoJurComps = comps; evoJurAcordos = r[1].acordos || {}; renderCartComp();
+      evoJurComps = comps; renderCartComp();
     }).catch(function (x) { evoJurChave = ""; toast(x.message); });
   }
   // por carteira: alunos e valor em aberto da competência escolhida (relatório de inadimplência);
   // negociado, pago e em atraso pelo Acordo GM de cada aluno (os mesmos valores da ficha)
-  var evoJurComps = [], evoJurAcordos = {};
+  var evoJurComps = [];
   function renderCartComp() {
     var comps = evoJurComps.filter(function (c) { return c.detalhe; });
     var mes = prepararSelect($("jCartComp"), comps.slice().reverse().map(function (c) { return { v: c.mes, l: "Competência " + mesBR(c.mes) }; }), comps.length ? comps[comps.length - 1].mes : "");
     var c = null; comps.forEach(function (x) { if (x.mes === mes) c = x; });
-    var cs = c ? c.detalhe.carteiras || {} : {}, ac = evoJurAcordos || {}, nomes = {};
+    var cs = c ? c.detalhe.carteiras || {} : {}, ac = c ? c.acordos || {} : {}, nomes = {};
     Object.keys(cs).concat(Object.keys(ac)).forEach(function (k) { nomes[k] = 1; });
     if (!Object.keys(nomes).length) { $("jCartCompTab").innerHTML = '<tr><td colspan="8" class="empty muted">Nenhuma competência nem acordo registrado ainda.</td></tr>'; return; }
     var Z = { so: 0, alunos: 0, aberto: 0, casos: 0, extrajudicial: 0, judicial: 0, outros: 0, pago: 0, atraso: 0 }, tot = Object.assign({}, Z);
