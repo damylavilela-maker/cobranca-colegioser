@@ -2065,8 +2065,27 @@ async function competenciasJuridico(env) {
   const { regras } = await regrasContas(env);
   // por competência: cada carteira (pela carteira atual do caso) e o negociado separado em
   // renegociação extrajudicial e judicial (pela conta financeira de cada parcela)
-  const cartDe = {};
-  (await env.DB.prepare("SELECT id, carteira FROM jur_casos").all()).results.forEach((c) => { cartDe[c.id] = c.carteira || "Sem carteira"; });
+  const cartDe = {}, casosAc = (await env.DB.prepare("SELECT id, carteira, arquivado, acordo_tipo, acordo_valor, acordo_pago, acordo_saldo_aberto, acordo_saldo_vencer FROM jur_casos").all()).results;
+  casosAc.forEach((c) => { cartDe[c.id] = c.carteira || "Sem carteira"; });
+  // acordo GM de cada caso (o mesmo da ficha do aluno): valor do acordo por tipo (extrajudicial ou
+  // judicial), quanto já foi pago e quanto está em atraso (parcelas vencidas com saldo; sem as
+  // parcelas, saldo em aberto − a vencer)
+  const hj = hojeISO(), atrasoDe = {}, temParc = {};
+  (await env.DB.prepare("SELECT caso_id, vencimento, saldo FROM jur_acordo_parcelas").all()).results.forEach((p) => {
+    temParc[p.caso_id] = 1;
+    if (p.vencimento && p.vencimento < hj && Number(p.saldo) > 0.009) atrasoDe[p.caso_id] = (atrasoDe[p.caso_id] || 0) + Number(p.saldo);
+  });
+  const acordos = {};
+  casosAc.forEach((c) => {
+    if (c.arquivado || !(Number(c.acordo_valor) > 0)) return;
+    const k = c.carteira || "Sem carteira", g = acordos[k] || (acordos[k] = { casos: 0, extrajudicial: 0, judicial: 0, outros: 0, pago: 0, atraso: 0, saldo: 0 });
+    const v = Number(c.acordo_valor) || 0, tipo = c.acordo_tipo || "";
+    g.casos++;
+    if (/extrajudicial/i.test(tipo)) g.extrajudicial += v; else if (/judicial/i.test(tipo)) g.judicial += v; else g.outros += v;
+    g.pago += Number(c.acordo_pago) || 0;
+    g.saldo += Number(c.acordo_saldo_aberto) || 0;
+    g.atraso += temParc[c.id] ? (atrasoDe[c.id] || 0) : Math.max(0, (Number(c.acordo_saldo_aberto) || 0) - (Number(c.acordo_saldo_vencer) || 0));
+  });
   const det = {}, grupoDe = {};
   // grupo de cada conta na competência (como foi classificada na importação): só as contas do grupo
   // "negociado" entram no extrajudicial/judicial, para fechar com o valor negociado do mês
@@ -2089,7 +2108,8 @@ async function competenciasJuridico(env) {
   });
   const rd = (o) => { Object.keys(o).forEach((k) => { if (typeof o[k] === "number") o[k] = r2(o[k]); }); return o; };
   Object.values(det).forEach((d) => { rd(d); Object.values(d.carteiras).forEach(rd); Object.values(d.foraNeg).forEach(rd); });
-  return json({ competencias: r.map((x) => ({ ...compSaida(x), detalhe: det[x.mes] || null })), regras: Object.values(regras) });
+  Object.values(acordos).forEach(rd);
+  return json({ competencias: r.map((x) => ({ ...compSaida(x), detalhe: det[x.mes] || null })), acordos, regras: Object.values(regras) });
 }
 // Casos escolhidos na tela que não têm valor nenhum (em aberto e negociado zerados ou vazios):
 // ficam Quitado, com o aviso de conferência apagado e o registro nas tratativas. O servidor

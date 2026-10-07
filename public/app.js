@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v92";
+  var VERSAO = "07/10 · v93";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3639,7 +3639,7 @@
   // quantidade de casos (a atualização automática a cada 30s não repete a leitura)
   var evoJurChave = "";
   function renderEvoJur() {
-    var chave = jurComps.map(function (c) { return c.mes + "|" + c.importadoEm; }).join(",") + "#" + casosJur.length;
+    var chave = jurComps.map(function (c) { return c.mes + "|" + c.importadoEm; }).join(",") + "#" + casosJur.length + "#" + casosJur.reduce(function (s, c) { var a = c.acordo || {}; return s + (Number(a.valor) || 0) + (Number(a.pago) || 0) + (Number(a.saldoAberto) || 0); }, 0).toFixed(2);
     if (chave === evoJurChave) return;
     evoJurChave = chave;
     Promise.all([carregarChart(), api("GET", "/api/juridico/competencias")]).then(function (r) {
@@ -3670,28 +3670,31 @@
           '</td><td class="tabular right">' + (c.sairam || 0) + '</td><td class="tabular right">' + (c.conferir || 0) + "</td></tr>";
       }).join("");
       $("jCompVazio").hidden = comps.length > 0;
-      evoJurComps = comps; renderCartComp();
+      evoJurComps = comps; evoJurAcordos = r[1].acordos || {}; renderCartComp();
     }).catch(function (x) { evoJurChave = ""; toast(x.message); });
   }
-  // por carteira na competência escolhida (a mais recente, no início)
-  var evoJurComps = [];
+  // por carteira: alunos e valor em aberto da competência escolhida (relatório de inadimplência);
+  // negociado, pago e em atraso pelo Acordo GM de cada aluno (os mesmos valores da ficha)
+  var evoJurComps = [], evoJurAcordos = {};
   function renderCartComp() {
     var comps = evoJurComps.filter(function (c) { return c.detalhe; });
     var mes = prepararSelect($("jCartComp"), comps.slice().reverse().map(function (c) { return { v: c.mes, l: "Competência " + mesBR(c.mes) }; }), comps.length ? comps[comps.length - 1].mes : "");
     var c = null; comps.forEach(function (x) { if (x.mes === mes) c = x; });
-    if (!c) { $("jCartCompTab").innerHTML = '<tr><td colspan="6" class="empty muted">Nenhuma competência importada ainda.</td></tr>'; $("jCartCompNota").innerHTML = ""; return; }
-    var cs = c.detalhe.carteiras || {}, tot = { alunos: 0, aberto: 0, extrajudicial: 0, judicial: 0, outrosNeg: 0 };
-    function cel(g, neg) {
-      return '<td class="tabular right">' + g.alunos + '</td><td class="tabular right">' + money(g.aberto) + '</td><td class="tabular right">' + money(g.extrajudicial) +
-        '</td><td class="tabular right">' + money(g.judicial) + '</td><td class="tabular right">' + money(neg) + (g.outrosNeg > 0.009 ? '<div class="meta">inclui ' + money(g.outrosNeg) + " de outras contas</div>" : "") + "</td>";
+    var cs = c ? c.detalhe.carteiras || {} : {}, ac = evoJurAcordos || {}, nomes = {};
+    Object.keys(cs).concat(Object.keys(ac)).forEach(function (k) { nomes[k] = 1; });
+    if (!Object.keys(nomes).length) { $("jCartCompTab").innerHTML = '<tr><td colspan="8" class="empty muted">Nenhuma competência nem acordo registrado ainda.</td></tr>'; return; }
+    var Z = { alunos: 0, aberto: 0, casos: 0, extrajudicial: 0, judicial: 0, outros: 0, pago: 0, atraso: 0 }, tot = Object.assign({}, Z);
+    function cel(g) {
+      var neg = g.extrajudicial + g.judicial + g.outros;
+      return '<td class="tabular right">' + (c ? g.alunos : "—") + '</td><td class="tabular right">' + (c ? money(g.aberto) : "—") + '</td><td class="tabular right">' + money(g.extrajudicial) +
+        '</td><td class="tabular right">' + money(g.judicial) + '</td><td class="tabular right">' + money(neg) + (g.casos ? '<div class="meta">' + g.casos + (g.casos === 1 ? " acordo" : " acordos") + (g.outros > 0.009 ? " · " + money(g.outros) + " sem tipo" : "") + "</div>" : "") +
+        '</td><td class="tabular right" style="color:var(--success)">' + money(g.pago) + '</td><td class="tabular right" style="color:var(--danger)">' + money(g.atraso) + "</td>";
     }
-    $("jCartCompTab").innerHTML = Object.keys(cs).sort(function (a, b) { return b.localeCompare(a, "pt-BR"); }).map(function (k) {
-      var g = cs[k]; Object.keys(tot).forEach(function (f) { tot[f] += g[f] || 0; });
-      return "<tr><td><b>" + esc(k) + "</b></td>" + cel(g, g.extrajudicial + g.judicial + g.outrosNeg) + "</tr>";
-    }).join("") + '<tr class="tot"><td><b>Total</b></td>' + cel(tot, tot.extrajudicial + tot.judicial + tot.outrosNeg) + "</tr>";
-    var fora = c.detalhe.foraNeg || {}, GR = { aberto: "valor em aberto", ignorar: "ignorada" };
-    $("jCartCompNota").innerHTML = Object.keys(fora).length ? "Contas de renegociação classificadas fora do negociado nesta competência (não entram nas colunas acima): " +
-      Object.keys(fora).map(function (k) { return "<b>" + esc(k) + "</b> " + money(fora[k].valor) + " (" + esc(GR[fora[k].grupo] || fora[k].grupo) + ")"; }).join(" · ") + "." : "";
+    $("jCartCompTab").innerHTML = Object.keys(nomes).sort(function (a, b) { return b.localeCompare(a, "pt-BR"); }).map(function (k) {
+      var h = cs[k] || {}, a = ac[k] || {}, g = { alunos: h.alunos || 0, aberto: h.aberto || 0, casos: a.casos || 0, extrajudicial: a.extrajudicial || 0, judicial: a.judicial || 0, outros: a.outros || 0, pago: a.pago || 0, atraso: a.atraso || 0 };
+      Object.keys(tot).forEach(function (f) { tot[f] += g[f]; });
+      return "<tr><td><b>" + esc(k) + "</b></td>" + cel(g) + "</tr>";
+    }).join("") + '<tr class="tot"><td><b>Total</b></td>' + cel(tot) + "</tr>";
   }
   $("jCartComp").addEventListener("change", renderCartComp);
 
