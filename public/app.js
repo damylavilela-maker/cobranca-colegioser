@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v109";
+  var VERSAO = "07/10 · v110";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3340,6 +3340,14 @@
     for (var j = 0; j < h.length; j++) for (var m = 0; m < nomes.length; m++) if (nomes[m].length >= 5 && h[j] && h[j].indexOf(nomes[m]) !== -1) return j;
     return -1;
   }
+  // cada nome na ordem da lista: igual, ou contido no título ("Devido (R$)"); o primeiro nome achado vence
+  function colunaPorPrioridade(h, nomes) {
+    for (var n = 0; n < nomes.length; n++) {
+      var i = h.indexOf(nomes[n]); if (i !== -1) return i;
+      if (nomes[n].length >= 5) for (var j = 0; j < h.length; j++) if (h[j] && h[j].indexOf(nomes[n]) !== -1) return j;
+    }
+    return -1;
+  }
   function valorCelula(v) { if (v === "" || v == null) return undefined; return typeof v === "number" ? v : (/\d/.test(String(v)) ? parseMoneyBR(v) : undefined); }
   // data do Excel pode vir à meia-noite UTC (21h do dia anterior aqui): meio-dia evita cair no dia errado
   function dataCelula(v) { if (!v) return undefined; if (v instanceof Date) return isoLocal(new Date(v.getTime() + 12 * 3600000)); return parseDateBR(v) || undefined; }
@@ -3561,6 +3569,9 @@
   function linhasRelatorio(t) {
     var h = t.headers, ix = {};
     Object.keys(REL_COLUNAS).forEach(function (k) { ix[k] = colunaJur(h, REL_COLUNAS[k]); });
+    // valor: vale a ordem de preferência dos nomes (Devido = saldo + multa + juros, antes de Saldo),
+    // e não a posição da coluna no arquivo
+    ix.valor = colunaPorPrioridade(h, REL_COLUNAS.valor);
     if (ix.aluno === -1 && ix.ra === -1) return null;
     var out = [], conta = "";
     t.rows.forEach(function (r) {
