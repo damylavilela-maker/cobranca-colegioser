@@ -2105,6 +2105,19 @@ async function competenciasJuridico(env) {
     const k = cartDe[h.caso_id] || "Sem carteira";
     const g = d.carteiras[k] || (d.carteiras[k] = { alunos: 0, aberto: 0, extrajudicial: 0, judicial: 0, outrosNeg: 0 });
     g.alunos++; g.aberto += ab; g.extrajudicial += ext; g.judicial += jud; g.outrosNeg += outros;
+    (d.pres || (d.pres = {}))[h.caso_id] = 1;
+  });
+  // casos com Acordo GM que não vieram no relatório do mês (a renegociação pode não constar como
+  // inadimplência) também contam como alunos da carteira
+  Object.keys(det).forEach((mes) => {
+    const d = det[mes], pres = d.pres || {};
+    casosAc.forEach((c) => {
+      if (c.arquivado || pres[c.id] || !(Number(c.acordo_valor) > 0)) return;
+      const k = c.carteira || "Sem carteira";
+      const g = d.carteiras[k] || (d.carteiras[k] = { alunos: 0, aberto: 0, extrajudicial: 0, judicial: 0, outrosNeg: 0 });
+      g.soAcordo = (g.soAcordo || 0) + 1;
+    });
+    delete d.pres;
   });
   const rd = (o) => { Object.keys(o).forEach((k) => { if (typeof o[k] === "number") o[k] = r2(o[k]); }); return o; };
   Object.values(det).forEach((d) => { rd(d); Object.values(d.carteiras).forEach(rd); Object.values(d.foraNeg).forEach(rd); });
