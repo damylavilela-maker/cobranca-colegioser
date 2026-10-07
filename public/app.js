@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v102";
+  var VERSAO = "07/10 · v103";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2700,22 +2700,40 @@
   function kpiHtml(t) {
     return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ' title="' + esc(t.n) + '">' + t.n + '</div><div class="lbl">' + t.l + "</div>" + (t.s ? '<div class="kpi-sub muted">' + t.s + "</div>" : "") + "</div>";
   }
+  // parcelas do acordo GM em atraso: vencidas com saldo (sem a lista de parcelas: saldo em aberto − a vencer)
+  function atrasoAcordo(c, hj) {
+    var ac = c.acordo || {}, parc = c.acordoParc || [];
+    return parc.length ? parc.reduce(function (s, p) { return s + (p[0] && p[0] < hj ? Number(p[1]) || 0 : 0); }, 0)
+      : Math.max(0, (Number(ac.saldoAberto) || 0) - (Number(ac.saldoVencer) || 0));
+  }
+  // os valores negociados do topo vêm do Acordo GM de cada aluno (os mesmos da Evolução) e podem ser
+  // vistos por carteira no seletor do próprio quadro
+  var jurKpiCart = "";
   function renderKpisJur() {
-    var tot = casosJur.length, neg = 0, ab = 0, quit = 0, conf = 0;
+    var tot = casosJur.length, ab = 0, quit = 0, conf = 0, hj = hoje(), g = { tot: 0, ext: 0, jud: 0, pago: 0, atraso: 0, n: 0 };
+    if (jurKpiCart && !jurCarteiras.some(function (c) { return c.nome === jurKpiCart; })) jurKpiCart = "";
     casosJur.forEach(function (c) {
-      neg += Number(c.valorNegociado) || 0; ab += Number(c.valorAberto) || 0;
+      ab += Number(c.valorAberto) || 0;
       if (c.status === "quitado") quit++;
       if (c.flagConflito) conf++;
+      if (!temAcordo(c) || (jurKpiCart && c.carteira !== jurKpiCart)) return;
+      var a = c.acordo, v = Number(a.valor) || 0;
+      g.n++; g.tot += v; g.pago += Number(a.pago) || 0; g.atraso += atrasoAcordo(c, hj);
+      if (/extrajudicial/i.test(a.tipo || "")) g.ext += v; else if (/judicial/i.test(a.tipo || "")) g.jud += v;
     });
+    var sel = '<select class="kpi-mes" id="kpiJurCart" aria-label="Carteira dos valores negociados"><option value="">todas as carteiras</option>' +
+      jurCarteiras.map(function (c) { return '<option value="' + esc(c.nome) + '"' + (c.nome === jurKpiCart ? " selected" : "") + ">" + esc(c.nome) + "</option>"; }).join("") + "</select>";
     $("jurKpis").innerHTML = [
-      { n: tot, l: "Casos na carteira" },
+      { n: tot, l: "Casos na carteira", s: conf ? conf + " para conferir" : "" },
       { n: money(ab), l: "Valor em aberto", c: "danger" },
-      { n: money(neg), l: "Valor negociado GM", c: "info" },
+      { n: money(g.tot), l: "Total negociado · " + sel, c: "info", s: g.n + (g.n === 1 ? " acordo" : " acordos") + " · extrajudicial " + money(g.ext) + " · judicial " + money(g.jud) },
+      { n: money(g.pago), l: "Pago até o momento", c: "success", s: jurKpiCart ? esc(jurKpiCart) : "todas as carteiras" },
+      { n: money(Math.max(0, g.tot - g.pago)), l: "Negociado em aberto", c: "warn", s: "dos quais " + money(g.atraso) + " em atraso" },
       // uma casa decimal: com ~200 casos, cada caso vale meio ponto
-      { n: (tot ? (quit / tot * 100).toFixed(1).replace(".", ",") : "0") + "%", l: "Quitados", c: "success", s: quit + " de " + tot + " casos" },
-      { n: conf, l: "Para conferir", c: "warn" }
+      { n: (tot ? (quit / tot * 100).toFixed(1).replace(".", ",") : "0") + "%", l: "Quitados", c: "success", s: quit + " de " + tot + " casos" }
     ].map(kpiHtml).join("");
   }
+  $("jurKpis").addEventListener("change", function (e) { if (e.target.id === "kpiJurCart") { jurKpiCart = e.target.value; renderKpisJur(); } });
 
   function filtrarJur() {
     prepararSelect($("jStatus"), [{ v: "", l: "Todos os status" }].concat(opcoesStatusJur()), "");
@@ -2768,9 +2786,7 @@
         t.nAc++;
         if (/extrajudicial/i.test(ac.tipo || "")) t.ext += v; else if (/judicial/i.test(ac.tipo || "")) t.jud += v; else t.out += v;
         t.pago += Number(ac.pago) || 0;
-        var parc = c.acordoParc || [];
-        t.atraso += parc.length ? parc.reduce(function (s, p) { return s + (p[0] && p[0] < hj ? Number(p[1]) || 0 : 0); }, 0)
-          : Math.max(0, (Number(ac.saldoAberto) || 0) - (Number(ac.saldoVencer) || 0));
+        t.atraso += atrasoAcordo(c, hj);
       });
       var ci = carteiraAtual(), neg = t.ext + t.jud + t.out, stL = "";
       opcoesStatusJur().forEach(function (o) { if (o.v === stSel) stL = o.l; });
