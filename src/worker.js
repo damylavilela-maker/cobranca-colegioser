@@ -1738,6 +1738,19 @@ async function sincronizarIrmaosJur(env, casos) {
   const grupos = {};
   casos.forEach((c) => { (grupos[chaveRespJur(c)] = grupos[chaveRespJur(c)] || []).push(c); });
   const agora = agoraISO(), stmts = [];
+  // caso com Acordo GM ainda com saldo fica "Em negociação GM", mesmo com parcelas em atraso (o atraso
+  // aparece nos valores). Quitado e Verificar (conferência manual) não são mexidos.
+  casos.forEach((c) => {
+    const v = Number(c.acordo_valor) || 0;
+    if (!(v > 0)) return;
+    const saldo = c.acordo_saldo_aberto != null ? Number(c.acordo_saldo_aberto) : v - (Number(c.acordo_pago) || 0);
+    const antes = jurStatusValido(c.status);
+    if (!(saldo > 0.009) || antes !== "em_aberto") return;
+    c.status = "em_negociacao"; c.atualizado_em = agora; c.atualizado_por = "Automático (acordo GM)";
+    stmts.push(env.DB.prepare("UPDATE jur_casos SET status = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(c.status, agora, c.atualizado_por, c.id));
+    stmts.push(env.DB.prepare("INSERT INTO jur_obs (id, caso_id, data, texto, autor) VALUES (?,?,?,?,?)").bind(novoId(), c.id, agora,
+      `Status ${JUR_ST_ROTULO[antes]} → ${JUR_ST_ROTULO.em_negociacao} (automático: o caso tem Acordo GM com saldo de ${reais(saldo)}; parcelas em atraso aparecem em "negociado em atraso").`, "Automático"));
+  });
   Object.values(grupos).forEach((g) => {
     if (g.length < 2) return;
     const donos = g.filter((c) => Number(c.acordo_valor) > 0);
