@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v91";
+  var VERSAO = "07/10 · v92";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3679,7 +3679,7 @@
     var comps = evoJurComps.filter(function (c) { return c.detalhe; });
     var mes = prepararSelect($("jCartComp"), comps.slice().reverse().map(function (c) { return { v: c.mes, l: "Competência " + mesBR(c.mes) }; }), comps.length ? comps[comps.length - 1].mes : "");
     var c = null; comps.forEach(function (x) { if (x.mes === mes) c = x; });
-    if (!c) { $("jCartCompTab").innerHTML = '<tr><td colspan="6" class="empty muted">Nenhuma competência importada ainda.</td></tr>'; return; }
+    if (!c) { $("jCartCompTab").innerHTML = '<tr><td colspan="6" class="empty muted">Nenhuma competência importada ainda.</td></tr>'; $("jCartCompNota").innerHTML = ""; return; }
     var cs = c.detalhe.carteiras || {}, tot = { alunos: 0, aberto: 0, extrajudicial: 0, judicial: 0, outrosNeg: 0 };
     function cel(g, neg) {
       return '<td class="tabular right">' + g.alunos + '</td><td class="tabular right">' + money(g.aberto) + '</td><td class="tabular right">' + money(g.extrajudicial) +
@@ -3689,6 +3689,9 @@
       var g = cs[k]; Object.keys(tot).forEach(function (f) { tot[f] += g[f] || 0; });
       return "<tr><td><b>" + esc(k) + "</b></td>" + cel(g, g.extrajudicial + g.judicial + g.outrosNeg) + "</tr>";
     }).join("") + '<tr class="tot"><td><b>Total</b></td>' + cel(tot, tot.extrajudicial + tot.judicial + tot.outrosNeg) + "</tr>";
+    var fora = c.detalhe.foraNeg || {}, GR = { aberto: "valor em aberto", ignorar: "ignorada" };
+    $("jCartCompNota").innerHTML = Object.keys(fora).length ? "Contas de renegociação classificadas fora do negociado nesta competência (não entram nas colunas acima): " +
+      Object.keys(fora).map(function (k) { return "<b>" + esc(k) + "</b> " + money(fora[k].valor) + " (" + esc(GR[fora[k].grupo] || fora[k].grupo) + ")"; }).join(" · ") + "." : "";
   }
   $("jCartComp").addEventListener("change", renderCartComp);
 
