@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v110";
+  var VERSAO = "07/10 · v111";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2623,7 +2623,7 @@
   // composição dos casos no quadro do filtro: cada caso em um grupo só
   var jurGrupoSel = "";
   // irmão sem acordo e sem valor próprio, coberto pelo acordo GM de outro filho do mesmo responsável
-  function cobertoPorIrmao(c) { return !temAcordo(c) && !(Number(c.valorAberto) > 0) && !(Number(c.valorNegociado) > 0) && irmaosDe(c).some(temAcordo); }
+  function cobertoPorIrmao(c) { return !temAcordo(c) && !(Number(c.valorAberto) > 0) && !(Number(c.valorNegociado) > 0) && irmaosDe(c).some(function (y) { return temAcordo(y) && String(y.ra || "") !== String(c.ra || ""); }); }
   function grupoComp(c) { return c.status === "quitado" ? "quit" : temAcordo(c) || cobertoPorIrmao(c) ? "acordo" : Number(c.valorAberto) > 0 ? "aberto" : "sem"; }
   // irmãos (inclui o próprio): quem tem o acordo primeiro, depois pelo nome
   function irmaosDe(c) {
@@ -3024,13 +3024,15 @@
       $("jcTitulo").textContent = c.responsavel || c.aluno || "Responsável";
       $("jcSub").textContent = "Responsável financeiro · " + irs.length + " alunos · aberto: " + (c.aluno || "—") + " (RA " + (c.ra || "—") + " · " + (c.carteira || "—") + " · ano letivo " + (c.ano || "—") + ")";
       var t = { ab: 0, neg: 0, ac: 0, pago: 0 }, comAc = irs.filter(temAcordo);
+      // "no acordo de": só outro filho (RA diferente) e só quando este aluno não tem valor próprio
+      function cobreX(x) { if (Number(x.valorAberto) > 0 || Number(x.valorNegociado) > 0) return null; return comAc.filter(function (y) { return y.id !== x.id && String(y.ra || "") !== String(x.ra || ""); })[0] || null; }
       $("jcIrmaos").innerHTML = '<div class="table-wrap"><table class="data compacta"><thead><tr><th>Aluno</th><th>Carteira</th><th>Status</th><th class="right">Em aberto</th><th class="right">Negociado</th><th>Acordo GM</th></tr></thead><tbody>' +
         irs.map(function (x) {
           var a = x.acordo || {}; t.ab += Number(x.valorAberto) || 0; t.neg += Number(x.valorNegociado) || 0;
           if (temAcordo(x)) { t.ac += Number(a.valor) || 0; t.pago += Number(a.pago) || 0; }
           return '<tr class="click' + (x.id === c.id ? " sel" : "") + '" data-irmao="' + esc(x.id) + '"><td><b>' + esc(x.aluno || "—") + "</b>" + (x.id === c.id ? ' <span class="tag">aberto</span>' : "") + '<div class="meta">RA ' + esc(x.ra || "—") + "</div></td>" +
             "<td>" + esc(x.carteira || "—") + "</td><td>" + jpill(x.status) + '</td><td class="tabular right">' + money(x.valorAberto) + '</td><td class="tabular right">' + money(x.valorNegociado) +
-            "</td><td>" + (temAcordo(x) ? esc(a.tipo || "Acordo") + " · " + money(a.valor) + '<div class="meta">pago ' + money(a.pago) + "</div>" : comAc.length ? '<span class="meta">no acordo de ' + esc(comAc[0].aluno) + "</span>" : '<span class="muted">—</span>') + "</td></tr>";
+            "</td><td>" + (temAcordo(x) ? esc(a.tipo || "Acordo") + " · " + money(a.valor) + '<div class="meta">pago ' + money(a.pago) + "</div>" : cobreX(x) ? '<span class="meta">no acordo de ' + esc(cobreX(x).aluno) + "</span>" : '<span class="muted">—</span>') + "</td></tr>";
         }).join("") +
         '<tr><td><b>Total do responsável</b></td><td></td><td></td><td class="tabular right"><b>' + money(t.ab) + '</b></td><td class="tabular right"><b>' + money(t.neg) + "</b></td><td>" + (t.ac ? "<b>" + money(t.ac) + '</b><div class="meta">pago ' + money(t.pago) + "</div>" : "—") + "</td></tr></tbody></table></div>";
     }

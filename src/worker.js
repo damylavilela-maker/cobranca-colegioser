@@ -1763,6 +1763,8 @@ async function sincronizarIrmaosJur(env, casos) {
     if (donos.some((d) => jurStatusValido(d.status) !== st)) return; // acordos com status diferentes: não decide sozinho
     g.forEach((c) => {
       if (Number(c.acordo_valor) > 0 || Number(c.valor_aberto) > 0.009 || Number(c.valor_negociado) > 0.009) return;
+      // o mesmo aluno em outra carteira (mesmo RA) não é irmão: o acordo de uma carteira não cobre a outra
+      if (c.ra && donos.every((d) => String(d.ra || "") === String(c.ra))) return;
       const antes = jurStatusValido(c.status);
       if (antes === st) return;
       c.status = st; c.atualizado_em = agora; c.atualizado_por = "Automático (irmão)";
@@ -2346,7 +2348,11 @@ async function recebimentosJuridico(req, env, eu) {
       if (c.acordo_saldo_vencer != null) c.acordo_saldo_vencer = r2(Math.max(0, Math.min(Number(c.acordo_saldo_aberto ?? Infinity), Number(c.acordo_saldo_vencer) - m.vencerSemParc)));
     }
     m.quitou = Number(c.acordo_valor) > 0 && c.acordo_saldo_aberto != null && Number(c.acordo_saldo_aberto) <= 0.009;
-    if (m.quitou) (porGrupo[chaveRespJur(c)] || [c]).forEach((x) => { if (x.status !== "quitado" && !quitar.includes(x)) quitar.push(x); });
+    // quita o dono do acordo e os irmãos cobertos (sem valor próprio); o mesmo aluno em outra carteira não
+    if (m.quitou) (porGrupo[chaveRespJur(c)] || [c]).forEach((x) => {
+      const coberto = x.id === c.id || (!(Number(x.valor_aberto) > 0.009) && !(Number(x.valor_negociado) > 0.009) && !(Number(x.acordo_valor) > 0) && String(x.ra || "") !== String(c.ra || ""));
+      if (coberto && x.status !== "quitado" && !quitar.includes(x)) quitar.push(x);
+    });
   });
   const resumo = {
     linhas: saida.length, novos: novos.length, valorNovo: r2(novos.reduce((s, n) => s + n.item.valor, 0)),
