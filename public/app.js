@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v104";
+  var VERSAO = "07/10 · v105";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2709,6 +2709,22 @@
   // os valores negociados do topo vêm do Acordo GM de cada aluno (os mesmos da Evolução) e podem ser
   // vistos por carteira no seletor do próprio quadro
   var jurKpiCart = "";
+  // acordos da carteira escolhida (todos os status) separados por status: a soma das linhas é o
+  // total do topo do Painel para essa carteira; a linha do status filtrado fica destacada
+  function acordosPorStatusHtml(stSel, hj) {
+    var por = {}, tot = { n: 0, v: 0, pago: 0, atraso: 0 };
+    casosJur.forEach(function (c) {
+      if ((jurCartSel && c.carteira !== jurCartSel) || !temAcordo(c)) return;
+      var g = por[c.status] || (por[c.status] = { n: 0, v: 0, pago: 0, atraso: 0 }), a = c.acordo;
+      [g, tot].forEach(function (x) { x.n++; x.v += Number(a.valor) || 0; x.pago += Number(a.pago) || 0; x.atraso += atrasoAcordo(c, hj); });
+    });
+    if (!tot.n) return "";
+    function cel(x) { return '<td class="tabular right">' + x.n + '</td><td class="tabular right">' + money(x.v) + '</td><td class="tabular right">' + money(x.pago) + '</td><td class="tabular right">' + money(Math.max(0, x.v - x.pago - x.atraso)) + '</td><td class="tabular right">' + money(x.atraso) + "</td>"; }
+    return '<div class="fx-comp"><div class="meta" style="margin-bottom:4px">Acordos GM ' + (jurCartSel ? "da " + esc(jurCartSel) : "de todas as carteiras") + " por status (a soma é o total do topo do Painel" + (jurCartSel ? " com esta carteira" : "") + "):</div>" +
+      '<div class="table-wrap"><table class="data compacta"><thead><tr><th>Status</th><th class="right">Acordos</th><th class="right">Total negociado</th><th class="right">Pago</th><th class="right">A vencer</th><th class="right">Em atraso</th></tr></thead><tbody>' +
+      opcoesStatusJur().filter(function (o) { return por[o.v]; }).map(function (o) { return "<tr" + (o.v === stSel ? ' class="sel"' : "") + "><td>" + jpill(o.v) + "</td>" + cel(por[o.v]) + "</tr>"; }).join("") +
+      "<tr><td><b>Total</b></td>" + cel(tot) + "</tr></tbody></table></div></div>";
+  }
   function renderKpisJur() {
     var tot = casosJur.length, ab = 0, quit = 0, conf = 0, hj = hoje(), g = { tot: 0, ext: 0, jud: 0, pago: 0, atraso: 0, n: 0 };
     if (jurKpiCart && !jurCarteiras.some(function (c) { return c.nome === jurKpiCart; })) jurKpiCart = "";
@@ -2796,8 +2812,9 @@
         (stSel ? " · status <b>" + esc(stL || stSel) + "</b>" : "") + " · " + vis.length + (vis.length === 1 ? " caso" : " casos") + (vis.length !== casosJur.filter(function (c) { return (!jurCartSel || c.carteira === jurCartSel) && (!stSel || c.status === stSel); }).length ? " (com a busca/movimentação)" : "") + '</div><div class="fx-itens">' +
         item(t.ab, "danger", "em aberto · " + t.nAb + (t.nAb === 1 ? " caso" : " casos")) +
         item(neg, "info", "total negociado · " + t.nAc + (t.nAc === 1 ? " acordo" : " acordos") + '<br>extrajudicial ' + money(t.ext) + " · judicial " + money(t.jud) + (t.out > 0.009 ? " · sem tipo " + money(t.out) : "")) +
-        item(t.pago, "success", "parcelas pagas") +
-        item(t.atraso, "danger", "parcelas em atraso") +
+        item(t.pago, "success", "pago até o momento") +
+        item(Math.max(0, neg - t.pago - t.atraso), "warn", "negociado a vencer") +
+        item(t.atraso, "danger", "negociado em atraso") +
         "</div>" +
         '<div class="fx-comp"><b>' + vis.length + (vis.length === 1 ? " caso" : " casos") + "</b> = " +
         [[cmp.aberto, "em aberto (sem acordo)", "danger", "aberto"], [cmp.acordo, "com acordo GM (inclui irmãos cobertos)", "info", "acordo"], [cmp.quit, cmp.quit === 1 ? "quitado" : "quitados", "success", "quit"], [cmp.sem, "sem valor e não quitados", "gray", "sem"]]
@@ -2805,7 +2822,8 @@
             return '<button type="button" class="fx-grupo' + (jurGrupoSel === x[3] ? " on" : "") + '" data-grupo="' + x[3] + '" title="Mostrar só estes casos na lista" style="color:var(--' + x[2] + ')"><b>' + x[0] + "</b> " + x[1] + "</button>";
           }).join(" + ") +
         (jurGrupoSel ? ' <button type="button" class="linkbtn" data-grupo="">Mostrar todos</button>' : '<span class="meta"> · clique em um grupo para ver os casos</span>') +
-        (cmpSem.length && cmpSem.length <= 5 ? '<div class="meta" style="margin-top:4px">Sem valor e não quitados: ' + cmpSem.map(function (c) { return esc(c.aluno || "—") + (c.ra ? " (RA " + esc(c.ra) + ")" : ""); }).join(", ") + "</div>" : "") + "</div>";
+        (cmpSem.length && cmpSem.length <= 5 ? '<div class="meta" style="margin-top:4px">Sem valor e não quitados: ' + cmpSem.map(function (c) { return esc(c.aluno || "—") + (c.ra ? " (RA " + esc(c.ra) + ")" : ""); }).join(", ") + "</div>" : "") + "</div>" +
+        acordosPorStatusHtml(stSel, hj);
       cb.hidden = false;
     } else { cb.hidden = true; cb.innerHTML = ""; jurGrupoSel = ""; }
     // grupo da composição escolhido no quadro (clique): a lista mostra só esses casos

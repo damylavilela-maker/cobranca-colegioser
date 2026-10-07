@@ -438,3 +438,4 @@ table.data.compacta td.right{white-space:nowrap}
 #jcIrmaos tr.sel td{background:var(--brand-soft, rgba(46,160,90,.12))}
 .faixa-box .fx-comp{margin-top:10px;padding-top:8px;border-top:1px solid var(--line);font-size:13px}
 .fx-grupo{background:none;border:1px solid transparent;border-radius:8px;padding:2px 6px;font:inherit;cursor:pointer}.fx-grupo:hover{border-color:var(--line)}.fx-grupo.on{border-color:currentColor;background:var(--surface-2,rgba(255,255,255,.06))}
+#jurCartBox tr.sel td{background:var(--surface-2,rgba(255,255,255,.06));font-weight:700}
