@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v101";
+  var VERSAO = "07/10 · v102";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2622,7 +2622,9 @@
   function temAcordo(c) { return Number((c.acordo || {}).valor) > 0; }
   // composição dos casos no quadro do filtro: cada caso em um grupo só
   var jurGrupoSel = "";
-  function grupoComp(c) { return c.status === "quitado" ? "quit" : temAcordo(c) ? "acordo" : Number(c.valorAberto) > 0 ? "aberto" : "sem"; }
+  // irmão sem acordo e sem valor próprio, coberto pelo acordo GM de outro filho do mesmo responsável
+  function cobertoPorIrmao(c) { return !temAcordo(c) && !(Number(c.valorAberto) > 0) && !(Number(c.valorNegociado) > 0) && irmaosDe(c).some(temAcordo); }
+  function grupoComp(c) { return c.status === "quitado" ? "quit" : temAcordo(c) || cobertoPorIrmao(c) ? "acordo" : Number(c.valorAberto) > 0 ? "aberto" : "sem"; }
   // irmãos (inclui o próprio): quem tem o acordo primeiro, depois pelo nome
   function irmaosDe(c) {
     var k = chaveResp(c);
@@ -2781,7 +2783,7 @@
         item(t.atraso, "danger", "parcelas em atraso") +
         "</div>" +
         '<div class="fx-comp"><b>' + vis.length + (vis.length === 1 ? " caso" : " casos") + "</b> = " +
-        [[cmp.aberto, "em aberto (sem acordo)", "danger", "aberto"], [cmp.acordo, "com acordo GM", "info", "acordo"], [cmp.quit, cmp.quit === 1 ? "quitado" : "quitados", "success", "quit"], [cmp.sem, "sem valor e não quitados", "gray", "sem"]]
+        [[cmp.aberto, "em aberto (sem acordo)", "danger", "aberto"], [cmp.acordo, "com acordo GM (inclui irmãos cobertos)", "info", "acordo"], [cmp.quit, cmp.quit === 1 ? "quitado" : "quitados", "success", "quit"], [cmp.sem, "sem valor e não quitados", "gray", "sem"]]
           .filter(function (x, i) { return x[0] || i < 3; }).map(function (x) {
             return '<button type="button" class="fx-grupo' + (jurGrupoSel === x[3] ? " on" : "") + '" data-grupo="' + x[3] + '" title="Mostrar só estes casos na lista" style="color:var(--' + x[2] + ')"><b>' + x[0] + "</b> " + x[1] + "</button>";
           }).join(" + ") +

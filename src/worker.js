@@ -1730,8 +1730,37 @@ async function casoCompleto(env, id) {
   return json({ caso: casoSaida(await buscarCasoJur(env, id), await obsDoCaso(env, id)) });
 }
 
+// Irmãos do mesmo responsável financeiro: o acordo GM sai no nome de um filho e cobre os outros.
+// O irmão sem acordo próprio e sem valor próprio (em aberto e negociado zerados) fica sempre com o
+// mesmo status do irmão que tem o acordo. Roda a cada listagem, em memória (O(n)), e só grava os
+// casos que mudaram — normalmente nenhum.
+async function sincronizarIrmaosJur(env, casos) {
+  const grupos = {};
+  casos.forEach((c) => { (grupos[chaveRespJur(c)] = grupos[chaveRespJur(c)] || []).push(c); });
+  const agora = agoraISO(), stmts = [];
+  Object.values(grupos).forEach((g) => {
+    if (g.length < 2) return;
+    const donos = g.filter((c) => Number(c.acordo_valor) > 0);
+    if (!donos.length) return;
+    const st = jurStatusValido(donos[0].status);
+    if (donos.some((d) => jurStatusValido(d.status) !== st)) return; // acordos com status diferentes: não decide sozinho
+    g.forEach((c) => {
+      if (Number(c.acordo_valor) > 0 || Number(c.valor_aberto) > 0.009 || Number(c.valor_negociado) > 0.009) return;
+      const antes = jurStatusValido(c.status);
+      if (antes === st) return;
+      c.status = st; c.atualizado_em = agora; c.atualizado_por = "Automático (irmão)";
+      stmts.push(env.DB.prepare("UPDATE jur_casos SET status = ?, atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(st, agora, c.atualizado_por, c.id));
+      stmts.push(env.DB.prepare("INSERT INTO jur_obs (id, caso_id, data, texto, autor) VALUES (?,?,?,?,?)").bind(novoId(), c.id, agora,
+        `Status ${JUR_ST_ROTULO[antes]} → ${JUR_ST_ROTULO[st]} (automático: mesmo status de ${donos.map((d) => d.aluno).join(", ")}, cujo acordo GM cobre este aluno).`, "Automático"));
+    });
+  });
+  if (stmts.length) await executarEmLotes(env, stmts);
+  return stmts.length / 2;
+}
+
 async function listarJuridico(env) {
   const casos = (await env.DB.prepare("SELECT * FROM jur_casos WHERE arquivado = 0 ORDER BY aluno").all()).results;
+  await sincronizarIrmaosJur(env, casos);
   const porCaso = {};
   (await env.DB.prepare("SELECT caso_id, id, data, texto, autor, editado_em, editado_por FROM jur_obs ORDER BY data DESC").all()).results
     .forEach((o) => { (porCaso[o.caso_id] = porCaso[o.caso_id] || []).push({ id: o.id, data: o.data, texto: o.texto, autor: o.autor, editado_em: o.editado_em, editado_por: o.editado_por }); });
