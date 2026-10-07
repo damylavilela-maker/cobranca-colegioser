@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v107";
+  var VERSAO = "07/10 · v108";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -2992,6 +2992,23 @@
         .catch(function (x) { mostrarErro($("jcErr"), x.message); });
     }
   });
+  // excluir uma conta financeira do aluno (ex.: débito de outra conta, fora do jurídico) ou voltar a considerar
+  $("jcHist").addEventListener("click", function (e) {
+    if (!casoJur) return;
+    var bx = e.target.closest("[data-excluir-conta]"), bv = e.target.closest("[data-voltar-conta]"), id = casoJur.id;
+    if (bx) {
+      if (!bx.classList.contains("armed")) { bx.classList.add("armed"); bx.textContent = "Confirmar exclusão"; return; }
+      bx.disabled = true;
+      api("POST", "/api/juridico/" + encodeURIComponent(id) + "/excluir-conta", { mes: bx.getAttribute("data-mes"), conta: bx.getAttribute("data-excluir-conta") })
+        .then(function (d) { atualizarFicha(d, "Conta excluída dos valores do aluno."); carregarHistCaso(id); })
+        .catch(function (x) { bx.disabled = false; mostrarErro($("jcErr"), x.message); });
+    } else if (bv) {
+      bv.disabled = true;
+      api("POST", "/api/juridico/" + encodeURIComponent(id) + "/voltar-conta", { conta: bv.getAttribute("data-voltar-conta") })
+        .then(function (d) { atualizarFicha(d, "A conta voltou a ser considerada."); carregarHistCaso(id); })
+        .catch(function (x) { bv.disabled = false; mostrarErro($("jcErr"), x.message); });
+    }
+  });
   $("jcIrmaos").addEventListener("click", function (e) {
     var tr = e.target.closest("tr[data-irmao]"); if (!tr || !casoJur) return;
     var id = tr.getAttribute("data-irmao");
@@ -3111,10 +3128,14 @@
       var h = d.historico || [];
       el.innerHTML = h.length ? '<div class="table-wrap" style="max-height:220px;overflow:auto"><table class="data compacta"><thead><tr><th>Mês</th><th class="right">Em aberto</th><th class="right">Negociado</th><th>Movimento</th><th>Contas financeiras</th></tr></thead><tbody>' +
         h.slice().reverse().map(function (x) {
-          var contas = Object.keys(x.contas || {}).map(function (k) { return esc(k) + " " + money(x.contas[k]); }).join("<br>");
+          var contas = Object.keys(x.contas || {}).map(function (k) { return esc(k) + " " + money(x.contas[k]) + ' <button type="button" class="linkbtn danger" data-excluir-conta="' + esc(k) + '" data-mes="' + esc(x.mes) + '" title="Tirar esta conta dos valores do aluno (e das próximas importações)">Excluir</button>'; }).join("<br>");
           return "<tr><td><b>" + mesBR(x.mes) + '</b></td><td class="tabular right">' + (x.ausente ? "—" : money(x.valorAberto)) + '</td><td class="tabular right">' + (x.ausente ? "—" : money(x.valorNegociado)) + "</td><td>" + movPill(x.movimento) +
             (x.conferir ? '<div class="meta" style="color:var(--warn)">' + esc(x.conferir) + "</div>" : "") + '</td><td class="meta">' + (contas || "—") + "</td></tr>";
         }).join("") + "</tbody></table></div>" : '<div class="meta">Nenhuma competência importada ainda para este aluno.</div>';
+      var ex = d.contasExcluidas || [];
+      if (ex.length) el.insertAdjacentHTML("beforeend", '<div class="meta" style="margin-top:6px"><b>Contas excluídas deste aluno</b> (não entram nos valores nem nas próximas importações):</div>' + ex.map(function (x) {
+        return '<div class="meta">' + esc(x.conta) + " · " + money(x.valor) + " em " + mesBR(x.mes) + (x.criadoPor ? " · por " + esc(x.criadoPor) : "") + ' <button type="button" class="linkbtn" data-voltar-conta="' + esc(x.conta) + '">Voltar a considerar</button></div>';
+      }).join(""));
     }).catch(function () { el.innerHTML = '<div class="meta">Não foi possível carregar o histórico.</div>'; });
   }
 

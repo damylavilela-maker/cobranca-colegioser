@@ -177,6 +177,8 @@ const SCHEMA = [
   // dívida atualizada, acordo, entrada e as parcelas com vencimento (cronograma em JSON [[venc, valor]])
   `CREATE TABLE IF NOT EXISTS jur_negociacoes (id TEXT PRIMARY KEY, caso_id TEXT NOT NULL, divida REAL, acordo REAL, entrada REAL, data_entrada TEXT NOT NULL DEFAULT '', parcelas INTEGER NOT NULL DEFAULT 0, cronograma TEXT NOT NULL DEFAULT '[]', obs TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '', atualizado_em TEXT NOT NULL DEFAULT '', atualizado_por TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_jur_neg_caso ON jur_negociacoes(caso_id)`,
+  // contas financeiras excluídas de um caso (não entram mais nos valores nem nas importações dele)
+  `CREATE TABLE IF NOT EXISTS jur_contas_excluidas (caso_id TEXT NOT NULL, conta TEXT NOT NULL, mes TEXT NOT NULL DEFAULT '', valor REAL NOT NULL DEFAULT 0, grupo TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '', PRIMARY KEY (caso_id, conta))`,
   // pagamentos lidos do relatório de recebimento (a chave impede lançar a mesma parcela duas vezes)
   `CREATE TABLE IF NOT EXISTS jur_recebimentos (chave TEXT PRIMARY KEY, caso_id TEXT NOT NULL, ra TEXT NOT NULL DEFAULT '', aluno TEXT NOT NULL DEFAULT '', parcela TEXT NOT NULL DEFAULT '', vencimento TEXT NOT NULL DEFAULT '', data_pagamento TEXT NOT NULL DEFAULT '', valor REAL NOT NULL DEFAULT 0, conta TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, criado_por TEXT NOT NULL DEFAULT '')`,
   // aba Cheques: cheques devolvidos e cheques recebidos (tipo), como nas abas da planilha CHEQUES_SER
@@ -452,6 +454,8 @@ async function rotear(req, env, url) {
     if (partes.length === 2 && m === "PATCH") return alterarCasoJur(req, env, eu, partes[1]);
     if (partes.length === 2 && m === "DELETE") { exigirAdmin(eu); return excluirCasoJur(env, partes[1]); }
     if (partes.length === 3 && partes[2] === "obs" && m === "POST") return novaObsJur(req, env, eu, partes[1]);
+    if (partes.length === 3 && partes[2] === "excluir-conta" && m === "POST") return excluirContaJur(req, env, eu, partes[1]);
+    if (partes.length === 3 && partes[2] === "voltar-conta" && m === "POST") return voltarContaJur(req, env, eu, partes[1]);
     if (partes.length === 3 && partes[2] === "negociacoes" && m === "POST") return salvarNegociacaoJur(req, env, eu, partes[1], null);
     if (partes.length === 4 && partes[2] === "negociacoes" && m === "PATCH") return salvarNegociacaoJur(req, env, eu, partes[1], partes[3]);
     if (partes.length === 4 && partes[2] === "negociacoes" && m === "DELETE") return excluirNegociacaoJur(env, eu, partes[1], partes[3]);
@@ -1890,6 +1894,7 @@ async function excluirCasoJur(env, id) {
     env.DB.prepare("DELETE FROM jur_acordo_parcelas WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_negociacoes WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_recebimentos WHERE caso_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM jur_contas_excluidas WHERE caso_id = ?").bind(id),
     env.DB.prepare("DELETE FROM jur_casos WHERE id = ?").bind(id)
   ]);
   return json({ ok: true });
@@ -2197,7 +2202,9 @@ async function historicoCasoJur(env, id) {
   await buscarCasoJur(env, id);
   const r = (await env.DB.prepare("SELECT * FROM jur_hist WHERE caso_id = ? ORDER BY mes").bind(id).all()).results;
   const ap = (await env.DB.prepare("SELECT * FROM jur_acordo_parcelas WHERE caso_id = ? ORDER BY acordo, vencimento").bind(id).all()).results;
-  return json({ negociacoes: await negociacoesDoCaso(env, id), acordoParcelas: ap.map((p) => ({ acordo: p.acordo, parcela: p.parcela, vencimento: p.vencimento, valor: p.valor, pago: p.pago, dataPagamento: p.data_pagamento, saldo: p.saldo, situacao: p.situacao })), historico: r.map((h) => {
+  const excl = (await env.DB.prepare("SELECT conta, mes, valor, grupo, criado_em, criado_por FROM jur_contas_excluidas WHERE caso_id = ?").bind(id).all()).results
+    .map((x) => ({ conta: x.conta, mes: x.mes, valor: x.valor, grupo: x.grupo, criadoEm: x.criado_em, criadoPor: x.criado_por }));
+  return json({ contasExcluidas: excl, negociacoes: await negociacoesDoCaso(env, id), acordoParcelas: ap.map((p) => ({ acordo: p.acordo, parcela: p.parcela, vencimento: p.vencimento, valor: p.valor, pago: p.pago, dataPagamento: p.data_pagamento, saldo: p.saldo, situacao: p.situacao })), historico: r.map((h) => {
     let contas = {};
     try { contas = JSON.parse(h.contas || "{}"); } catch (e) { contas = {}; }
     return { mes: h.mes, valorAberto: h.valor_aberto, valorNegociado: h.valor_negociado, parcelasAberto: h.parcelas_aberto, parcelasNegociado: h.parcelas_negociado, contas, ausente: !!h.ausente, movimento: h.movimento, conferir: h.conferir };
@@ -2362,6 +2369,75 @@ async function recebimentosJuridico(req, env, eu) {
   return json({ resumo, itens: saida, gravado: true });
 }
 
+// ---- conta financeira excluída de um caso (ex.: débito de outra conta que não é do jurídico).
+// Sai do valor do mês (histórico) e, se for o mês atual do caso, dos valores do Painel; e não
+// entra mais nas próximas importações para este aluno. "Voltar a considerar" desfaz.
+async function grupoDaContaNoMes(env, mes, conta) {
+  const comp = await env.DB.prepare("SELECT resumo FROM jur_competencias WHERE mes = ?").bind(mes).first();
+  let resumo = {};
+  try { resumo = JSON.parse((comp && comp.resumo) || "{}") || {}; } catch (e) { resumo = {}; }
+  const pc = (resumo.porConta || []).find((x) => (x.rotulo || x.conta) === conta);
+  if (pc && pc.grupo) return pc.grupo;
+  const { regras } = await regrasContas(env);
+  const r = regraConta(conta, regras);
+  return r ? r.grupo : "aberto";
+}
+// tira (sinal −1) ou devolve (+1) o valor de uma conta no histórico do mês e, se for o mês atual
+// do caso, nos valores do Painel
+async function moverContaJur(env, c, mes, conta, valor, grupo, sinal) {
+  const stmts = [];
+  const h = await env.DB.prepare("SELECT * FROM jur_hist WHERE mes = ? AND caso_id = ?").bind(mes, c.id).first();
+  if (h) {
+    let contas = {};
+    try { contas = JSON.parse(h.contas || "{}") || {}; } catch (e) { contas = {}; }
+    if (sinal < 0) delete contas[conta]; else contas[conta] = valor;
+    const ab = r2(Math.max(0, (Number(h.valor_aberto) || 0) + (grupo === "aberto" ? sinal * valor : 0)));
+    const neg = r2(Math.max(0, (Number(h.valor_negociado) || 0) + (grupo === "negociado" ? sinal * valor : 0)));
+    stmts.push(env.DB.prepare("UPDATE jur_hist SET contas = ?, valor_aberto = ?, valor_negociado = ? WHERE mes = ? AND caso_id = ?").bind(JSON.stringify(contas), ab, neg, mes, c.id));
+    if (c.competencia === mes && (grupo === "aberto" || grupo === "negociado")) {
+      let venc = lerParcelasVenc(c.parcelas_venc);
+      // parcelas desta conta (as importadas com o nome da conta); sem esse dado, se o grupo zerou, saem todas dele
+      if (sinal < 0) {
+        const tipo = grupo === "aberto" ? "a" : "n";
+        venc = venc.filter((p) => !(p[3] === conta || (!p[3] && p[2] === tipo && (grupo === "aberto" ? ab : neg) <= 0.009)));
+      }
+      const txt = Object.keys(contas).sort((x, y) => contas[y] - contas[x]).join(", ").slice(0, 200);
+      stmts.push(env.DB.prepare("UPDATE jur_casos SET valor_aberto = ?, valor_negociado = ?, conta_financeira = ?, parcelas_venc = ? WHERE id = ?").bind(ab, neg, txt, JSON.stringify(venc), c.id));
+    }
+  }
+  return stmts;
+}
+async function excluirContaJur(req, env, eu, id) {
+  const c = await buscarCasoJur(env, id);
+  const b = await corpo(req);
+  const mes = /^\d{4}-\d{2}$/.test(b.mes || "") ? b.mes : "", conta = texto(b.conta, 200);
+  if (!mes || !conta) throw new HttpError(400, "Informe o mês e a conta financeira.");
+  const h = await env.DB.prepare("SELECT contas FROM jur_hist WHERE mes = ? AND caso_id = ?").bind(mes, id).first();
+  let contas = {};
+  try { contas = JSON.parse((h && h.contas) || "{}") || {}; } catch (e) { contas = {}; }
+  if (!Object.prototype.hasOwnProperty.call(contas, conta)) throw new HttpError(404, "Esta conta não está no relatório deste mês para o aluno.");
+  const valor = numero(contas[conta]), grupo = await grupoDaContaNoMes(env, mes, conta), agora = agoraISO();
+  const stmts = await moverContaJur(env, c, mes, conta, valor, grupo, -1);
+  stmts.push(env.DB.prepare("INSERT OR REPLACE INTO jur_contas_excluidas (caso_id, conta, mes, valor, grupo, criado_em, criado_por) VALUES (?,?,?,?,?,?,?)").bind(id, conta, mes, valor, grupo, agora, eu.nome));
+  stmts.push(insertObsJur(env, id, agora, `Conta financeira "${conta}" (${reais(valor)}) excluída da competência ${mesBR(mes)}: não entra mais nos valores deste aluno nem nas próximas importações.`, eu));
+  stmts.push(env.DB.prepare("UPDATE jur_casos SET atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agora, eu.nome, id));
+  await env.DB.batch(stmts);
+  return casoCompleto(env, id);
+}
+async function voltarContaJur(req, env, eu, id) {
+  const c = await buscarCasoJur(env, id);
+  const conta = texto((await corpo(req)).conta, 200);
+  const x = await env.DB.prepare("SELECT * FROM jur_contas_excluidas WHERE caso_id = ? AND conta = ?").bind(id, conta).first();
+  if (!x) throw new HttpError(404, "Esta conta não está excluída para o aluno.");
+  const agora = agoraISO();
+  const stmts = await moverContaJur(env, c, x.mes, conta, numero(x.valor), x.grupo, +1);
+  stmts.push(env.DB.prepare("DELETE FROM jur_contas_excluidas WHERE caso_id = ? AND conta = ?").bind(id, conta));
+  stmts.push(insertObsJur(env, id, agora, `Conta financeira "${conta}" voltou a ser considerada (${reais(x.valor)} na competência ${mesBR(x.mes)}).`, eu));
+  stmts.push(env.DB.prepare("UPDATE jur_casos SET atualizado_em = ?, atualizado_por = ? WHERE id = ?").bind(agora, eu.nome, id));
+  await env.DB.batch(stmts);
+  return casoCompleto(env, id);
+}
+
 // Relatórios de inadimplência de uma competência (mês de referência). Só os alunos que já estão
 // no Painel jurídico entram. Cada parcela vai para "valor em aberto" ou "valor negociado" conforme
 // a conta financeira. Grava o mês no histórico (sem apagar os outros meses), compara com o mês
@@ -2395,6 +2471,7 @@ async function inadimplenciaJuridico(req, env, eu) {
   if (mesAnt) (await env.DB.prepare("SELECT * FROM jur_hist WHERE mes = ?").bind(mesAnt).all()).results.forEach((h) => { ant[h.caso_id] = h; });
 
   const porCaso = {}, fora = {}, contas = {}, outras = {};
+  const excluidas = new Set((await env.DB.prepare("SELECT caso_id, conta FROM jur_contas_excluidas").all()).results.map((x) => x.caso_id + "|" + x.conta));
   let registros = 0, semConta = 0;
   for (const l of linhas) {
     const nome = texto(l.aluno || l.nome, 150), ra = texto(l.ra, 30), conta = texto(l.conta, 120);
@@ -2415,6 +2492,11 @@ async function inadimplenciaJuridico(req, env, eu) {
     const gArq = ["aberto", "negociado"].includes(l.grupoArquivo) ? l.grupoArquivo : null;
     const g = conta ? grupoDe(conta) : gArq;
     const chave = conta ? rotuloConta(conta, regras, novas) : (gArq ? `(relatório de ${gArq === "aberto" ? "valor em aberto" : "valor negociado"}, sem conta)` : "");
+    // conta excluída deste aluno na ficha: o aluno consta no relatório, mas o valor não entra
+    if (excluidas.has(c.id + "|" + chave)) {
+      if (!porCaso[c.id]) porCaso[c.id] = { c, aberto: 0, negociado: 0, pAb: 0, pNeg: 0, contas: {}, venc: [] };
+      continue;
+    }
     const ct = contas[chave] || (contas[chave] = { conta: conta ? conta : chave, rotulo: chave, grupo: g, registros: 0, valor: 0, casos: new Set(), semConta: !conta });
     ct.registros += n; ct.valor = r2(ct.valor + valor); ct.casos.add(c.id);
     registros += n;
@@ -2422,7 +2504,7 @@ async function inadimplenciaJuridico(req, env, eu) {
     const p = porCaso[c.id] || (porCaso[c.id] = { c, aberto: 0, negociado: 0, pAb: 0, pNeg: 0, contas: {}, venc: [] });
     // vencimento e valor de cada parcela ("a" = em aberto, "n" = negociado), para vencidas × a vencer
     if (g === "aberto" || g === "negociado") (Array.isArray(l.venc) ? l.venc : []).slice(0, 600).forEach((x) => {
-      if (Array.isArray(x) && dataISO(x[0]) && p.venc.length < 1500) p.venc.push([x[0], numero(x[1]), g === "aberto" ? "a" : "n"]);
+      if (Array.isArray(x) && dataISO(x[0]) && p.venc.length < 1500) p.venc.push([x[0], numero(x[1]), g === "aberto" ? "a" : "n", chave]);
     });
     const nomeConta = chave || "(sem conta)";
     p.contas[nomeConta] = r2((p.contas[nomeConta] || 0) + valor);
