@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v116";
+  var VERSAO = "08/10 · v117";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3973,35 +3973,7 @@
       if (jurTab !== "evolucao") { evoJurChave = ""; return; }
       var Chart = r[0], comps = r[1].competencias || [];
       Chart.defaults.color = corVar("muted"); Chart.defaults.borderColor = corVar("line"); Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
-      $("jCompNota").textContent = comps.length ? comps.length + " competência(s) importada(s), desde " + mesBR(comps[0].mes) + ". Alunos e valor em aberto vêm do relatório de inadimplência; negociado, parcelas pagas e em atraso vêm do Acordo GM de cada aluno (a soma das carteiras abaixo)." : "Nenhuma competência importada ainda. Use “Importar inadimplência” para gravar o primeiro mês.";
-      // cada competência com os mesmos números do quadro por carteira (somados): alunos e valor em
-      // aberto pelo relatório; negociado, pago e em atraso pelo Acordo GM de cada aluno
-      comps.forEach(function (c) {
-        var t = { alunos: 0, so: 0, fora: 0, aberto: Number(c.aberto) || 0, ext: 0, jud: 0, out: 0, pago: 0, atraso: 0, acordos: 0 };
-        var cs = (c.detalhe && c.detalhe.carteiras) || {};
-        Object.keys(cs).forEach(function (k) { t.alunos += (cs[k].alunos || 0) + (cs[k].soAcordo || 0) + (cs[k].foraRel || 0); t.so += cs[k].soAcordo || 0; t.fora += cs[k].foraRel || 0; });
-        if (!c.detalhe) t.alunos = c.noRelatorio || 0;
-        var ac = c.acordos || {};
-        Object.keys(ac).forEach(function (k) { var g = ac[k]; t.ext += g.extrajudicial || 0; t.jud += g.judicial || 0; t.out += g.outros || 0; t.pago += g.pago || 0; t.atraso += g.atraso || 0; t.acordos += g.casos || 0; });
-        t.neg = t.ext + t.jud + t.out;
-        c.ind = t;
-      });
-      function varCel(c, i, k) {
-        if (!i) return "";
-        var d = Math.round(((Number(c.ind[k]) || 0) - (Number(comps[i - 1].ind[k]) || 0)) * 100) / 100;
-        return '<div class="meta">' + (d ? (d > 0 ? "+" : "−") + money(Math.abs(d)) : "sem variação") + "</div>";
-      }
-      $("jCompTabela").innerHTML = comps.slice().reverse().map(function (c) {
-        var i = comps.indexOf(c), t = c.ind;
-        return "<tr><td><b>" + mesBR(c.mes) + '</b><div class="meta">' + (c.importadoPor ? esc(c.importadoPor) + " · " : "") + dataCurta(c.importadoEm) + "</div>" + (c.acordosAtual ? '<div class="meta">acordos: posição de hoje</div>' : "") +
-          '</td><td class="tabular right">' + t.alunos + '<div class="meta">' + compAlunos(t) + "</div>" +
-          '</td><td class="tabular right">' + money(t.aberto) + varCel(c, i, "aberto") + '</td><td class="tabular right">' + money(t.ext) + varCel(c, i, "ext") +
-          '</td><td class="tabular right">' + money(t.jud) + varCel(c, i, "jud") + '</td><td class="tabular right">' + money(t.neg) + '<div class="meta">' + t.acordos + (t.acordos === 1 ? " acordo" : " acordos") + "</div>" +
-          '</td><td class="tabular right" style="color:var(--success)">' + money(t.pago) + '</td><td class="tabular right" style="color:var(--danger)">' + money(t.atraso) +
-          '</td><td class="tabular right">' + (c.reclassificados || 0) + '</td><td class="tabular right">' + (c.semMovimento || 0) +
-          '</td><td class="tabular right">' + (c.sairam || 0) + '</td><td class="tabular right">' + (c.conferir || 0) + "</td></tr>";
-      }).join("");
-      $("jCompVazio").hidden = comps.length > 0;
+      $("jCompNota").textContent = comps.length ? comps.length + " competência(s) importada(s), desde " + mesBR(comps[0].mes) + ". Valor em aberto vem do relatório de inadimplência; negociado, parcelas pagas e em atraso vêm do Acordo GM de cada aluno." : "Nenhuma competência importada ainda. Use “Importar inadimplência” para gravar o primeiro mês.";
       evoJurComps = comps; renderCartComp();
     }).catch(function (x) { evoJurChave = ""; toast(x.message); });
   }
