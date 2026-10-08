@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v122";
+  var VERSAO = "08/10 · v123";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1575,7 +1575,7 @@
     var ano = prepararSelect($("anoEvolSel"), anosDisponiveis().map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
     var rec = {}, tot = 0;
     atends.forEach(function (a) { if (a.data && a.data.slice(0, 4) === ano) { var m = a.data.slice(5, 7); rec[m] = (rec[m] || 0) + (Number(a.valorRecuperado) || 0); } });
-    var rows = MESES.map(function (n, i) { var v = rec[pad2(i + 1)] || 0; tot += v; return "<tr><td>" + cap(n) + '</td><td class="tabular' + (v ? " rec" : "") + '">' + (v ? money(v) : "—") + "</td></tr>"; });
+    var rows = MESES.map(function (n, i) { var v = rec[pad2(i + 1)] || 0; tot += v; return "<tr><td>" + cap(n) + '</td><td class="tabular' + (v ? ' rec" data-mes="' + ano + "-" + pad2(i + 1) + '" title="Clique para ver os alunos que pagaram" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") + "</td></tr>"; });
     $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Total recuperado</th></tr></thead><tbody>" + rows.join("") + '</tbody><tfoot><tr><td>Total do ano</td><td class="tabular">' + (tot ? money(tot) : "—") + "</td></tr></tfoot>";
   }
   // As mensalidades negociadas contam no mês da MENSALIDADE (ex.: janeiro), não no mês
@@ -1710,6 +1710,29 @@
   $("mFaixaRes").addEventListener("click", function (e) {
     var tr = e.target.closest && e.target.closest("tr[data-aluno]"); if (!tr) return;
     var id = tr.getAttribute("data-aluno"); fecharModais(); abrirAluno(id);
+  });
+  // clique no valor de um mês: janela com os alunos que pagaram (os atendimentos com valor recuperado)
+  $("anoEvolTable").addEventListener("click", function (e) {
+    var td = e.target.closest && e.target.closest("td[data-mes]"); if (!td) return;
+    var mes = td.getAttribute("data-mes"), por = {}, tot = 0;
+    atends.forEach(function (t) {
+      var v = Number(t.valorRecuperado) || 0;
+      if (!v || !t.data || t.data.slice(0, 7) !== mes) return;
+      var k = t.alunoId || t.alunoNome, g = por[k] || (por[k] = { id: t.alunoId, nome: t.alunoNome, valor: 0, at: [] });
+      g.valor += v; g.at.push(t); tot += v;
+    });
+    var ls = Object.keys(por).map(function (k) { return por[k]; }).sort(function (a, b) { return b.valor - a.valor; });
+    $("mFaixaT").textContent = "Recuperado em " + MESES[parseInt(mes.slice(5, 7), 10) - 1] + " de " + mes.slice(0, 4);
+    $("mFaixaSub").textContent = ls.length + " aluno(s) · " + money(tot) + " recuperado";
+    $("mFaixaRes").innerHTML = '<div class="table-wrap" style="max-height:60vh;overflow:auto"><table class="data compacta"><thead><tr><th>Aluno</th><th>Aba</th><th class="right">Valor recuperado</th><th>Data</th><th>Registrado por</th></tr></thead><tbody>' +
+      ls.map(function (g) {
+        var a = alunos[g.id], at = g.at.sort(function (x, y) { return (x.data || "").localeCompare(y.data || ""); });
+        return "<tr" + (a ? ' class="click" data-aluno="' + esc(a.id) + '"' : "") + '><td><div class="nome">' + esc((a && a.nome) || g.nome || "—") + '</div><div class="meta">' + esc((a && a.responsavel) || "sem responsável") + (a && a.ra ? " · RA " + esc(a.ra) : "") + "</div></td>" +
+          "<td>" + (a ? (carteiraDe(a) === "contraturno" ? "Contraturno" : "Painel") : '<span class="muted">aluno excluído</span>') + '</td><td class="tabular right"><b style="color:var(--success)">' + money(g.valor) + "</b>" + (at.length > 1 ? '<div class="meta">' + at.length + " lançamentos</div>" : "") + "</td>" +
+          '<td class="tabular">' + at.map(function (t) { return br(t.data) + (at.length > 1 ? " · " + money(t.valorRecuperado) : ""); }).join("<br>") + "</td>" +
+          "<td>" + esc(at.map(function (t) { return t.responsavel || ""; }).filter(function (x, i, l) { return x && l.indexOf(x) === i; }).join(", ") || "—") + "</td></tr>";
+      }).join("") + '</tbody><tfoot><tr class="tot"><td><b>Total</b></td><td></td><td class="tabular right"><b>' + money(tot) + "</b></td><td></td><td></td></tr></tfoot></table></div>";
+    abrir("mFaixa");
   });
   ["anoEvolSel", "mensEvolAnoSel", "ctrlMesSel"].forEach(function (id) { $(id).addEventListener("change", renderEvolucao); });
   $("btnEvolAtualizar").addEventListener("click", function () { var b = this; b.disabled = true; carregar().then(function () { b.disabled = false; toast("Evolução atualizada."); }); });
