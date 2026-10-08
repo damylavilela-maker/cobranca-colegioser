@@ -440,3 +440,7 @@ table.data.compacta td.right{white-space:nowrap}
 .fx-grupo{background:none;border:1px solid transparent;border-radius:8px;padding:2px 6px;font:inherit;cursor:pointer}.fx-grupo:hover{border-color:var(--line)}.fx-grupo.on{border-color:currentColor;background:var(--surface-2,rgba(255,255,255,.06))}
 #jurCartBox tr.sel td{background:var(--surface-2,rgba(255,255,255,.06));font-weight:700}
 .fx-dica{cursor:help}.fx-dica .fx-num{text-decoration:underline dotted;text-underline-offset:4px}
+/* 8 indicadores (Painel/Contraturno): 8 colunas em telas largas, 4+4 em médias, 2 por linha no celular */
+.kpis.k8{grid-template-columns:repeat(8,minmax(0,1fr))}
+@media (max-width:1700px){.kpis.k8{grid-template-columns:repeat(4,minmax(0,1fr))}.kpis.k8 .kpi,.kpis.k8 .kpi:nth-child(n+5){grid-column:auto}}
+@media (max-width:460px){.kpis.k8{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis.k8 .kpi:last-child{grid-column:auto}}

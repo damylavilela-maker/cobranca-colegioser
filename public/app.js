@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v121";
+  var VERSAO = "08/10 · v122";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -433,6 +433,7 @@
       { n: money(recuperadoNoMes(mesRecup, carteira)), l: "Recuperado em " + selMes, c: "success" },
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
       { n: c.em_negociacao || 0, l: "Em negociação", c: "info" },
+      { n: c.boleto_prorrogado || 0, l: "Boleto prorrogado", c: "info" },
       { n: c.aguardando_retorno || 0, l: "Aguardando retorno", c: "warn" },
       { n: regularizadosManuais(vis), l: "Regularizados", c: "success" }
     ];
