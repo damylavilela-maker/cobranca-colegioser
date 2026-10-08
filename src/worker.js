@@ -10,7 +10,7 @@ const MAX_TENTATIVAS = 5;
 const BLOQUEIO_MIN = 15;
 const FUSO = "America/Sao_Paulo";
 
-const STATUS = ["sem_contato", "em_negociacao", "amortizando", "aguardando_retorno", "retornar_contato", "regularizado", "sem_previsao", "cobranca_indevida"];
+const STATUS = ["sem_contato", "em_negociacao", "amortizando", "boleto_prorrogado", "aguardando_retorno", "retornar_contato", "regularizado", "sem_previsao", "cobranca_indevida"];
 const DIA_VENCIMENTO_MENSALIDADE = 5;
 
 const SCHEMA = [

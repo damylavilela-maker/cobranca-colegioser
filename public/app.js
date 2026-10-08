@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v120";
+  var VERSAO = "08/10 · v121";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -11,6 +11,7 @@
     { k: "sem_contato", l: "Sem contato", c: "gray" },
     { k: "em_negociacao", l: "Em negociação", c: "info" },
     { k: "amortizando", l: "Amortizando", c: "gold" },
+    { k: "boleto_prorrogado", l: "Boleto prorrogado", c: "info" },
     { k: "aguardando_retorno", l: "Aguardando retorno", c: "warn" },
     { k: "retornar_contato", l: "Retornar contato", c: "brand" },
     { k: "regularizado", l: "Regularizado", c: "success" },
