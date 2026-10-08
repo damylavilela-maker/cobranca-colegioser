@@ -327,6 +327,14 @@ export default {
           "DELETE FROM atendimentos WHERE motivo = 'Regularização via importação de planilha' AND aluno_id IN (SELECT id FROM alunos WHERE carteira = 'regular' AND status = 'regularizado')",
           "UPDATE alunos SET status = 'sem_contato' WHERE carteira = 'regular' AND status = 'regularizado'"
         ].map((s) => env.DB.prepare(s)));
+        // Uma vez (pedido em 08/10/2026): cheques com pagamento NEGOCIADO passam a PAGO; a observação
+        // guarda que era negociado. Os próximos já entram como PAGO (chequeValores).
+        const chqNeg = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('cheques_negociado_pago_202610', ?)").bind(agora).run();
+        if (!chqNeg.meta || chqNeg.meta.changes > 0) await env.DB.batch([
+          env.DB.prepare("UPDATE cheques SET pagamento = 'PAGO', observacao = CASE WHEN observacao = '' THEN ?1 ELSE observacao || ' | ' || ?1 END, atualizado_em = ?2, atualizado_por = 'Automático' WHERE UPPER(pagamento) LIKE '%NEGOCI%'")
+            .bind("Pagamento era NEGOCIADO; alterado para PAGO em 08/10/2026", agora),
+          env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('versao_dados', ?)").bind(agora + "-chq")
+        ]);
         schemaPronto = true;
       }
       const resp = await rotear(request, env, url);
@@ -2706,6 +2714,7 @@ function chequeValores(o, atual, eu) {
   Object.keys(CHQ_CAMPOS).forEach((k) => { const [col, max] = CHQ_CAMPOS[k]; v[col] = tem(k) ? texto(o[k], max) : a[col] || ""; });
   Object.keys(CHQ_DATAS).forEach((k) => { const col = CHQ_DATAS[k]; v[col] = tem(k) ? dataISO(o[k]) : a[col] || ""; });
   v.valor = tem("valor") ? valorOuNull(o.valor) : (a.valor ?? null);
+  if (/negoci/i.test(v.pagamento)) v.pagamento = "PAGO"; // negociado conta como pago (pedido em 08/10/2026)
   v.chave = chaveCheque(v.tipo, { banco: v.banco, agencia: v.agencia, conta: v.conta, numero: v.numero, vencimento: v.vencimento, valor: v.valor });
   v.criado_em = a.criado_em || agora; v.criado_por = a.criado_por || (eu ? eu.nome : "");
   v.atualizado_em = agora; v.atualizado_por = eu ? eu.nome : "";
