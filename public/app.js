@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v114";
+  var VERSAO = "08/10 · v115";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3977,9 +3977,9 @@
       // cada competência com os mesmos números do quadro por carteira (somados): alunos e valor em
       // aberto pelo relatório; negociado, pago e em atraso pelo Acordo GM de cada aluno
       comps.forEach(function (c) {
-        var t = { alunos: 0, so: 0, aberto: Number(c.aberto) || 0, ext: 0, jud: 0, out: 0, pago: 0, atraso: 0, acordos: 0 };
+        var t = { alunos: 0, so: 0, fora: 0, aberto: Number(c.aberto) || 0, ext: 0, jud: 0, out: 0, pago: 0, atraso: 0, acordos: 0 };
         var cs = (c.detalhe && c.detalhe.carteiras) || {};
-        Object.keys(cs).forEach(function (k) { t.alunos += (cs[k].alunos || 0) + (cs[k].soAcordo || 0); t.so += cs[k].soAcordo || 0; });
+        Object.keys(cs).forEach(function (k) { t.alunos += (cs[k].alunos || 0) + (cs[k].soAcordo || 0) + (cs[k].foraRel || 0); t.so += cs[k].soAcordo || 0; t.fora += cs[k].foraRel || 0; });
         if (!c.detalhe) t.alunos = c.noRelatorio || 0;
         var ac = c.acordos || {};
         Object.keys(ac).forEach(function (k) { var g = ac[k]; t.ext += g.extrajudicial || 0; t.jud += g.judicial || 0; t.out += g.outros || 0; t.pago += g.pago || 0; t.atraso += g.atraso || 0; t.acordos += g.casos || 0; });
@@ -4003,7 +4003,7 @@
       $("jCompTabela").innerHTML = comps.slice().reverse().map(function (c) {
         var i = comps.indexOf(c), t = c.ind;
         return "<tr><td><b>" + mesBR(c.mes) + '</b><div class="meta">' + (c.importadoPor ? esc(c.importadoPor) + " · " : "") + dataCurta(c.importadoEm) + "</div>" + (c.acordosAtual ? '<div class="meta">acordos: posição de hoje</div>' : "") +
-          '</td><td class="tabular right">' + t.alunos + '<div class="meta">' + (t.so ? (t.alunos - t.so) + " no relatório + " + t.so + " só com acordo" : "de " + (c.casos || 0) + " casos") + "</div>" +
+          '</td><td class="tabular right">' + t.alunos + '<div class="meta">' + compAlunos(t) + "</div>" +
           '</td><td class="tabular right">' + money(t.aberto) + varCel(c, i, "aberto") + '</td><td class="tabular right">' + money(t.ext) + varCel(c, i, "ext") +
           '</td><td class="tabular right">' + money(t.jud) + varCel(c, i, "jud") + '</td><td class="tabular right">' + money(t.neg) + '<div class="meta">' + t.acordos + (t.acordos === 1 ? " acordo" : " acordos") + "</div>" +
           '</td><td class="tabular right" style="color:var(--success)">' + money(t.pago) + '</td><td class="tabular right" style="color:var(--danger)">' + money(t.atraso) +
@@ -4013,6 +4013,12 @@
       $("jCompVazio").hidden = comps.length > 0;
       evoJurComps = comps; renderCartComp();
     }).catch(function (x) { evoJurChave = ""; toast(x.message); });
+  }
+  // alunos = todos os casos ativos da carteira (o mesmo de "Casos na carteira"), divididos em quem veio
+  // no relatório do mês, quem tem só o Acordo GM e quem não veio (quitados, sem débito, outra carteira)
+  function compAlunos(x) {
+    return [[x.alunos - (x.so || 0) - (x.fora || 0), "no relatório"], [x.so, "só com acordo GM"], [x.fora, "fora do relatório"]]
+      .filter(function (p, i) { return p[0] || i === 0; }).map(function (p) { return p[0] + " " + p[1]; }).join(" + ");
   }
   // por carteira: alunos e valor em aberto da competência escolhida (relatório de inadimplência);
   // negociado, pago e em atraso pelo Acordo GM de cada aluno (os mesmos valores da ficha)
@@ -4024,15 +4030,15 @@
     var cs = c ? c.detalhe.carteiras || {} : {}, ac = c ? c.acordos || {} : {}, nomes = {};
     Object.keys(cs).concat(Object.keys(ac)).forEach(function (k) { nomes[k] = 1; });
     if (!Object.keys(nomes).length) { $("jCartCompTab").innerHTML = '<tr><td colspan="8" class="empty muted">Nenhuma competência nem acordo registrado ainda.</td></tr>'; return; }
-    var Z = { so: 0, alunos: 0, aberto: 0, casos: 0, extrajudicial: 0, judicial: 0, outros: 0, pago: 0, atraso: 0 }, tot = Object.assign({}, Z);
+    var Z = { so: 0, fora: 0, alunos: 0, aberto: 0, casos: 0, extrajudicial: 0, judicial: 0, outros: 0, pago: 0, atraso: 0 }, tot = Object.assign({}, Z);
     function cel(g) {
       var neg = g.extrajudicial + g.judicial + g.outros;
-      return '<td class="tabular right">' + (c ? g.alunos + (g.so ? '<div class="meta">' + (g.alunos - g.so) + " no relatório + " + g.so + " só com acordo GM</div>" : "") : "—") + '</td><td class="tabular right">' + (c ? money(g.aberto) : "—") + '</td><td class="tabular right">' + money(g.extrajudicial) +
+      return '<td class="tabular right">' + (c ? g.alunos + '<div class="meta">' + compAlunos(g) + "</div>" : "—") + '</td><td class="tabular right">' + (c ? money(g.aberto) : "—") + '</td><td class="tabular right">' + money(g.extrajudicial) +
         '</td><td class="tabular right">' + money(g.judicial) + '</td><td class="tabular right">' + money(neg) + (g.casos ? '<div class="meta">' + g.casos + (g.casos === 1 ? " acordo" : " acordos") + (g.outros > 0.009 ? " · " + money(g.outros) + " sem tipo" : "") + "</div>" : "") +
         '</td><td class="tabular right" style="color:var(--success)">' + money(g.pago) + '</td><td class="tabular right" style="color:var(--danger)">' + money(g.atraso) + "</td>";
     }
     $("jCartCompTab").innerHTML = Object.keys(nomes).sort(function (a, b) { return b.localeCompare(a, "pt-BR"); }).map(function (k) {
-      var h = cs[k] || {}, a = ac[k] || {}, g = { so: h.soAcordo || 0, alunos: (h.alunos || 0) + (h.soAcordo || 0), aberto: h.aberto || 0, casos: a.casos || 0, extrajudicial: a.extrajudicial || 0, judicial: a.judicial || 0, outros: a.outros || 0, pago: a.pago || 0, atraso: a.atraso || 0 };
+      var h = cs[k] || {}, a = ac[k] || {}, g = { so: h.soAcordo || 0, fora: h.foraRel || 0, alunos: (h.alunos || 0) + (h.soAcordo || 0) + (h.foraRel || 0), aberto: h.aberto || 0, casos: a.casos || 0, extrajudicial: a.extrajudicial || 0, judicial: a.judicial || 0, outros: a.outros || 0, pago: a.pago || 0, atraso: a.atraso || 0 };
       Object.keys(tot).forEach(function (f) { tot[f] += g[f]; });
       return "<tr><td><b>" + esc(k) + "</b></td>" + cel(g) + "</tr>";
     }).join("") + '<tr class="tot"><td><b>Total</b></td>' + cel(tot) + "</tr>";

@@ -2152,13 +2152,15 @@ async function competenciasJuridico(env) {
   // por competência: cada carteira (pela carteira atual do caso) e o negociado separado em
   // renegociação extrajudicial e judicial (pela conta financeira de cada parcela)
   const cartDe = {}, casosAc = (await env.DB.prepare("SELECT id, carteira, arquivado, acordo_tipo, acordo_valor, acordo_pago, acordo_saldo_aberto, acordo_saldo_vencer FROM jur_casos").all()).results;
-  casosAc.forEach((c) => { cartDe[c.id] = c.carteira || "Sem carteira"; });
+  const arquivadoDe = {};
+  casosAc.forEach((c) => { cartDe[c.id] = c.carteira || "Sem carteira"; if (c.arquivado) arquivadoDe[c.id] = 1; });
   const acordos = await acordosPorCarteira(env, casosAc);
   const det = {}, grupoDe = {};
   // grupo de cada conta na competência (como foi classificada na importação): só as contas do grupo
   // "negociado" entram no extrajudicial/judicial, para fechar com o valor negociado do mês
   r.forEach((x) => { const g = grupoDe[x.mes] = {}; (compSaida(x).porConta || []).forEach((c) => { g[c.rotulo || c.conta] = c.grupo; }); });
   (await env.DB.prepare("SELECT mes, caso_id, valor_aberto, valor_negociado, contas FROM jur_hist WHERE ausente = 0").all()).results.forEach((h) => {
+    if (!cartDe[h.caso_id] || arquivadoDe[h.caso_id]) return; // só os casos ativos do Painel (mesma contagem de "Casos na carteira")
     let contas = {};
     try { contas = JSON.parse(h.contas || "{}") || {}; } catch (e) { contas = {}; }
     const d = det[h.mes] || (det[h.mes] = { extrajudicial: 0, judicial: 0, outrosNeg: 0, casosExt: 0, casosJud: 0, carteiras: {}, foraNeg: {} });
@@ -2180,10 +2182,11 @@ async function competenciasJuridico(env) {
   Object.keys(det).forEach((mes) => {
     const d = det[mes], pres = d.pres || {};
     casosAc.forEach((c) => {
-      if (c.arquivado || pres[c.id] || !(Number(c.acordo_valor) > 0)) return;
+      if (c.arquivado || pres[c.id]) return;
       const k = c.carteira || "Sem carteira";
       const g = d.carteiras[k] || (d.carteiras[k] = { alunos: 0, aberto: 0, extrajudicial: 0, judicial: 0, outrosNeg: 0 });
-      g.soAcordo = (g.soAcordo || 0) + 1;
+      // fora do relatório: com Acordo GM ("só com acordo") ou sem nada no relatório (quitados, sem débito, parcelas em outra carteira)
+      if (Number(c.acordo_valor) > 0) g.soAcordo = (g.soAcordo || 0) + 1; else g.foraRel = (g.foraRel || 0) + 1;
     });
     delete d.pres;
   });
