@@ -351,8 +351,11 @@
       <div class="subtabs" role="tablist">
         <button type="button" class="active" data-ctab="devolvido">Cheques devolvidos</button>
         <button type="button" data-ctab="recebido">Cheques recebidos</button>
+        <button type="button" data-ctab="evolucao">Evolução</button>
       </div>
+      <div id="chqLista">
       <div class="kpis k4" id="chqKpis"></div>
+      <div class="faixa-box" id="chqResumo"></div>
       <div class="filters">
         <input type="search" id="cBusca" placeholder="Buscar aluno, RA, responsável, emitente, CPF ou nº do cheque" aria-label="Buscar">
         <select id="cSituacao" aria-label="Situação"></select>
@@ -367,6 +370,21 @@
         <div class="empty muted" id="chqVazio" hidden>Nenhum cheque.</div>
       </div>
       <div class="row-end" style="justify-content:center;margin-top:12px"><button type="button" class="btn ghost small" id="chqMais" hidden>Mostrar mais</button></div>
+      </div>
+      <div id="chqEvo" hidden>
+        <div class="card">
+          <div class="spread" style="align-items:flex-end;gap:10px;flex-wrap:wrap">
+            <div><h3>Evolução dos cheques</h3><div class="meta">Pelo vencimento de cada cheque. Recebidos: compensados (vencidos e não devolvidos), voltaram (devolvidos) e a vencer. Devolvidos: pagos, pendentes e negociados, pela coluna Pagamento.</div></div>
+            <div class="filters" style="margin:0">
+              <select id="ceAgrupar" aria-label="Agrupar por"><option value="ano">Por ano</option><option value="semestre">Por semestre</option><option value="trimestre">Por trimestre</option><option value="mes">Por mês</option></select>
+              <select id="ceAno" aria-label="Ano"></select>
+              <select id="ceTipo" aria-label="Cheques"><option value="">Recebidos e devolvidos</option><option value="recebido">Só recebidos</option><option value="devolvido">Só devolvidos</option></select>
+            </div>
+          </div>
+          <div class="chart-box" style="height:340px"><canvas id="ceChart"></canvas></div>
+          <div class="table-wrap" style="margin-top:12px"><table class="data"><thead id="ceHead"></thead><tbody id="ceTab"></tbody></table></div>
+        </div>
+      </div>
     </div>
     <!-- USUÁRIOS -->
     <div id="v-usuarios" class="view" hidden>

@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v117";
+  var VERSAO = "08/10 · v118";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -4057,7 +4057,64 @@
     return c.motivoDevolucao || c.dataDevolucao ? "DEVOLVIDO" : "SEM DEVOLUÇÃO";
   }
   function pagoChq(c) { return /^(pago|quitad)/i.test((c.pagamento || "").trim()); }
+  // o mesmo cheque nas duas abas: banco, agência, conta, número, vencimento e valor (como a chave do servidor)
+  function chaveChq(c) {
+    function dig(v) { return String(v || "").replace(/\D/g, "").replace(/^0+/, ""); }
+    return [dig(c.banco), dig(c.agencia), dig(c.conta), dig(c.numero), c.vencimento || "", c.valor == null ? "" : (Number(c.valor) || 0).toFixed(2)].join("|");
+  }
+  function devolvidosPorChave() { var m = {}; cheques.forEach(function (c) { if (c.tipo === "devolvido") m[chaveChq(c)] = c; }); return m; }
+  // recebido: voltou (devolvido), a vencer (em aberto) ou compensado (pago)
+  function estadoRecebido(c, devs, hj) {
+    if (c.motivoDevolucao || c.dataDevolucao || devs[chaveChq(c)]) return "voltou";
+    return c.vencimento && c.vencimento >= hj ? "avencer" : "compensado";
+  }
+  // devolvido: pela coluna Pagamento
+  function estadoDevolvido(c) {
+    var p = (c.pagamento || "").trim();
+    if (pagoChq(c)) return "pago";
+    if (/^pendente/i.test(p)) return "pendente";
+    if (/negoci/i.test(p)) return "negociado";
+    return p ? "outro" : "sem";
+  }
+  var ESTADO_CHQ = {
+    compensado: ["Pagos (compensados)", "success"], voltou: ["Voltaram (devolvidos)", "danger"], avencer: ["Em aberto (a vencer)", "info"],
+    pago: ["Pagos", "success"], pendente: ["Em aberto (pendentes)", "danger"], negociado: ["Negociados", "info"], outro: ["Outra situação", "warn"], sem: ["Sem informação de pagamento", "gray"]
+  };
+  function somaChq(l) { return l.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0); }
+  function itemChq(n, v, rot, cor, dica) {
+    return '<div' + (dica ? ' class="fx-dica" title="' + esc(dica) + '"' : "") + '><div class="fx-num tabular" style="color:var(--' + cor + ')">' + money(v) + '</div><div class="fx-lbl">' + rot + " · " + n + (n === 1 ? " cheque" : " cheques") + "</div></div>";
+  }
+  // quadro abaixo dos indicadores: o total da lista separado em pago, voltaram e em aberto
+  function resumoCheques(vis) {
+    var hj = hoje(), devs = devolvidosPorChave(), g = {}, ordem;
+    if (chqTab === "devolvido") {
+      ordem = ["pago", "pendente", "negociado", "outro", "sem"];
+      vis.forEach(function (c) { var e = estadoDevolvido(c); (g[e] = g[e] || []).push(c); });
+    } else {
+      ordem = ["compensado", "voltou", "avencer"];
+      vis.forEach(function (c) { var e = estadoRecebido(c, devs, hj); (g[e] = g[e] || []).push(c); });
+    }
+    var html = '<div class="fx-titulo">Do total de <b>' + money(somaChq(vis)) + "</b> (" + vis.length + (vis.length === 1 ? " cheque" : " cheques") + (chqTab === "devolvido" ? " devolvidos" : " recebidos") + "):</div><div class=\"fx-itens\">" +
+      ordem.filter(function (k) { return g[k] || ["outro", "sem", "negociado"].indexOf(k) === -1; }).map(function (k) {
+        var l = g[k] || [], dica = "";
+        if (k === "outro") { var t = {}; l.forEach(function (c) { var p = (c.pagamento || "").trim().toUpperCase(); t[p] = (t[p] || 0) + 1; }); dica = Object.keys(t).map(function (p) { return p + ": " + t[p]; }).join("\n"); }
+        return itemChq(l.length, somaChq(l), ESTADO_CHQ[k][0], ESTADO_CHQ[k][1], dica);
+      }).join("") + "</div>";
+    if (chqTab === "recebido" && g.voltou) {
+      // dos que voltaram: a situação de pagamento na aba Cheques devolvidos
+      var sub = {};
+      g.voltou.forEach(function (c) { var d = devs[chaveChq(c)], e = d ? estadoDevolvido(d) : "fora"; (sub[e] = sub[e] || []).push(c); });
+      var rot = { pago: "pagos depois", pendente: "pendentes", negociado: "negociados", outro: "outra situação", sem: "sem informação de pagamento", fora: "não estão na aba Cheques devolvidos" };
+      html += '<div class="fx-comp">Dos que voltaram: ' + ["pago", "pendente", "negociado", "outro", "sem", "fora"].filter(function (k) { return sub[k]; }).map(function (k) {
+        return "<b>" + sub[k].length + "</b> " + rot[k] + " (" + money(somaChq(sub[k])) + ")";
+      }).join(" · ") + "</div>";
+    }
+    if (chqTab === "recebido") html += '<div class="meta" style="margin-top:6px">Pagos = vencidos e não devolvidos. Voltaram = com devolução registrada ou que estão na aba Cheques devolvidos. Em aberto = vencimento de hoje em diante.</div>';
+    $("chqResumo").innerHTML = html;
+  }
   function renderCheques() {
+    $("chqLista").hidden = chqTab === "evolucao"; $("chqEvo").hidden = chqTab !== "evolucao";
+    if (chqTab === "evolucao") return renderChqEvo();
     var doTipo = cheques.filter(function (c) { return c.tipo === chqTab; });
     // filtros: situação e ano de vencimento
     var sits = {}, anos = {};
@@ -4087,6 +4144,7 @@
     }
     $("chqKpis").className = "kpis k" + tiles.length;
     $("chqKpis").innerHTML = tiles.map(function (t) { return '<div class="kpi"><div class="num tabular"' + (t.c ? ' style="color:var(--' + t.c + ')"' : "") + ">" + t.n + '</div><div class="lbl">' + t.l + "</div></div>"; }).join("");
+    resumoCheques(vis);
     $("chqCount").textContent = vis.length + " de " + doTipo.length + " cheques · " + money(tot);
     $("chqVazio").hidden = vis.length > 0;
     $("chqVazio").textContent = doTipo.length ? "Nenhum cheque com estes filtros." : "Nenhum cheque cadastrado. Use “Importar planilha” ou “+ Novo cheque”.";
@@ -4111,6 +4169,63 @@
     }).join("");
     $("chqMais").hidden = vis.length <= chqLimite;
   }
+  // Evolução: cheques por período de vencimento (ano, semestre, trimestre ou mês), recebidos
+  // (compensados, voltaram, a vencer) e devolvidos (pagos, pendentes, negociados/outros)
+  function periodoChq(d, ag) {
+    var a = d.slice(0, 4), m = Number(d.slice(5, 7));
+    if (ag === "ano") return a;
+    if (ag === "semestre") return a + "-S" + (m <= 6 ? 1 : 2);
+    if (ag === "trimestre") return a + "-T" + Math.ceil(m / 3);
+    return d.slice(0, 7);
+  }
+  function rotuloPeriodo(p) {
+    if (/-S\d$/.test(p)) return p.slice(-1) + "º sem/" + p.slice(0, 4);
+    if (/-T\d$/.test(p)) return p.slice(-1) + "º tri/" + p.slice(0, 4);
+    if (/^\d{4}-\d{2}$/.test(p)) return p.slice(5) + "/" + p.slice(0, 4);
+    return p;
+  }
+  function renderChqEvo() {
+    var hj = hoje(), devs = devolvidosPorChave(), ag = $("ceAgrupar").value, tp = $("ceTipo").value, anos = {};
+    cheques.forEach(function (c) { var d = c.vencimento || c.dataRecebimento; if (d) anos[d.slice(0, 4)] = 1; });
+    var an = prepararSelect($("ceAno"), [{ v: "", l: "Todos os anos" }].concat(Object.keys(anos).sort().reverse().map(function (a) { return { v: a, l: a }; })), "");
+    var P = {}, semData = 0;
+    function z() { return { n: 0, v: 0 }; }
+    cheques.forEach(function (c) {
+      if (tp && c.tipo !== tp) return;
+      var d = c.vencimento || c.dataRecebimento;
+      if (!d) { semData++; return; }
+      if (an && d.slice(0, 4) !== an) return;
+      var k = periodoChq(d, ag), p = P[k] || (P[k] = {}), e = c.tipo === "devolvido" ? "d_" + estadoDevolvido(c) : "r_" + estadoRecebido(c, devs, hj), v = Number(c.valor) || 0;
+      if (e === "d_outro" || e === "d_sem") e = "d_negociado"; // no gráfico: negociados e demais situações juntos
+      [e, c.tipo === "devolvido" ? "d_tot" : "r_tot"].forEach(function (f) { var x = p[f] || (p[f] = z()); x.n++; x.v += v; });
+    });
+    var ks = Object.keys(P).sort();
+    var R = [["r_compensado", "Recebidos · pagos", "success", "rec"], ["r_voltou", "Recebidos · voltaram", "danger", "rec"], ["r_avencer", "Recebidos · a vencer", "info", "rec"],
+      ["d_pago", "Devolvidos · pagos", "brand-bright", "dev"], ["d_pendente", "Devolvidos · pendentes", "warn", "dev"], ["d_negociado", "Devolvidos · negociados/outros", "gray", "dev"]]
+      .filter(function (s) { return !tp || (tp === "recebido") === (s[3] === "rec"); });
+    Promise.resolve(window.Chart || carregarChart()).then(function (Chart) {
+      Chart.defaults.color = corVar("muted"); Chart.defaults.borderColor = corVar("line"); Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+      graficoJur("ceChart", {
+        type: "bar",
+        data: { labels: ks.map(rotuloPeriodo), datasets: R.map(function (s) { return { label: s[1], stack: s[3], backgroundColor: corVar(s[2]), data: ks.map(function (k) { return Math.round(((P[k][s[0]] || {}).v || 0) * 100) / 100; }) }; }) },
+        options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { callback: function (v) { return "R$ " + Number(v).toLocaleString("pt-BR"); } } } } }
+      });
+      graficosJur.ceChart.options.plugins.tooltip = { callbacks: { label: function (x) { return x.dataset.label + ": " + money(x.parsed.y); } } };
+      graficosJur.ceChart.update("none");
+    }).catch(function (x) { toast(x.message); });
+    // tabela: uma linha por período e o total
+    var cols = (tp === "devolvido" ? [] : [["r_tot", "Recebidos", ""], ["r_compensado", "Pagos (compensados)", "success"], ["r_voltou", "Voltaram", "danger"], ["r_avencer", "A vencer", "info"]])
+      .concat(tp === "recebido" ? [] : [["d_tot", "Devolvidos", ""], ["d_pago", "Devolvidos pagos", "success"], ["d_pendente", "Pendentes", "danger"], ["d_negociado", "Negociados/outros", ""]]);
+    $("ceHead").innerHTML = "<tr><th>Período</th>" + cols.map(function (c) { return '<th class="right">' + c[1] + "</th>"; }).join("") + "</tr>";
+    var T = {};
+    function cel(p, c) { var x = p[c[0]] || z(); return '<td class="tabular right"' + (c[2] ? ' style="color:var(--' + c[2] + ')"' : "") + ">" + (x.n ? money(x.v) + '<div class="meta">' + x.n + (x.n === 1 ? " cheque" : " cheques") + "</div>" : '<span class="muted">—</span>') + "</td>"; }
+    $("ceTab").innerHTML = ks.length ? ks.slice().reverse().map(function (k) {
+      cols.forEach(function (c) { var x = P[k][c[0]]; if (x) { var t = T[c[0]] || (T[c[0]] = z()); t.n += x.n; t.v += x.v; } });
+      return "<tr><td><b>" + rotuloPeriodo(k) + "</b></td>" + cols.map(function (c) { return cel(P[k], c); }).join("") + "</tr>";
+    }).join("") + '<tr class="tot"><td><b>Total</b>' + (semData ? '<div class="meta">' + semData + " sem data, fora do gráfico</div>" : "") + "</td>" + cols.map(function (c) { return cel(T, c); }).join("") + "</tr>"
+      : '<tr><td colspan="' + (cols.length + 1) + '" class="empty muted">Nenhum cheque cadastrado.</td></tr>';
+  }
+  ["ceAgrupar", "ceAno", "ceTipo"].forEach(function (id) { $(id).addEventListener("change", renderChqEvo); });
   // Exportar: planilha no mesmo formato da CHEQUES_SER (abas SER_DEVOLVIDOS e SER_RECEBIDOS), que pode ser
   // importada de novo. Busca e ano valem para as duas abas; o filtro de pagamento, só para os devolvidos.
   $("btnChqExportar").addEventListener("click", function () {
