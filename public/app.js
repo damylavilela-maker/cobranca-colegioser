@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v123";
+  var VERSAO = "08/10 · v124";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1591,13 +1591,23 @@
         por[k] = por[k] || { total: 0 }; por[k][tp] = (por[k][tp] || 0) + v; por[k].total += v; tot[tp] += v; tot.total += v;
       });
     });
+    // valor recuperado num atendimento da equipe sem o mês da mensalidade marcado (ou só parte dele
+    // marcado): entra numa linha à parte, pelo ano do atendimento, para o total bater com o recuperado
+    var sem = { v: 0, nomes: [] };
+    atends.forEach(function (a) {
+      if (!atendManual(a) || !a.data || a.data.slice(0, 4) !== ano) return;
+      var marcado = (a.mensalidadesNegociadas || []).reduce(function (s, m) { return s + (Number(m.valor) || 0); }, 0);
+      var resto = Math.round(((Number(a.valorRecuperado) || 0) - marcado) * 100) / 100;
+      if (resto > 0.009) { sem.v += resto; sem.nomes.push((a.alunoNome || "—") + " (" + br(a.data) + ", " + money(resto) + ")"); }
+    });
     function cel(v, cls) { return '<td class="tabular' + (v ? " " + (cls || "") : "") + '">' + (v ? money(v) : "—") + "</td>"; }
     var rows = MESES.map(function (n, i) {
       var p = por[pad2(i + 1)] || {};
       return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function (tp) { return cel(p[tp.k]); }).join("") + cel(p.total, "rec") + "</tr>";
     });
+    if (sem.v) rows.push('<tr><td>Sem mês marcado<div class="meta" style="white-space:normal">' + esc(sem.nomes.join("; ")) + "</div></td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + cel(sem.v, "rec") + "</tr>");
     $("mensEvolTable").innerHTML = "<thead><tr><th>Mês</th>" + NEG_TIPOS.map(function (tp) { return "<th>" + tp.l + "</th>"; }).join("") + "<th>Total</th></tr></thead><tbody>" + rows.join("") +
-      "</tbody><tfoot><tr><td>Total do ano</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + cel(tot.total) + "</tr></tfoot>";
+      "</tbody><tfoot><tr><td>Total do ano</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + cel(tot.total + sem.v) + "</tr></tfoot>";
   }
 
   function renderControleDiario() {
