@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "07/10 · v112";
+  var VERSAO = "08/10 · v113";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3586,6 +3586,7 @@
     // e não a posição da coluna no arquivo
     ix.valor = colunaPorPrioridade(h, REL_COLUNAS.valor);
     if (ix.aluno === -1 && ix.ra === -1) return null;
+    var e141 = h.indexOf("devido") !== -1 && h.indexOf("codigo") !== -1 && h.some(function (x) { return /^data vcto/.test(x || ""); });
     var out = [], conta = "";
     t.rows.forEach(function (r) {
       function cel(k) { var v = ix[k] === -1 ? "" : r[ix[k]]; return v instanceof Date ? v : String(v == null ? "" : v).trim(); }
@@ -3597,6 +3598,22 @@
           if (/^\d{1,4}$/.test(resto)) for (var k2 = j; k2 < r.length; k2++) { var prox = String(r[k2] == null ? "" : r[k2]).trim(); if (prox) { if (!/^[\d.,\/-]+$/.test(prox)) resto += " - " + prox; break; } }
           conta = resto; return;
         }
+      }
+      // relatório E141 do sistema em Excel: as colunas mudam de posição no meio do arquivo (células
+      // mescladas). A linha é lida pela ordem: Código, Nome, Data vcto., Parc., valores… e o último
+      // valor da linha é o Devido (saldo + multa + juros).
+      if (e141) {
+        var vals = r.filter(function (v) { return v !== "" && v != null && String(v).trim() !== "" && String(v).trim() !== "-"; });
+        var iv = -1;
+        for (var q = 0; q < vals.length; q++) if (vals[q] instanceof Date || /^\d{2}\/\d{2}\/\d{4}$/.test(String(vals[q]).trim())) { iv = q; break; }
+        if (iv < 2) return;
+        var cod = String(vals[0]).trim().replace(/\.0+$/, ""), nm = String(vals[1]).trim();
+        if (!/^\d{1,12}$/.test(cod) || !/[A-Za-zÀ-ú]/.test(nm)) return;
+        var nums = vals.slice(iv + 1).filter(function (v) { return typeof v === "number" || /^-?[\d.]*\d([.,]\d+)?$/.test(String(v).trim()); });
+        if (!nums.length) return;
+        var dev = nums[nums.length - 1];
+        out.push({ ra: cod, nome: nm, valorAberto: typeof dev === "number" ? dev : parseMoneyBR(dev), vencimento: dataCelula(vals[iv]) || "", parc: String(nums[0]).replace(/\.0+$/, ""), conta: conta });
+        return;
       }
       var ra = String(cel("ra")).replace(/\.0+$/, ""), nome = cel("aluno");
       if (!ra && !nome) return;
@@ -3692,10 +3709,6 @@
       if (!achouCab) throw new Error("não reconheci o relatório de recebimento (colunas Aluno, Parc., Data vcto., Pago, Dt. pgto).");
       return { conta: conta, linhas: linhas };
     });
-  }
-  function dataCelula(v) {
-    if (v instanceof Date && !isNaN(v)) return v.getFullYear() + "-" + pad2(v.getMonth() + 1) + "-" + pad2(v.getDate());
-    return parseDateBR(v);
   }
   function lerRecebimentoTabela(aoa) {
     var cab = -1, h = [];
