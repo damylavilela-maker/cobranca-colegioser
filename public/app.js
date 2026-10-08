@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v113";
+  var VERSAO = "08/10 · v114";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3959,11 +3959,14 @@
     cfg.options.plugins = { legend: { position: "bottom", labels: { boxWidth: 10, color: corVar("muted") } } };
     graficosJur[id] = new window.Chart($(id), cfg);
   }
-  // a rota lê o histórico mês a mês inteiro: só busca de novo quando muda alguma competência ou a
-  // quantidade de casos (a atualização automática a cada 30s não repete a leitura)
+  // a rota lê o histórico mês a mês inteiro: busca de novo sempre que alguma coisa do Painel jurídico
+  // muda (competência, caso, valor, status, carteira, acordo…); a atualização automática sem
+  // nenhuma mudança não repete a leitura
   var evoJurChave = "";
   function renderEvoJur() {
     var chave = jurComps.map(function (c) { return c.mes + "|" + c.importadoEm; }).join(",") + "#" + casosJur.length + "#" + casosJur.reduce(function (s, c) { var a = c.acordo || {}; return s + (Number(a.valor) || 0) + (Number(a.pago) || 0) + (Number(a.saldoAberto) || 0); }, 0).toFixed(2);
+    // assinatura de todos os casos: última alteração, valores, status, carteira e acordo
+    chave += "#" + casosJur.reduce(function (s, c) { return (c.atualizadoEm || "") > s ? c.atualizadoEm : s; }, "") + "#" + casosJur.map(function (c) { var a = c.acordo || {}; return [c.id, c.status, c.carteira, c.valorAberto, c.valorNegociado, a.valor, a.pago, a.saldoAberto, a.saldoVencer].join(":"); }).join("|").length + "#" + casosJur.reduce(function (s, c) { return s + (Number(c.valorAberto) || 0) + (Number(c.valorNegociado) || 0) * 3 + (Number((c.acordo || {}).saldoVencer) || 0) * 7; }, 0).toFixed(2);
     if (chave === evoJurChave) return;
     evoJurChave = chave;
     Promise.all([carregarChart(), api("GET", "/api/juridico/competencias")]).then(function (r) {
