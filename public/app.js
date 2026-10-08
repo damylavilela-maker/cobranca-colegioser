@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v124";
+  var VERSAO = "08/10 · v125";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1571,12 +1571,21 @@
     renderControleDiario();
   }
 
+  // por aba (o "Recuperado em" do topo do Painel e do Contraturno mostra só a sua aba) e o total
   function renderRecuperadoAnual() {
     var ano = prepararSelect($("anoEvolSel"), anosDisponiveis().map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
-    var rec = {}, tot = 0;
-    atends.forEach(function (a) { if (a.data && a.data.slice(0, 4) === ano) { var m = a.data.slice(5, 7); rec[m] = (rec[m] || 0) + (Number(a.valorRecuperado) || 0); } });
-    var rows = MESES.map(function (n, i) { var v = rec[pad2(i + 1)] || 0; tot += v; return "<tr><td>" + cap(n) + '</td><td class="tabular' + (v ? ' rec" data-mes="' + ano + "-" + pad2(i + 1) + '" title="Clique para ver os alunos que pagaram" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") + "</td></tr>"; });
-    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Total recuperado</th></tr></thead><tbody>" + rows.join("") + '</tbody><tfoot><tr><td>Total do ano</td><td class="tabular">' + (tot ? money(tot) : "—") + "</td></tr></tfoot>";
+    var rec = {}, tot = { regular: 0, contraturno: 0, total: 0 };
+    atends.forEach(function (a) {
+      if (!a.data || a.data.slice(0, 4) !== ano) return;
+      var m = a.data.slice(5, 7), v = Number(a.valorRecuperado) || 0, c = carteiraDe(alunos[a.alunoId]), r = rec[m] || (rec[m] = { regular: 0, contraturno: 0, total: 0 });
+      r[c] += v; r.total += v; tot[c] += v; tot.total += v;
+    });
+    function cel(v) { return '<td class="tabular">' + (v ? money(v) : "—") + "</td>"; }
+    var rows = MESES.map(function (n, i) {
+      var r = rec[pad2(i + 1)] || { regular: 0, contraturno: 0, total: 0 }, v = r.total;
+      return "<tr><td>" + cap(n) + "</td>" + cel(r.regular) + cel(r.contraturno) + '<td class="tabular' + (v ? ' rec" data-mes="' + ano + "-" + pad2(i + 1) + '" title="Clique para ver os alunos que pagaram" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") + "</td></tr>";
+    });
+    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Painel</th><th>Contraturno</th><th>Total recuperado</th></tr></thead><tbody>" + rows.join("") + "</tbody><tfoot><tr><td>Total do ano</td>" + cel(tot.regular) + cel(tot.contraturno) + cel(tot.total) + "</tr></tfoot>";
   }
   // As mensalidades negociadas contam no mês da MENSALIDADE (ex.: janeiro), não no mês
   // em que o atendimento aconteceu.
