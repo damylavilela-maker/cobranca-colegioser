@@ -329,6 +329,9 @@ export default {
         ].map((s) => env.DB.prepare(s)));
         // Uma vez (pedido em 08/10/2026): cheques com pagamento NEGOCIADO passam a PAGO; a observação
         // guarda que era negociado. Os próximos já entram como PAGO (chequeValores).
+        // Uma vez (08/10/2026): alunos do Contraturno que não estão na Base de dados pegam os dados do Painel
+        const entre = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('alunos_entre_carteiras_202610', ?)").bind(agora).run();
+        if (!entre.meta || entre.meta.changes > 0) { if (await completarEntreCarteiras(env)) await env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('versao_dados', ?)").bind(agora + "-alunos").run(); }
         const chqNeg = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('cheques_negociado_pago_202610', ?)").bind(agora).run();
         if (!chqNeg.meta || chqNeg.meta.changes > 0) await env.DB.batch([
           env.DB.prepare("UPDATE cheques SET pagamento = 'PAGO', observacao = CASE WHEN observacao = '' THEN ?1 ELSE observacao || ' | ' || ?1 END, atualizado_em = ?2, atualizado_por = 'Automático' WHERE UPPER(pagamento) LIKE '%NEGOCI%'")
@@ -985,6 +988,7 @@ async function importarPlanilha(req, env) {
       .bind(...parte.flatMap((f) => [mes, f[0], carteira, f[1], f[2], f[3], agora])));
   }
   await executarEmLotes(env, stmts);
+  await completarEntreCarteiras(env); // contraturno sem Base de dados: completa pelo Painel (e vice-versa)
   const foraDaPlanilha = ativosAntes.filter((a) => !tocados.has(a.id)).map((a) => ({ id: a.id, nome: a.nome, valorAberto: a.valor_aberto }));
   return json({ criados, atualizados, foraDaPlanilha, daBase, mes, ignoradosJur });
 }
@@ -1611,9 +1615,38 @@ async function sincronizarComBase(env) {
     nSerasa++;
   }
   await executarEmLotes(env, stmts);
+  await completarEntreCarteiras(env);
   return { alunos: nAlunos, serasa: nSerasa };
 }
 
+
+// Mesmo aluno (mesmo RA) no Painel e no Contraturno: quem não está na Base de dados pega da outra
+// carteira o que tiver lá (nome inteiro, turma, responsável, telefone, e-mail). Só preenche campo
+// vazio; o nome só troca quando o da outra carteira é o mesmo nome completo (relatório cortado).
+async function completarEntreCarteiras(env) {
+  const r = (await env.DB.prepare("SELECT id, ra, nome, turma, responsavel, telefone, email FROM alunos").all()).results;
+  const porRa = {};
+  r.forEach((a) => { const d = soDigitosRa(a.ra); if (d) (porRa[d] = porRa[d] || []).push(a); });
+  const stmts = [], agora = agoraISO();
+  Object.keys(porRa).forEach((d) => {
+    const g = porRa[d]; if (g.length < 2) return;
+    g.forEach((a) => {
+      const sets = {}, na = normNome(a.nome);
+      g.forEach((o) => {
+        if (o.id === a.id) return;
+        const no = normNome(o.nome);
+        // RA igual mas outro aluno (nome diferente): não mistura
+        if (!(no === na || no.startsWith(na + " ") || na.startsWith(no + " "))) return;
+        if (no.startsWith(na + " ") && !sets.nome) sets.nome = o.nome;
+        ["turma", "responsavel", "telefone", "email"].forEach((c) => { if (!texto(a[c]) && texto(o[c]) && !sets[c]) sets[c] = o[c]; });
+      });
+      const cs = Object.keys(sets);
+      if (cs.length) stmts.push(env.DB.prepare(`UPDATE alunos SET ${cs.map((c) => c + " = ?").join(", ")}, atualizado_em = ? WHERE id = ?`).bind(...cs.map((c) => sets[c]), agora, a.id));
+    });
+  });
+  await executarEmLotes(env, stmts);
+  return stmts.length;
+}
 async function consertarRasSalvos(env) {
   const stmts = [];
   for (const tabela of ["serasa", "alunos", "base_alunos"]) {
