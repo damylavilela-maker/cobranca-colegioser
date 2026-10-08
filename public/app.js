@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v115";
+  var VERSAO = "08/10 · v116";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -3986,15 +3986,6 @@
         t.neg = t.ext + t.jud + t.out;
         c.ind = t;
       });
-      graficoJur("jChartComp", {
-        type: "line",
-        data: { labels: comps.map(function (c) { return mesBR(c.mes); }), datasets: [
-          { label: "Valor em aberto", borderColor: corVar("danger"), backgroundColor: corVar("danger"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.ind.aberto; }) },
-          { label: "Negociado extrajudicial", borderColor: corVar("info"), backgroundColor: corVar("info"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.ind.ext; }) },
-          { label: "Negociado judicial", borderColor: corVar("warn"), backgroundColor: corVar("warn"), fill: false, tension: 0.2, data: comps.map(function (c) { return c.ind.jud; }) }
-        ] },
-        options: { scales: { y: { ticks: { callback: function (v) { return "R$ " + Number(v).toLocaleString("pt-BR"); } } } } }
-      });
       function varCel(c, i, k) {
         if (!i) return "";
         var d = Math.round(((Number(c.ind[k]) || 0) - (Number(comps[i - 1].ind[k]) || 0)) * 100) / 100;
@@ -4025,10 +4016,13 @@
   var evoJurComps = [];
   function renderCartComp() {
     var comps = evoJurComps.filter(function (c) { return c.detalhe; });
-    var mes = prepararSelect($("jCartComp"), comps.slice().reverse().map(function (c) { return { v: c.mes, l: "Competência " + mesBR(c.mes) }; }), comps.length ? comps[comps.length - 1].mes : "");
+    var opcoes = comps.slice().reverse().map(function (c) { return { v: c.mes, l: "Competência " + mesBR(c.mes) }; });
+    var mes = prepararSelect($("jCartComp"), opcoes, comps.length ? comps[comps.length - 1].mes : "");
+    prepararSelect($("jChartMes"), opcoes, mes); $("jChartMes").value = mes; // o gráfico e a tabela mostram a mesma competência
     var c = null; comps.forEach(function (x) { if (x.mes === mes) c = x; });
     var cs = c ? c.detalhe.carteiras || {} : {}, ac = c ? c.acordos || {} : {}, nomes = {};
     Object.keys(cs).concat(Object.keys(ac)).forEach(function (k) { nomes[k] = 1; });
+    graficoCarteiras(Object.keys(nomes).sort(function (a, b) { return a.localeCompare(b, "pt-BR"); }), cs, ac);
     if (!Object.keys(nomes).length) { $("jCartCompTab").innerHTML = '<tr><td colspan="8" class="empty muted">Nenhuma competência nem acordo registrado ainda.</td></tr>'; return; }
     var Z = { so: 0, fora: 0, alunos: 0, aberto: 0, casos: 0, extrajudicial: 0, judicial: 0, outros: 0, pago: 0, atraso: 0 }, tot = Object.assign({}, Z);
     function cel(g) {
@@ -4043,7 +4037,29 @@
       return "<tr><td><b>" + esc(k) + "</b></td>" + cel(g) + "</tr>";
     }).join("") + '<tr class="tot"><td><b>Total</b></td>' + cel(tot) + "</tr>";
   }
+  // gráfico de barras: uma posição por carteira, com os mesmos valores da tabela por carteira
+  function graficoCarteiras(nomes, cs, ac) {
+    if (!window.Chart) return;
+    function serie(rotulo, cor, f) { return { label: rotulo, backgroundColor: corVar(cor), borderColor: corVar(cor), data: nomes.map(function (k) { return Math.round(f(cs[k] || {}, ac[k] || {}) * 100) / 100; }) }; }
+    graficoJur("jChartComp", {
+      type: "bar",
+      data: { labels: nomes, datasets: [
+        serie("Valor em aberto", "gray", function (h) { return h.aberto || 0; }),
+        serie("Negociado extrajudicial", "info", function (h, a) { return a.extrajudicial || 0; }),
+        serie("Negociado judicial", "warn", function (h, a) { return a.judicial || 0; }),
+        serie("Parcelas pagas", "success", function (h, a) { return a.pago || 0; }),
+        serie("Parcelas em atraso", "danger", function (h, a) { return a.atraso || 0; })
+      ] },
+      options: {
+        scales: { y: { beginAtZero: true, ticks: { callback: function (v) { return "R$ " + Number(v).toLocaleString("pt-BR"); } } } },
+        plugins: {}
+      }
+    });
+    graficosJur.jChartComp.options.plugins.tooltip = { callbacks: { label: function (x) { return x.dataset.label + ": " + money(x.parsed.y); } } };
+    graficosJur.jChartComp.update("none");
+  }
   $("jCartComp").addEventListener("change", renderCartComp);
+  $("jChartMes").addEventListener("change", function () { $("jCartComp").value = this.value; renderCartComp(); });
 
   // ---------------------------------------------------------------- Cheques
   // Duas listas, como as abas da planilha CHEQUES_SER: cheques devolvidos e cheques recebidos.
