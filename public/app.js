@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v118";
+  var VERSAO = "08/10 · v119";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -4056,7 +4056,8 @@
     if (c.tipo === "devolvido") return (c.pagamento || "").trim().toUpperCase() || "SEM PAGAMENTO";
     return c.motivoDevolucao || c.dataDevolucao ? "DEVOLVIDO" : "SEM DEVOLUÇÃO";
   }
-  function pagoChq(c) { return /^(pago|quitad)/i.test((c.pagamento || "").trim()); }
+  // negociado conta como pago (a dívida do cheque foi resolvida)
+  function pagoChq(c) { return /^(pago|quitad)|negoci/i.test((c.pagamento || "").trim()); }
   // o mesmo cheque nas duas abas: banco, agência, conta, número, vencimento e valor (como a chave do servidor)
   function chaveChq(c) {
     function dig(v) { return String(v || "").replace(/\D/g, "").replace(/^0+/, ""); }
@@ -4078,7 +4079,7 @@
   }
   var ESTADO_CHQ = {
     compensado: ["Pagos (compensados)", "success"], voltou: ["Voltaram (devolvidos)", "danger"], avencer: ["Em aberto (a vencer)", "info"],
-    pago: ["Pagos", "success"], pendente: ["Em aberto (pendentes)", "danger"], negociado: ["Negociados", "info"], outro: ["Outra situação", "warn"], sem: ["Sem informação de pagamento", "gray"]
+    pago: ["Pagos (inclusive negociados)", "success"], pendente: ["Em aberto (pendentes)", "danger"], negociado: ["Negociados", "info"], outro: ["Outra situação", "warn"], sem: ["Sem informação de pagamento", "gray"]
   };
   function somaChq(l) { return l.reduce(function (t, c) { return t + (Number(c.valor) || 0); }, 0); }
   function itemChq(n, v, rot, cor, dica) {
@@ -4170,7 +4171,7 @@
     $("chqMais").hidden = vis.length <= chqLimite;
   }
   // Evolução: cheques por período de vencimento (ano, semestre, trimestre ou mês), recebidos
-  // (compensados, voltaram, a vencer) e devolvidos (pagos, pendentes, negociados/outros)
+  // (compensados, voltaram, a vencer) e devolvidos (pagos, inclusive negociados; pendentes; outros)
   function periodoChq(d, ag) {
     var a = d.slice(0, 4), m = Number(d.slice(5, 7));
     if (ag === "ano") return a;
@@ -4196,12 +4197,12 @@
       if (!d) { semData++; return; }
       if (an && d.slice(0, 4) !== an) return;
       var k = periodoChq(d, ag), p = P[k] || (P[k] = {}), e = c.tipo === "devolvido" ? "d_" + estadoDevolvido(c) : "r_" + estadoRecebido(c, devs, hj), v = Number(c.valor) || 0;
-      if (e === "d_outro" || e === "d_sem") e = "d_negociado"; // no gráfico: negociados e demais situações juntos
+      if (e === "d_outro" || e === "d_sem") e = "d_negociado"; // no gráfico: as demais situações juntas
       [e, c.tipo === "devolvido" ? "d_tot" : "r_tot"].forEach(function (f) { var x = p[f] || (p[f] = z()); x.n++; x.v += v; });
     });
     var ks = Object.keys(P).sort();
     var R = [["r_compensado", "Recebidos · pagos", "success", "rec"], ["r_voltou", "Recebidos · voltaram", "danger", "rec"], ["r_avencer", "Recebidos · a vencer", "info", "rec"],
-      ["d_pago", "Devolvidos · pagos", "brand-bright", "dev"], ["d_pendente", "Devolvidos · pendentes", "warn", "dev"], ["d_negociado", "Devolvidos · negociados/outros", "gray", "dev"]]
+      ["d_pago", "Devolvidos · pagos", "brand-bright", "dev"], ["d_pendente", "Devolvidos · pendentes", "warn", "dev"], ["d_negociado", "Devolvidos · outros", "gray", "dev"]]
       .filter(function (s) { return !tp || (tp === "recebido") === (s[3] === "rec"); });
     Promise.resolve(window.Chart || carregarChart()).then(function (Chart) {
       Chart.defaults.color = corVar("muted"); Chart.defaults.borderColor = corVar("line"); Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
@@ -4215,7 +4216,7 @@
     }).catch(function (x) { toast(x.message); });
     // tabela: uma linha por período e o total
     var cols = (tp === "devolvido" ? [] : [["r_tot", "Recebidos", ""], ["r_compensado", "Pagos (compensados)", "success"], ["r_voltou", "Voltaram", "danger"], ["r_avencer", "A vencer", "info"]])
-      .concat(tp === "recebido" ? [] : [["d_tot", "Devolvidos", ""], ["d_pago", "Devolvidos pagos", "success"], ["d_pendente", "Pendentes", "danger"], ["d_negociado", "Negociados/outros", ""]]);
+      .concat(tp === "recebido" ? [] : [["d_tot", "Devolvidos", ""], ["d_pago", "Devolvidos pagos", "success"], ["d_pendente", "Pendentes", "danger"], ["d_negociado", "Outros", ""]]);
     $("ceHead").innerHTML = "<tr><th>Período</th>" + cols.map(function (c) { return '<th class="right">' + c[1] + "</th>"; }).join("") + "</tr>";
     var T = {};
     function cel(p, c) { var x = p[c[0]] || z(); return '<td class="tabular right"' + (c[2] ? ' style="color:var(--' + c[2] + ')"' : "") + ">" + (x.n ? money(x.v) + '<div class="meta">' + x.n + (x.n === 1 ? " cheque" : " cheques") + "</div>" : '<span class="muted">—</span>') + "</td>"; }
