@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v119";
+  var VERSAO = "08/10 · v120";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -916,7 +916,19 @@
   });
 
   var pendentes = [];
-  function normHeader(h) { return String(h || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim(); }
+  // cabeçalho com acento estragado pela leitura em outro padrão ("Matr�cula"): o caractere perdido
+  // é recuperado nas palavras de cabeçalho conhecidas, para a coluna continuar sendo reconhecida
+  var HEADER_REPARO = ["matricula", "descricao", "responsavel", "codigo", "situacao", "serie", "periodo", "inclusao", "endereco", "numero", "observacao", "observacoes", "nao"];
+  function normHeader(h) {
+    var s = String(h || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+    if (s.indexOf("�") === -1) return s;
+    return s.replace(/[a-z�]+/g, function (w) {
+      if (w.indexOf("�") === -1) return w;
+      var re = new RegExp("^" + w.replace(/�+/g, ".{1,2}") + "$");
+      for (var i = 0; i < HEADER_REPARO.length; i++) if (re.test(HEADER_REPARO[i])) return HEADER_REPARO[i];
+      return w;
+    });
+  }
   var HEADER_TOKENS = ["ra", "codigo", "matricula", "nome", "nome do aluno", "nome completo", "aluno", "turma", "responsavel", "responsavel financeiro", "responsavel(a)", "telefone", "tel", "celular", "e-mail", "email", "valor", "valor em aberto", "valor devido", "total devido", "vencimento", "data de vencimento", "dt vencimento", "venc", "valor (r$)", "mentor", "serasa", "cpf", "tipo", "data inclusao", "resp. inclusao", "realizado", "periodo", "situacao", "serie", "data de nascimento", "endereco", "cpf do responsavel", "celular do responsavel"];
   // Lê o CSV caractere a caractere: uma quebra de linha só termina a linha fora de aspas
   // (o Excel exporta células com várias linhas entre aspas).
@@ -1348,7 +1360,15 @@
     var b = $("btnConfirmImport");
     if (!b.hidden && pendentes.length) b.textContent = confirmouPeriodo ? "Importar em " + nomeDoPeriodo(this.value) : "Importar parcelas";
   });
-  function lerArquivo(f, cb) { var r = new FileReader(); r.onload = function () { cb(String(r.result)); }; r.readAsText(f, "utf-8"); }
+  // arquivo de texto (CSV): UTF-8 quando for; senão, o padrão do Windows (Latin-1), comum nos
+  // relatórios do sistema. Ler Latin-1 como UTF-8 estraga acentos ("Matrícula" vira "Matr�cula")
+  // e a coluna deixa de ser reconhecida.
+  function decodificarTexto(buf) {
+    var u = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(u).replace(/^﻿/, ""); }
+    catch (e) { return new TextDecoder("windows-1252").decode(u); }
+  }
+  function lerArquivo(f, cb) { var r = new FileReader(); r.onload = function () { cb(decodificarTexto(r.result)); }; r.readAsArrayBuffer(f); }
   function ligarDropzone(dz, input, cb, porArquivo) {
     var receber = porArquivo || function (f) { lerArquivo(f, cb); };
     dz.addEventListener("click", function (e) { if (e.target !== input) input.click(); });
@@ -3456,7 +3476,7 @@
     var r = new FileReader();
     r.onload = function () {
       var buf = new Uint8Array(r.result);
-      var p = ehExcel(f) ? tabelaDoExcel(buf) : Promise.resolve([parseCSV(new TextDecoder("utf-8").decode(buf))]);
+      var p = ehExcel(f) ? tabelaDoExcel(buf) : Promise.resolve([parseCSV(decodificarTexto(buf))]);
       p.then(function (ts) {
         // planilha com várias abas: se alguma aba tem a coluna Carteira (ou se chama "Carteira AAAA"),
         // só essas são a lista de alunos; a aba das parcelas do acordo GM entra como detalhe do acordo
@@ -3638,7 +3658,7 @@
           return pdfParaTabela(buf).then(function (t) { return t ? [t] : []; });
         });
       } else if (ehExcel(f)) p = tabelaDoExcel(buf);
-      else p = Promise.resolve([parseCSV(new TextDecoder("utf-8").decode(buf))]);
+      else p = Promise.resolve([parseCSV(decodificarTexto(buf))]);
       return p.then(function (ts) {
         var linhas;
         if (ts && ts.brutos) linhas = ts.brutos;
@@ -3739,7 +3759,7 @@
         var wb = X.read(buf, { type: "array", cellDates: true }), ws = wb.Sheets[wb.SheetNames[0]];
         return { conta: "", linhas: lerRecebimentoTabela(X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true })) };
       });
-      var t = parseCSV(new TextDecoder("utf-8").decode(buf));
+      var t = parseCSV(decodificarTexto(buf));
       return { conta: "", linhas: lerRecebimentoTabela([t.raw || t.headers].concat(t.rows)) };
     }).then(function (r) {
       if (!r.linhas.length) throw new Error("não achei pagamentos no relatório.");
@@ -4353,7 +4373,7 @@
     return a + "-" + pad2(me) + "-" + pad2(d);
   }
   function tabelasChq(f, buf) {
-    if (!ehExcel(f)) return Promise.resolve([{ nome: f.name, aoa: parseCSVBruto(new TextDecoder("utf-8").decode(buf)) }]);
+    if (!ehExcel(f)) return Promise.resolve([{ nome: f.name, aoa: parseCSVBruto(decodificarTexto(buf)) }]);
     return carregarXLSX().then(function (X) {
       var wb = X.read(buf, { type: "array" });
       // texto como aparece na planilha (datas e valores formatados)

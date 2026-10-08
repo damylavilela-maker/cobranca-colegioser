@@ -1499,9 +1499,10 @@ async function carregarBase(env) {
 }
 function soDigitosRa(ra) { const s = String(ra || "").trim(); return /^\d+$/.test(s) ? s.replace(/^0+/, "") : ""; }
 
-// Acha o aluno na Base de dados: pelo RA (também sem zeros à esquerda e, em RA de irmãos
-// "14223/14206", por cada parte); se não achar, pelo nome — igual ou, quando o relatório corta o
-// nome, pelo único nome da base que começa com ele (ou com o qual ele começa).
+// Acha o aluno na Base de dados pelo RA (também sem zeros à esquerda e, em RA de irmãos
+// "14223/14206", por cada parte). Pelo nome só quando não dá para usar o RA: o registro vem sem RA,
+// ou o RA não está na base e o aluno da base com aquele nome também não tem RA (aluno da base com
+// outro RA é outro aluno, mesmo com nome igual). Nome cortado: o único nome da base que começa com ele.
 function acharNaBase(base, o, estrito) {
   if (!base || base.vazia) return null;
   // estrito (parcelas da Serasa): só RA exato ou, sem RA, nome exato, como sempre foi
@@ -1520,10 +1521,11 @@ function acharNaBase(base, o, estrito) {
   }
   const n = normNome(o.nome);
   if (!n) return null;
-  if (base.porNome[n]) return base.porNome[n];
+  const semConflito = (b) => !ra || !texto(b.ra); // com RA, só casa por nome com aluno da base sem RA
+  if (base.porNome[n]) return semConflito(base.porNome[n]) ? base.porNome[n] : null;
   if (n.split(" ").length < 2 || n.length < 8) return null;
   const cand = base.nomes.filter((bn) => bn.startsWith(n + " ") || n.startsWith(bn + " "));
-  return cand.length === 1 ? base.porNome[cand[0]] : null;
+  return cand.length === 1 && semConflito(base.porNome[cand[0]]) ? base.porNome[cand[0]] : null;
 }
 
 // Aluno do Painel/Contraturno: os dados cadastrais da base valem mais que os do relatório
@@ -1620,9 +1622,9 @@ async function sincronizarComBase(env) {
 }
 
 
-// Mesmo aluno (mesmo RA) no Painel e no Contraturno: quem não está na Base de dados pega da outra
+// Mesmo aluno (o RA identifica o aluno) no Painel e no Contraturno: quem não está na Base de dados pega da outra
 // carteira o que tiver lá (nome inteiro, turma, responsável, telefone, e-mail). Só preenche campo
-// vazio; o nome só troca quando o da outra carteira é o mesmo nome completo (relatório cortado).
+// vazio; o nome só troca quando o da outra carteira é o mesmo nome por inteiro (relatório cortado).
 async function completarEntreCarteiras(env) {
   const r = (await env.DB.prepare("SELECT id, ra, nome, turma, responsavel, telefone, email FROM alunos").all()).results;
   const porRa = {};
@@ -1635,8 +1637,6 @@ async function completarEntreCarteiras(env) {
       g.forEach((o) => {
         if (o.id === a.id) return;
         const no = normNome(o.nome);
-        // RA igual mas outro aluno (nome diferente): não mistura
-        if (!(no === na || no.startsWith(na + " ") || na.startsWith(no + " "))) return;
         if (no.startsWith(na + " ") && !sets.nome) sets.nome = o.nome;
         ["turma", "responsavel", "telefone", "email"].forEach((c) => { if (!texto(a[c]) && texto(o[c]) && !sets[c]) sets[c] = o[c]; });
       });
@@ -1647,6 +1647,7 @@ async function completarEntreCarteiras(env) {
   await executarEmLotes(env, stmts);
   return stmts.length;
 }
+
 async function consertarRasSalvos(env) {
   const stmts = [];
   for (const tabela of ["serasa", "alunos", "base_alunos"]) {
