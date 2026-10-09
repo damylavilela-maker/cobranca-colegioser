@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "08/10 · v125";
+  var VERSAO = "09/10 · v126";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -4352,6 +4352,10 @@
     $("chPagamentos").innerHTML = Object.keys(pag).sort().map(function (v) { return '<option value="' + esc(v) + '"></option>'; }).join("");
     $("chInfo").textContent = c ? "Cadastrado em " + dataHora(c.criadoEm) + (c.criadoPor ? " por " + c.criadoPor : "") + (c.atualizadoEm && c.atualizadoEm !== c.criadoEm ? " · atualizado em " + dataHora(c.atualizadoEm) + (c.atualizadoPor ? " por " + c.atualizadoPor : "") : "") : "";
     var bx = $("chExcluir"); bx.hidden = !c; bx.classList.remove("armed"); bx.textContent = "Excluir cheque";
+    // cheque recebido: botão para registrar a devolução (aparece também em Cheques devolvidos)
+    var bd = $("chDevolver"), jaDev = c && c.tipo === "recebido" && devolvidosPorChave()[chaveChq(c)];
+    bd.hidden = !c || c.tipo !== "recebido"; bd.classList.remove("armed");
+    bd.disabled = !!jaDev; bd.textContent = jaDev ? "Já está em Cheques devolvidos" : "Cheque devolvido";
     camposPorTipo(); abrir("mCheque");
     setTimeout(function () { $("chRa").focus(); }, 30);
   }
@@ -4374,6 +4378,30 @@
     var req = chqEdit ? api("PATCH", "/api/cheques/" + encodeURIComponent(chqEdit.id), dados) : api("POST", "/api/cheques", dados);
     req.then(function (d) { trocarCheque(d.cheque); fecharModais(); renderCheques(); toast(chqEdit ? "Cheque atualizado." : "Cheque cadastrado."); })
       .catch(function (x) { mostrarErro($("chErr"), x.message); });
+  });
+  // Cheque recebido que voltou: grava a devolução no próprio registro (data de hoje, se vazia) e cria
+  // o mesmo cheque em Cheques devolvidos, com pagamento PENDENTE. O registro em recebidos continua.
+  $("chDevolver").addEventListener("click", function () {
+    var b = this, c = chqEdit; if (!c || c.tipo !== "recebido") return;
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmar: copiar para devolvidos"; return; }
+    var val = parseFloat($("chValor").value), dados = {};
+    CHQ_FORM.forEach(function (p) { var el = $(p[0]); if (!el.closest("[data-chq]") || !el.closest("[data-chq]").hidden) dados[p[1]] = el.value.trim(); });
+    dados.valor = isNaN(val) ? c.valor : val;
+    if (!dados.dataDevolucao) dados.dataDevolucao = hoje();
+    var dev = {
+      tipo: "devolvido", ra: dados.ra, aluno: dados.aluno, responsavel: dados.responsavel, emitente: dados.emitente, cpfEmitente: dados.cpfEmitente,
+      banco: dados.banco, agencia: dados.agencia, conta: dados.conta, numero: dados.numero, valor: dados.valor, vencimento: dados.vencimento,
+      motivo: dados.motivoDevolucao, pagamento: "PENDENTE",
+      observacao: [dados.observacao, "Devolvido em " + br(dados.dataDevolucao) + " (registrado a partir de Cheques recebidos" + (dados.dataRecebimento ? ", recebido em " + br(dados.dataRecebimento) : "") + ")"].filter(Boolean).join(" | ")
+    };
+    b.disabled = true; b.textContent = "Registrando…";
+    api("PATCH", "/api/cheques/" + encodeURIComponent(c.id), dados).then(function (d) {
+      trocarCheque(d.cheque);
+      return api("POST", "/api/cheques", dev);
+    }).then(function (d) {
+      trocarCheque(d.cheque); fecharModais(); renderCheques();
+      toast("Cheque registrado também em Cheques devolvidos (pagamento PENDENTE).");
+    }).catch(function (x) { b.disabled = false; b.classList.remove("armed"); b.textContent = "Cheque devolvido"; mostrarErro($("chErr"), x.message); });
   });
   $("chExcluir").addEventListener("click", function () {
     var b = this;
