@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "09/10 · v126";
+  var VERSAO = "14/10 · v127";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -256,7 +256,7 @@
     regular: { titulo: "Painel de cobrança", arquivo: "relatorio_cobranca_" },
     contraturno: { titulo: "Contraturno", arquivo: "relatorio_contraturno_" }
   };
-  var FILTROS = ["fBusca", "fStatus", "fFaixa", "fAno", "fSetor", "fAtend", "fOrdem"];
+  var FILTROS = ["fBusca", "fStatus", "fFaixa", "fAno", "fSetor", "fOutra", "fAtend", "fOrdem"];
   var filtrosPorCarteira = {};
   function trocarCarteira(nova) {
     if (nova === carteira) return;
@@ -463,6 +463,14 @@
       var vistos = {}; parcelasDoAno(a).forEach(function (p) { var y = String(p[0]).slice(0, 4); if (/^\d{4}$/.test(y) && !vistos[y]) { vistos[y] = 1; anosQtd[y] = (anosQtd[y] || 0) + 1; } });
     });
     var fano = prepararSelect($("fAno"), [{ v: "", l: "Todos os anos" }].concat(Object.keys(anosQtd).sort().reverse().map(function (y) { return { v: y, l: "Parcelas de " + y + " (" + anosQtd[y] + ")" }; })), "");
+    // aluno que também está na outra aba (Painel ↔ Contraturno), pelo RA (sem RA, pelo nome), como na ficha
+    var outraNome = carteira === "contraturno" ? "Painel" : "Contraturno", naOutra = {};
+    listaCarteira(carteira === "contraturno" ? "regular" : "contraturno").forEach(function (b) {
+      var rb = (b.ra || "").trim().toLowerCase(); if (rb) naOutra["ra:" + rb] = 1; naOutra["nm:" + (b.nome || "").trim().toLowerCase()] = 1;
+    });
+    function estaNaOutra(a) { var ra = (a.ra || "").trim().toLowerCase(); return ra ? !!naOutra["ra:" + ra] : !!naOutra["nm:" + (a.nome || "").trim().toLowerCase()]; }
+    var nOutra = todos.filter(function (a) { return !!a.arquivado === showArch && estaNaOutra(a); }).length;
+    var fout = prepararSelect($("fOutra"), [{ v: "", l: outraNome + ": todos" }, { v: "sim", l: "Também no " + outraNome + " (" + nOutra + ")" }, { v: "nao", l: "Só neste " + (carteira === "contraturno" ? "Contraturno" : "Painel") }], "");
     var q = $("fBusca").value.trim().toLowerCase(), fs = $("fStatus").value, ffx = $("fFaixa").value, fset = $("fSetor").value, fa = $("fAtend").value;
     var ord = soHoje ? "retorno" : $("fOrdem").value, h = hoje();
     var f = todos.filter(function (a) {
@@ -472,6 +480,7 @@
       if (fs && (a.status || "sem_contato") !== fs) return false;
       if (ffx && (!(Number(a.valorAberto) > 0) || faixaDoAluno(a, h) !== ffx)) return false;
       if (fset && a.setor !== fset) return false;
+      if (fout && (fout === "sim") !== estaNaOutra(a)) return false;
       if (fa && a.atendenteResponsavel !== fa) return false;
       if (soHoje && !(a.proximoRetorno && a.proximoRetorno <= h)) return false;
       return true;
@@ -522,7 +531,7 @@
         var atras = !a.arquivado && pr < h, eHoje = pr === h;
         pc = '<span class="' + (atras ? "late" : eHoje ? "today" : "") + '">' + br(pr) + "</span>" + (atras ? '<div class="meta late" style="font-weight:400">atrasado</div>' : eHoje ? '<div class="meta">hoje</div>' : "");
       } else pc = '<span class="muted">—</span>';
-      return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + (a.juridico ? ' <span class="tag">jurídico</span>' : "") + (a.indevido ? ' <span class="tag">cobrança indevida</span>' : "") + '</div><div class="meta">' +
+      return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + (a.juridico ? ' <span class="tag">jurídico</span>' : "") + (a.indevido ? ' <span class="tag">cobrança indevida</span>' : "") + (estaNaOutra(a) ? ' <span class="tag" title="Este aluno também está na aba ' + outraNome + '">também no ' + outraNome + "</span>" : "") + '</div><div class="meta">' +
         esc(a.responsavel || "sem responsável informado") + (a.ra ? " · RA " + esc(a.ra) : "") + (a.turma ? " · " + esc(a.turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + (a.parcelasAberto > 1 ? '<div class="meta">' + a.parcelasAberto + " parcelas</div>" : "") + "</td>" +
         "<td>" + pill(a.status || "sem_contato") + "</td>" +
@@ -533,7 +542,7 @@
     }).join("");
   }
   $("tbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirAluno(tr.getAttribute("data-id")); });
-  ["fBusca", "fStatus", "fFaixa", "fAno", "fSetor", "fAtend", "fOrdem"].forEach(function (id) { $(id).addEventListener("input", renderPainel); });
+  ["fBusca", "fStatus", "fFaixa", "fAno", "fSetor", "fOutra", "fAtend", "fOrdem"].forEach(function (id) { $(id).addEventListener("input", renderPainel); });
   $("btnHoje").addEventListener("click", function () { soHoje = !soHoje; if (soHoje) $("fOrdem").value = "retorno"; renderPainel(); });
   $("btnArquivados").addEventListener("click", function () { showArch = !showArch; renderPainel(); });
 
