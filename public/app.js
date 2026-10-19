@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "19/10 · v128";
+  var VERSAO = "19/10 · v129";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1639,7 +1639,7 @@
       var p = por[pad2(i + 1)] || {};
       return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function (tp) { return cel(p[tp.k]); }).join("") + cel(p.total, "rec") + "</tr>";
     });
-    if (outros.v) rows.push('<tr><td>Mensalidades de outros anos pagas em ' + ano + '<div class="meta" style="white-space:normal">' + esc(outros.nomes.join("; ")) + "</div></td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + cel(outros.v, "rec") + "</tr>");
+    if (outros.v) rows.push('<tr><td>Mensalidades de outros anos pagas em ' + ano + "</td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + cel(outros.v, "rec") + "</tr>");
     if (sem.v) rows.push('<tr><td>Sem mês marcado<div class="meta" style="white-space:normal">' + esc(sem.nomes.join("; ")) + "</div></td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + cel(sem.v, "rec") + "</tr>");
     $("mensEvolTable").innerHTML = "<thead><tr><th>Mês</th>" + NEG_TIPOS.map(function (tp) { return "<th>" + tp.l + "</th>"; }).join("") + "<th>Total</th></tr></thead><tbody>" + rows.join("") +
       "</tbody><tfoot><tr><td>Total do ano</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + cel(tot.total + sem.v + outros.v) + "</tr></tfoot>";
