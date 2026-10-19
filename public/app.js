@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "14/10 · v127";
+  var VERSAO = "19/10 · v128";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -304,7 +304,8 @@
   }
   function recuperadoNoMes(mes, c) {
     var t = 0;
-    atends.forEach(function (a) { if (a.data && a.data.slice(0, 7) === mes && carteiraDe(alunos[a.alunoId]) === c) t += Number(a.valorRecuperado) || 0; });
+    // só o recuperado pela equipe: a regularização automática da importação fica à parte (Evolução)
+    atends.forEach(function (a) { if (a.data && a.data.slice(0, 7) === mes && carteiraDe(alunos[a.alunoId]) === c && atendManual(a)) t += Number(a.valorRecuperado) || 0; });
     return t;
   }
   function nomesAtendentes() {
@@ -1581,20 +1582,29 @@
   }
 
   // por aba (o "Recuperado em" do topo do Painel e do Contraturno mostra só a sua aba) e o total
+  // recuperado pela equipe (o mesmo total do Recebimento mensal). A regularização automática da
+  // importação (aluno que deixou de vir no relatório) fica numa coluna à parte, fora do total.
   function renderRecuperadoAnual() {
     var ano = prepararSelect($("anoEvolSel"), anosDisponiveis().map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
-    var rec = {}, tot = { regular: 0, contraturno: 0, total: 0 };
+    function z() { return { regular: 0, contraturno: 0, total: 0, auto: 0 }; }
+    var rec = {}, tot = z();
     atends.forEach(function (a) {
       if (!a.data || a.data.slice(0, 4) !== ano) return;
-      var m = a.data.slice(5, 7), v = Number(a.valorRecuperado) || 0, c = carteiraDe(alunos[a.alunoId]), r = rec[m] || (rec[m] = { regular: 0, contraturno: 0, total: 0 });
+      var m = a.data.slice(5, 7), v = Number(a.valorRecuperado) || 0, r = rec[m] || (rec[m] = z());
+      if (!atendManual(a)) { r.auto += v; tot.auto += v; return; }
+      var c = carteiraDe(alunos[a.alunoId]);
       r[c] += v; r.total += v; tot[c] += v; tot.total += v;
     });
     function cel(v) { return '<td class="tabular">' + (v ? money(v) : "—") + "</td>"; }
+    function clic(v, mes, auto, cls) {
+      return '<td class="tabular' + (v ? " " + cls + '" data-mes="' + mes + '"' + (auto ? ' data-auto="1"' : "") + ' title="Clique para ver os alunos" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") + "</td>";
+    }
     var rows = MESES.map(function (n, i) {
-      var r = rec[pad2(i + 1)] || { regular: 0, contraturno: 0, total: 0 }, v = r.total;
-      return "<tr><td>" + cap(n) + "</td>" + cel(r.regular) + cel(r.contraturno) + '<td class="tabular' + (v ? ' rec" data-mes="' + ano + "-" + pad2(i + 1) + '" title="Clique para ver os alunos que pagaram" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") + "</td></tr>";
+      var mes = ano + "-" + pad2(i + 1), r = rec[pad2(i + 1)] || z();
+      return "<tr><td>" + cap(n) + "</td>" + cel(r.regular) + cel(r.contraturno) + clic(r.total, mes, false, "rec") + clic(r.auto, mes, true, "muted") + "</tr>";
     });
-    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Painel</th><th>Contraturno</th><th>Total recuperado</th></tr></thead><tbody>" + rows.join("") + "</tbody><tfoot><tr><td>Total do ano</td>" + cel(tot.regular) + cel(tot.contraturno) + cel(tot.total) + "</tr></tfoot>";
+    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Painel</th><th>Contraturno</th><th>Recuperado pela equipe</th><th title=\"Aluno que deixou de vir no relatório importado: fora do total\">Regularização automática</th></tr></thead><tbody>" + rows.join("") +
+      "</tbody><tfoot><tr><td>Total do ano</td>" + cel(tot.regular) + cel(tot.contraturno) + cel(tot.total) + cel(tot.auto) + "</tr></tfoot>";
   }
   // As mensalidades negociadas contam no mês da MENSALIDADE (ex.: janeiro), não no mês
   // em que o atendimento aconteceu.
@@ -1611,9 +1621,15 @@
     });
     // valor recuperado num atendimento da equipe sem o mês da mensalidade marcado (ou só parte dele
     // marcado): entra numa linha à parte, pelo ano do atendimento, para o total bater com o recuperado
-    var sem = { v: 0, nomes: [] };
+    // mensalidades de outro ano pagas neste ano (ex.: dezembro/2025 paga em outubro/2026): linha à parte,
+    // para o total do ano bater com o recuperado pela equipe no ano (elas também aparecem no ano delas)
+    var sem = { v: 0, nomes: [] }, outros = { v: 0, nomes: [] };
     atends.forEach(function (a) {
       if (!atendManual(a) || !a.data || a.data.slice(0, 4) !== ano) return;
+      (a.mensalidadesNegociadas || []).forEach(function (m) {
+        var v = Number(m.valor) || 0;
+        if (v && m.mes && m.mes.slice(0, 4) !== ano) { outros.v += v; outros.nomes.push((a.alunoNome || "—") + " (" + m.mes.slice(5, 7) + "/" + m.mes.slice(0, 4) + ", pago em " + br(a.data) + ", " + money(v) + ")"); }
+      });
       var marcado = (a.mensalidadesNegociadas || []).reduce(function (s, m) { return s + (Number(m.valor) || 0); }, 0);
       var resto = Math.round(((Number(a.valorRecuperado) || 0) - marcado) * 100) / 100;
       if (resto > 0.009) { sem.v += resto; sem.nomes.push((a.alunoNome || "—") + " (" + br(a.data) + ", " + money(resto) + ")"); }
@@ -1623,9 +1639,10 @@
       var p = por[pad2(i + 1)] || {};
       return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function (tp) { return cel(p[tp.k]); }).join("") + cel(p.total, "rec") + "</tr>";
     });
+    if (outros.v) rows.push('<tr><td>Mensalidades de outros anos pagas em ' + ano + '<div class="meta" style="white-space:normal">' + esc(outros.nomes.join("; ")) + "</div></td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + cel(outros.v, "rec") + "</tr>");
     if (sem.v) rows.push('<tr><td>Sem mês marcado<div class="meta" style="white-space:normal">' + esc(sem.nomes.join("; ")) + "</div></td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + cel(sem.v, "rec") + "</tr>");
     $("mensEvolTable").innerHTML = "<thead><tr><th>Mês</th>" + NEG_TIPOS.map(function (tp) { return "<th>" + tp.l + "</th>"; }).join("") + "<th>Total</th></tr></thead><tbody>" + rows.join("") +
-      "</tbody><tfoot><tr><td>Total do ano</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + cel(tot.total + sem.v) + "</tr></tfoot>";
+      "</tbody><tfoot><tr><td>Total do ano</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + cel(tot.total + sem.v + outros.v) + "</tr></tfoot>";
   }
 
   function renderControleDiario() {
@@ -1742,15 +1759,15 @@
   // clique no valor de um mês: janela com os alunos que pagaram (os atendimentos com valor recuperado)
   $("anoEvolTable").addEventListener("click", function (e) {
     var td = e.target.closest && e.target.closest("td[data-mes]"); if (!td) return;
-    var mes = td.getAttribute("data-mes"), por = {}, tot = 0;
+    var mes = td.getAttribute("data-mes"), auto = td.hasAttribute("data-auto"), por = {}, tot = 0;
     atends.forEach(function (t) {
       var v = Number(t.valorRecuperado) || 0;
-      if (!v || !t.data || t.data.slice(0, 7) !== mes) return;
+      if (!v || !t.data || t.data.slice(0, 7) !== mes || atendManual(t) === auto) return;
       var k = t.alunoId || t.alunoNome, g = por[k] || (por[k] = { id: t.alunoId, nome: t.alunoNome, valor: 0, at: [] });
       g.valor += v; g.at.push(t); tot += v;
     });
     var ls = Object.keys(por).map(function (k) { return por[k]; }).sort(function (a, b) { return b.valor - a.valor; });
-    $("mFaixaT").textContent = "Recuperado em " + MESES[parseInt(mes.slice(5, 7), 10) - 1] + " de " + mes.slice(0, 4);
+    $("mFaixaT").textContent = (auto ? "Regularização automática em " : "Recuperado pela equipe em ") + MESES[parseInt(mes.slice(5, 7), 10) - 1] + " de " + mes.slice(0, 4);
     $("mFaixaSub").textContent = ls.length + " aluno(s) · " + money(tot) + " recuperado";
     $("mFaixaRes").innerHTML = '<div class="table-wrap" style="max-height:60vh;overflow:auto"><table class="data compacta"><thead><tr><th>Aluno</th><th>Aba</th><th class="right">Valor recuperado</th><th>Data</th><th>Registrado por</th></tr></thead><tbody>' +
       ls.map(function (g) {
