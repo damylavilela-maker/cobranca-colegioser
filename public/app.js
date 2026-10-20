@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "19/10 · v129";
+  var VERSAO = "20/10 · v130";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -302,6 +302,28 @@
       return ra ? (rb === ra || (!rb && nb === nome)) : nb === nome;
     });
   }
+  // Irmãos: outros alunos (Painel ou Contraturno) com o mesmo responsável financeiro (pelo nome,
+  // sem acento/maiúsculas). O mesmo aluno nas duas abas (mesmo RA, ou mesmo nome sem RA) não conta.
+  function chaveRespAluno(a) { var n = normTexto(a.responsavel); return n.length >= 5 ? n : ""; }
+  function chaveAlunoUnico(a) { var ra = (a.ra || "").trim().toLowerCase(); return ra ? "ra:" + ra : "nm:" + normTexto(a.nome); }
+  function normTexto(s) { return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim(); }
+  function irmaosDoAluno(a) {
+    var k = chaveRespAluno(a); if (!k) return [];
+    var eu = chaveAlunoUnico(a), por = {};
+    lista().forEach(function (b) {
+      if (b.id === a.id || chaveRespAluno(b) !== k) return;
+      var kb = chaveAlunoUnico(b); if (kb === eu) return;
+      // irmão nas duas abas: fica o registro da mesma aba deste aluno
+      if (!por[kb] || (carteiraDe(b) === carteiraDe(a) && carteiraDe(por[kb]) !== carteiraDe(a))) por[kb] = b;
+    });
+    return Object.keys(por).map(function (x) { return por[x]; }).sort(function (x, y) { return (x.nome || "").localeCompare(y.nome || "", "pt-BR"); });
+  }
+  // para a lista: quantos alunos diferentes cada responsável tem (uma passada só)
+  function filhosPorResp() {
+    var m = {};
+    lista().forEach(function (b) { var k = chaveRespAluno(b); if (!k) return; (m[k] = m[k] || {})[chaveAlunoUnico(b)] = 1; });
+    return m;
+  }
   function recuperadoNoMes(mes, c) {
     var t = 0;
     // só o recuperado pela equipe: a regularização automática da importação fica à parte (Evolução)
@@ -471,6 +493,7 @@
     });
     function estaNaOutra(a) { var ra = (a.ra || "").trim().toLowerCase(); return ra ? !!naOutra["ra:" + ra] : !!naOutra["nm:" + (a.nome || "").trim().toLowerCase()]; }
     var nOutra = todos.filter(function (a) { return !!a.arquivado === showArch && estaNaOutra(a); }).length;
+    var filhos = filhosPorResp(); // responsável com mais de um filho: etiqueta na lista
     var fout = prepararSelect($("fOutra"), [{ v: "", l: outraNome + ": todos" }, { v: "sim", l: "Também no " + outraNome + " (" + nOutra + ")" }, { v: "nao", l: "Só neste " + (carteira === "contraturno" ? "Contraturno" : "Painel") }], "");
     var q = $("fBusca").value.trim().toLowerCase(), fs = $("fStatus").value, ffx = $("fFaixa").value, fset = $("fSetor").value, fa = $("fAtend").value;
     var ord = soHoje ? "retorno" : $("fOrdem").value, h = hoje();
@@ -532,7 +555,8 @@
         var atras = !a.arquivado && pr < h, eHoje = pr === h;
         pc = '<span class="' + (atras ? "late" : eHoje ? "today" : "") + '">' + br(pr) + "</span>" + (atras ? '<div class="meta late" style="font-weight:400">atrasado</div>' : eHoje ? '<div class="meta">hoje</div>' : "");
       } else pc = '<span class="muted">—</span>';
-      return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + (a.juridico ? ' <span class="tag">jurídico</span>' : "") + (a.indevido ? ' <span class="tag">cobrança indevida</span>' : "") + (estaNaOutra(a) ? ' <span class="tag" title="Este aluno também está na aba ' + outraNome + '">também no ' + outraNome + "</span>" : "") + '</div><div class="meta">' +
+      return '<tr class="click" data-id="' + esc(a.id) + '"><td><div class="nome">' + esc(a.nome || "—") + (a.juridico ? ' <span class="tag">jurídico</span>' : "") + (a.indevido ? ' <span class="tag">cobrança indevida</span>' : "") + (estaNaOutra(a) ? ' <span class="tag" title="Este aluno também está na aba ' + outraNome + '">também no ' + outraNome + "</span>" : "")
+        + (function () { var k = chaveRespAluno(a), n = k && filhos[k] ? Object.keys(filhos[k]).length : 0; return n > 1 ? ' <span class="tag" title="O responsável financeiro tem ' + n + ' filhos no painel (abra a ficha para ver)">' + n + " filhos</span>" : ""; })() + '</div><div class="meta">' +
         esc(a.responsavel || "sem responsável informado") + (a.ra ? " · RA " + esc(a.ra) : "") + (a.turma ? " · " + esc(a.turma) : "") + "</div></td>" +
         '<td><span class="money tabular' + (v ? "" : " zero") + '">' + money(v) + "</span>" + (a.parcelasAberto > 1 ? '<div class="meta">' + a.parcelasAberto + " parcelas</div>" : "") + "</td>" +
         "<td>" + pill(a.status || "sem_contato") + "</td>" +
@@ -577,7 +601,14 @@
         : a.arquivado ? '<div class="arch-banner">Este aluno está arquivado. Um novo atendimento reativa o acompanhamento automaticamente.</div>' : "") +
       (a.indevido ? '<div class="arch-banner">Cobrança indevida: o valor deste aluno (' + money(a.valorAberto) + ') não entra no total de inadimplência. <button type="button" class="linkbtn" id="btnDesfazerIndevido">Desfazer</button></div>' : "") +
       (outra ? '<div class="link-banner"><b>Também está no ' + (carteiraDe(outra) === "contraturno" ? "Contraturno" : "Painel") + "</b> (" + money(outra.valorAberto) + " em aberto, " + st(outra.status).l.toLowerCase() +
-        "). Os atendimentos aparecem nas duas abas; o status registrado no Painel vale também no Contraturno; o valor em aberto é de cada aba.</div>" : "");
+        "). Os atendimentos aparecem nas duas abas; o status registrado no Painel vale também no Contraturno; o valor em aberto é de cada aba.</div>" : "") +
+      (function () {
+        var irm = irmaosDoAluno(a); if (!irm.length) return "";
+        return '<div class="link-banner"><b>' + esc(a.responsavel) + " tem mais " + irm.length + (irm.length === 1 ? " filho" : " filhos") + " no painel:</b> " + irm.map(function (b) {
+          return '<button type="button" class="linkbtn" data-irmao="' + esc(b.id) + '" title="Abrir a ficha para registrar o atendimento">' + esc(b.nome || "—") + "</button>" +
+            ' <span class="meta">(' + (carteiraDe(b) === "contraturno" ? "Contraturno" : "Painel") + " · " + money(b.valorAberto) + " · " + st(b.status || "sem_contato").l.toLowerCase() + (b.arquivado ? " · arquivado" : "") + ")</span>";
+        }).join(" · ") + "</div>";
+      })();
     carregarHistMesAluno(a);
     $("btnArquivarAluno").textContent = a.arquivado ? "Reativar aluno" : "Arquivar aluno"; $("btnArquivarAluno").hidden = !!a.juridico;
     var bj = $("btnJurAluno"); bj.classList.remove("armed"); bj.textContent = a.juridico ? "Voltar ao painel" : "Retirar do painel (jurídico)";
@@ -869,6 +900,8 @@
   });
   // desfazer a cobrança indevida: o valor do aluno volta para o total de inadimplência
   $("dArchBanner").addEventListener("click", function (e) {
+    var irm = e.target && e.target.closest && e.target.closest("[data-irmao]");
+    if (irm) { abrirAluno(irm.getAttribute("data-irmao")); return; }
     if (!e.target || e.target.id !== "btnDesfazerIndevido") return;
     var id = curId;
     api("PATCH", "/api/alunos/" + encodeURIComponent(id), { indevido: false }).then(function (d) {
