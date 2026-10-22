@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "22/10 · v131";
+  var VERSAO = "22/10 · v132";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1628,6 +1628,7 @@
       if (!a.data || a.data.slice(0, 4) !== ano) return;
       var m = a.data.slice(5, 7), v = Number(a.valorRecuperado) || 0, r = rec[m] || (rec[m] = z());
       if (!atendManual(a)) { r.auto += v; tot.auto += v; return; }
+      v = valorAcima30(a); if (!v) return; // equipe: só o recuperado com mais de 30 dias de atraso
       var c = carteiraDe(alunos[a.alunoId]);
       r[c] += v; r.total += v; tot[c] += v;
     });
@@ -1643,7 +1644,7 @@
       if (inf != null) { nInf++; nota = '<div class="meta" style="text-decoration:none">informado' + (r.total ? " · atendimentos: " + money(r.total) : "") + "</div>"; }
       return "<tr><td>" + cap(n) + "</td>" + cel(r.regular) + cel(r.contraturno) + clic(equipe, mes, false, "rec", nota) + clic(r.auto, mes, true, "muted") + "</tr>";
     });
-    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Painel</th><th>Contraturno</th><th>Recuperado pela equipe</th><th title=\"Aluno que deixou de vir no relatório importado: fora do total\">Regularização automática</th></tr></thead><tbody>" + rows.join("") +
+    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th title=\"Só o recuperado com mais de 30 dias de atraso\">Painel</th><th title=\"Só o recuperado com mais de 30 dias de atraso\">Contraturno</th><th title=\"Só o recuperado com mais de 30 dias de atraso (os meses informados vêm do relatório)\">Recuperado pela equipe · acima de 30 dias</th><th title=\"Aluno que deixou de vir no relatório importado: fora do total\">Regularização automática</th></tr></thead><tbody>" + rows.join("") +
       "</tbody><tfoot><tr><td>Total do ano" + (nInf ? '<div class="meta">' + nInf + (nInf === 1 ? " mês com valor informado" : " meses com valor informado") + "</div>" : "") + "</td>" + cel(tot.regular) + cel(tot.contraturno) + cel(tot.total) + cel(tot.auto) + "</tr></tfoot>";
   }
   // "Informar valores": o total recebido de cada mês do ano escolhido (vazio = volta a somar os atendimentos)
@@ -1754,6 +1755,17 @@
   }
 
   var FAIXAS = [{ k: "30", l: "Até 30 dias", c: "info" }, { k: "60", l: "31–60 dias", c: "warn" }, { k: "90", l: "61–90 dias", c: "gold" }, { k: "90+", l: "Mais de 90 dias", c: "danger" }];
+  // parte do valor recuperado num atendimento com mais de 30 dias de atraso: cada mensalidade marcada
+  // pela faixa dela (vence no dia 5); o restante (e o atendimento sem mensalidades) pela faixa do aluno
+  // no dia do atendimento. Sem vencimento cadastrado não entra (não dá para saber o atraso).
+  function valorAcima30(a) {
+    function acima(f) { return f === "60" || f === "90" || f === "90+"; }
+    var mens = a.mensalidadesNegociadas || [], t = 0;
+    if (!mens.length) return acima(a.faixaAtraso) ? Number(a.valorRecuperado) || 0 : 0;
+    mens.forEach(function (m) { if (acima(faixaAtrasoDe(m.mes + "-" + pad2(DIA_VENCIMENTO_MENSALIDADE), a.data))) t += Number(m.valor) || 0; });
+    if (acima(a.faixaAtraso)) t += Number(a.valorRecuperadoAberto) || 0;
+    return Math.round(t * 100) / 100;
+  }
   function renderFaixa(doMes) {
     var por = { "30": 0, "60": 0, "90": 0, "90+": 0, em_dia: 0 }, semVenc = 0;
     function somar(f, v) { if (!v) return; if (por[f] !== undefined) por[f] += v; else semVenc += v; }
@@ -1824,6 +1836,7 @@
     atends.forEach(function (t) {
       var v = Number(t.valorRecuperado) || 0;
       if (!v || !t.data || t.data.slice(0, 7) !== mes || atendManual(t) === auto) return;
+      if (!auto) { v = valorAcima30(t); if (!v) return; t = Object.assign({}, t, { valorRecuperado: v }); } // equipe: só acima de 30 dias
       var k = t.alunoId || t.alunoNome, g = por[k] || (por[k] = { id: t.alunoId, nome: t.alunoNome, valor: 0, at: [] });
       g.valor += v; g.at.push(t); tot += v;
     });
