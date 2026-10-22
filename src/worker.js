@@ -329,6 +329,11 @@ export default {
         ].map((s) => env.DB.prepare(s)));
         // Uma vez (pedido em 08/10/2026): cheques com pagamento NEGOCIADO passam a PAGO; a observação
         // guarda que era negociado. Os próximos já entram como PAGO (chequeValores).
+        // Uma vez (pedido em 22/10/2026): totais recebidos de janeiro a setembro de 2026 (relatório do sistema)
+        // passam a ser o "Recuperado pela equipe" desses meses na Evolução; editáveis na própria tela
+        const recInf = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('recuperado_informado', ?)")
+          .bind(JSON.stringify({ "2026-01": 681815.98, "2026-02": 128485.83, "2026-03": 196428.23, "2026-04": 121541.40, "2026-05": 78264.96, "2026-06": 132067.61, "2026-07": 209930.66, "2026-08": 384711.06, "2026-09": 175072.52 })).run();
+        if (!recInf.meta || recInf.meta.changes > 0) await env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('versao_dados', ?)").bind(agora + "-recinf").run();
         // Uma vez (08/10/2026): alunos do Contraturno que não estão na Base de dados pegam os dados do Painel
         const entre = await env.DB.prepare("INSERT OR IGNORE INTO meta (chave, valor) VALUES ('alunos_entre_carteiras_202610', ?)").bind(agora).run();
         if (!entre.meta || entre.meta.changes > 0) { if (await completarEntreCarteiras(env)) await env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('versao_dados', ?)").bind(agora + "-alunos").run(); }
@@ -496,6 +501,8 @@ async function rotear(req, env, url) {
     if (partes.length === 2 && m === "DELETE") return excluirAtendimento(env, eu, partes[1]);
     if (partes.length === 2 && m === "PATCH") return editarAtendimento(req, env, eu, partes[1]);
   }
+
+  if (caminho === "/api/recuperado-informado" && m === "PUT") return salvarRecuperadoInformado(req, env);
 
   if (caminho === "/api/admin/importar-backup" && m === "POST") {
     exigirAdmin(eu);
@@ -1071,12 +1078,30 @@ function mensalidadesValidas(lista) {
     .map((m) => ({ tipo: ["acordo", "cheque"].includes(m.tipo) ? m.tipo : "mensalidade", mes: m.mes, valor: numero(m.valor) }));
 }
 
+
+// Recuperado informado: total do mês vindo de outro relatório (ex.: recebimentos do sistema), que
+// substitui na Evolução o "Recuperado pela equipe" calculado pelos atendimentos. {"AAAA-MM": valor}
+async function lerRecuperadoInformado(env) {
+  const m = await env.DB.prepare("SELECT valor FROM meta WHERE chave = 'recuperado_informado'").first();
+  try { return m ? JSON.parse(m.valor) || {} : {}; } catch (e) { return {}; }
+}
+async function salvarRecuperadoInformado(req, env) {
+  const b = await corpo(req);
+  const atual = await lerRecuperadoInformado(env), v = b && typeof b.valores === "object" ? b.valores : {};
+  Object.keys(v).forEach((k) => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(k)) return;
+    const n = v[k] === null || v[k] === "" ? null : numero(v[k]);
+    if (n === null || !(n > 0)) delete atual[k]; else atual[k] = Math.round(n * 100) / 100;
+  });
+  await env.DB.prepare("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('recuperado_informado', ?)").bind(JSON.stringify(atual)).run();
+  return json({ recuperadoInformado: atual });
+}
 async function listarAtendimentos(env, url) {
   const alunoId = url.searchParams.get("alunoId");
   const r = alunoId
     ? await env.DB.prepare("SELECT * FROM atendimentos WHERE aluno_id = ? ORDER BY criado_em DESC").bind(alunoId).all()
     : await env.DB.prepare("SELECT * FROM atendimentos ORDER BY criado_em DESC LIMIT 20000").all();
-  return json({ atendimentos: r.results.map(atendSaida) });
+  return json(alunoId ? { atendimentos: r.results.map(atendSaida) } : { atendimentos: r.results.map(atendSaida), recuperadoInformado: await lerRecuperadoInformado(env) });
 }
 
 async function criarAtendimento(req, env, eu) {

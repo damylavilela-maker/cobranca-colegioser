@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "20/10 · v130";
+  var VERSAO = "22/10 · v131";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -89,6 +89,7 @@
   var carteira = "regular";   // carteira mostrada na tela do painel (Painel ou Contraturno)
   var parcelas = [];          // aba Serasa
   var showArch = false, soHoje = false;
+  var recInformado = {}; // "Recuperado pela equipe" informado por mês (relatório do sistema), {"AAAA-MM": valor}
   var curId = null;
   var pollTimer = null;
 
@@ -196,7 +197,7 @@
     return Promise.all([api("GET", "/api/alunos"), api("GET", "/api/atendimentos"), api("GET", "/api/atendentes"), api("GET", "/api/serasa"), api("GET", "/api/serasa/periodos"), api("GET", "/api/versao")])
       .then(function (r) {
         alunos = {}; r[0].alunos.forEach(function (a) { alunos[a.id] = a; });
-        atends = r[1].atendimentos;
+        atends = r[1].atendimentos; recInformado = r[1].recuperadoInformado || {};
         atendentesAtivos = r[2].atendentes;
         parcelas = r[3].parcelas;
         negInicio = r[3].negInicio || "";
@@ -1615,8 +1616,10 @@
   }
 
   // por aba (o "Recuperado em" do topo do Painel e do Contraturno mostra só a sua aba) e o total
-  // recuperado pela equipe (o mesmo total do Recebimento mensal). A regularização automática da
+  // recuperado pela equipe. A regularização automática da
   // importação (aluno que deixou de vir no relatório) fica numa coluna à parte, fora do total.
+  // Mês com valor informado (relatório do sistema, botão "Informar valores"): ele vale como o
+  // "Recuperado pela equipe" do mês, no lugar da soma dos atendimentos (que aparece embaixo, para conferir).
   function renderRecuperadoAnual() {
     var ano = prepararSelect($("anoEvolSel"), anosDisponiveis().map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
     function z() { return { regular: 0, contraturno: 0, total: 0, auto: 0 }; }
@@ -1626,19 +1629,44 @@
       var m = a.data.slice(5, 7), v = Number(a.valorRecuperado) || 0, r = rec[m] || (rec[m] = z());
       if (!atendManual(a)) { r.auto += v; tot.auto += v; return; }
       var c = carteiraDe(alunos[a.alunoId]);
-      r[c] += v; r.total += v; tot[c] += v; tot.total += v;
+      r[c] += v; r.total += v; tot[c] += v;
     });
     function cel(v) { return '<td class="tabular">' + (v ? money(v) : "—") + "</td>"; }
-    function clic(v, mes, auto, cls) {
-      return '<td class="tabular' + (v ? " " + cls + '" data-mes="' + mes + '"' + (auto ? ' data-auto="1"' : "") + ' title="Clique para ver os alunos" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") + "</td>";
+    function clic(v, mes, auto, cls, extra) {
+      return '<td class="tabular' + (v ? " " + cls + '" data-mes="' + mes + '"' + (auto ? ' data-auto="1"' : "") + ' title="Clique para ver os alunos" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") + (extra || "") + "</td>";
     }
+    var nInf = 0;
     var rows = MESES.map(function (n, i) {
-      var mes = ano + "-" + pad2(i + 1), r = rec[pad2(i + 1)] || z();
-      return "<tr><td>" + cap(n) + "</td>" + cel(r.regular) + cel(r.contraturno) + clic(r.total, mes, false, "rec") + clic(r.auto, mes, true, "muted") + "</tr>";
+      var mes = ano + "-" + pad2(i + 1), r = rec[pad2(i + 1)] || z(), inf = recInformado[mes], equipe = inf != null ? Number(inf) : r.total;
+      tot.total += equipe;
+      var nota = "";
+      if (inf != null) { nInf++; nota = '<div class="meta" style="text-decoration:none">informado' + (r.total ? " · atendimentos: " + money(r.total) : "") + "</div>"; }
+      return "<tr><td>" + cap(n) + "</td>" + cel(r.regular) + cel(r.contraturno) + clic(equipe, mes, false, "rec", nota) + clic(r.auto, mes, true, "muted") + "</tr>";
     });
     $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th>Painel</th><th>Contraturno</th><th>Recuperado pela equipe</th><th title=\"Aluno que deixou de vir no relatório importado: fora do total\">Regularização automática</th></tr></thead><tbody>" + rows.join("") +
-      "</tbody><tfoot><tr><td>Total do ano</td>" + cel(tot.regular) + cel(tot.contraturno) + cel(tot.total) + cel(tot.auto) + "</tr></tfoot>";
+      "</tbody><tfoot><tr><td>Total do ano" + (nInf ? '<div class="meta">' + nInf + (nInf === 1 ? " mês com valor informado" : " meses com valor informado") + "</div>" : "") + "</td>" + cel(tot.regular) + cel(tot.contraturno) + cel(tot.total) + cel(tot.auto) + "</tr></tfoot>";
   }
+  // "Informar valores": o total recebido de cada mês do ano escolhido (vazio = volta a somar os atendimentos)
+  var recInfAno = "";
+  $("btnRecInf").addEventListener("click", function () {
+    var ano = recInfAno = $("anoEvolSel").value;
+    $("mFaixaT").textContent = "Recuperado pela equipe — valores informados de " + ano;
+    $("mFaixaSub").textContent = "Total recebido de cada mês (relatório do sistema). Deixe vazio para o mês voltar a somar os atendimentos.";
+    $("mFaixaRes").innerHTML = '<div class="grid3">' + MESES.map(function (n, i) {
+      var k = ano + "-" + pad2(i + 1), v = recInformado[k];
+      return '<div class="field"><label for="ri' + k + '">' + cap(n) + '</label><input id="ri' + k + '" data-ri="' + k + '" type="number" step="0.01" min="0" value="' + (v != null ? v : "") + '"></div>';
+    }).join("") + '</div><div class="form-err" id="riErr" hidden></div><div class="row-end" style="margin-top:10px"><button type="button" class="btn primary" id="riSalvar">Salvar valores</button></div>';
+    abrir("mFaixa");
+  });
+  $("mFaixaRes").addEventListener("click", function (e) {
+    if (!e.target || e.target.id !== "riSalvar") return;
+    var b = e.target, valores = {};
+    $("mFaixaRes").querySelectorAll("input[data-ri]").forEach(function (el) { valores[el.getAttribute("data-ri")] = el.value === "" ? null : Number(el.value); });
+    b.disabled = true; b.textContent = "Salvando…";
+    api("PUT", "/api/recuperado-informado", { valores: valores }).then(function (d) {
+      recInformado = d.recuperadoInformado || {}; fecharModais(); renderRecuperadoAnual(); toast("Valores de " + recInfAno + " salvos.");
+    }).catch(function (x) { b.disabled = false; b.textContent = "Salvar valores"; mostrarErro($("riErr"), x.message); });
+  });
   // As mensalidades negociadas contam no mês da MENSALIDADE (ex.: janeiro), não no mês
   // em que o atendimento aconteceu.
   function renderMensalidadesEvol() {
