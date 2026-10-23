@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "22/10 · v132";
+  var VERSAO = "23/10 · v133";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -775,7 +775,7 @@
   // mensalidades negociadas
   // Valores negociados: três listas suspensas (Mensalidade, Acordo, Cheques) em que se marcam
   // os meses do ano escolhido; cada mês marcado ganha uma linha para o valor negociado.
-  var NEG_TIPOS = [{ k: "mensalidade", l: "Mensalidade", pl: "Mensalidades" }, { k: "acordo", l: "Acordo", pl: "Acordo" }, { k: "cheque", l: "Cheques", pl: "Cheques" }];
+  var NEG_TIPOS = [{ k: "mensalidade", l: "Mensalidade", pl: "Mensalidades" }, { k: "acordo", l: "Acordo", pl: "Acordo" }, { k: "cheque", l: "Cheques", pl: "Cheques" }, { k: "taxa", l: "Taxas diversas", pl: "Taxas diversas" }];
   function tipoNeg(k) { for (var i = 0; i < NEG_TIPOS.length; i++) if (NEG_TIPOS[i].k === k) return NEG_TIPOS[i]; return NEG_TIPOS[0]; }
   function mesCurto(mes) { var mm = parseInt(mes.slice(5, 7), 10); return cap(MESES[mm - 1]).slice(0, 3) + "/" + mes.slice(0, 4); }
   var negSel = {}; // "tipo|AAAA-MM" -> { tipo, mes, valor }

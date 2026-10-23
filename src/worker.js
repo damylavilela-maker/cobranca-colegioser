@@ -1075,7 +1075,7 @@ function mensalidadesValidas(lista) {
   // tipo: mensalidade, acordo ou cheque (registros antigos, sem tipo, são mensalidades)
   return lista.slice(0, 108)
     .filter((m) => m && typeof m.mes === "string" && /^\d{4}-\d{2}$/.test(m.mes))
-    .map((m) => ({ tipo: ["acordo", "cheque"].includes(m.tipo) ? m.tipo : "mensalidade", mes: m.mes, valor: numero(m.valor) }));
+    .map((m) => ({ tipo: ["acordo", "cheque", "taxa"].includes(m.tipo) ? m.tipo : "mensalidade", mes: m.mes, valor: numero(m.valor) }));
 }
 
 

@@ -344,8 +344,8 @@ table.data.as-tab td.mudou{background:var(--warn-soft)}
 @media (max-width:520px){.base-dl{grid-template-columns:1fr}.base-dl dt{border-bottom:none;padding-bottom:2px}}
 
 /* Atendimento: meses negociados em listas suspensas (Mensalidade, Acordo, Cheques) */
-.neg-selects{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-@media (max-width:560px){.neg-selects{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.neg-selects{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+@media (max-width:760px){.neg-selects{grid-template-columns:repeat(2,minmax(0,1fr))}.neg-selects>select{grid-column:1 / -1}}
 .neg-selects select{width:100%}
 .msel{position:relative;min-width:0}
 .msel-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);color:var(--ink);font:inherit;font-size:14.5px;cursor:pointer;text-align:left}
