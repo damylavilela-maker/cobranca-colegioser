@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/10 · v136";
+  var VERSAO = "29/10 · v137";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1662,42 +1662,46 @@
     }).catch(function (x) { b.disabled = false; b.textContent = "Salvar valores"; mostrarErro($("riErr"), x.message); });
   });
   // Recebimento mensal pelo MÊS DO PAGAMENTO (data do atendimento), como o Controle diário e o
-  // Recuperado: antes contava no mês da mensalidade quitada e um pagamento de outubro aparecia em
-  // agosto, setembro… (corrigido em 29/10/2026). As colunas dizem o que foi pago (mensalidade, acordo,
-  // cheques, taxas); o valor recuperado sem tipo marcado (ou a parte em aberto) vai em "Não detalhado".
-  // Mês com valor informado (relatório do sistema) e sem atendimentos: entra o valor informado no total.
+  // "Recuperado em" do topo (antes contava no mês da mensalidade quitada; corrigido em 29/10/2026).
+  // Colunas Painel | Contraturno | Total (Painel + Contraturno); embaixo de cada valor, o que foi pago
+  // (mensalidade, acordo, cheques, taxas; o recuperado sem tipo marcado aparece como "não detalhado").
+  // Mês com valor informado (relatório do sistema) e sem atendimentos: só o total informado.
   function renderMensalidadesEvol() {
     var ano = prepararSelect($("mensEvolAnoSel"), anosDisponiveis().map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
-    var por = {}, tot = { total: 0, nd: 0 };
-    NEG_TIPOS.forEach(function (tp) { tot[tp.k] = 0; });
+    function z() { var o = { total: 0, nd: 0 }; NEG_TIPOS.forEach(function (tp) { o[tp.k] = 0; }); return o; }
+    var por = {}, T = { regular: z(), contraturno: z(), total: z() }, totInf = 0, nInf = 0;
     atends.forEach(function (a) {
       if (!atendManual(a) || !a.data || a.data.slice(0, 4) !== ano) return;
       var v = Number(a.valorRecuperado) || 0; if (!v) return;
-      var k = a.data.slice(5, 7), p = por[k] || (por[k] = { total: 0, nd: 0 }), marcado = 0;
+      var k = a.data.slice(5, 7), c = carteiraDe(alunos[a.alunoId]);
+      var p = por[k] || (por[k] = { regular: z(), contraturno: z(), total: z() }), marcado = 0;
       (a.mensalidadesNegociadas || []).forEach(function (m) {
         var x = Number(m.valor) || 0; if (!x) return;
-        var tp = tipoNeg(m.tipo || "mensalidade").k; p[tp] = (p[tp] || 0) + x; marcado += x;
+        var tp = tipoNeg(m.tipo || "mensalidade").k; marcado += x;
+        [p[c], p.total, T[c], T.total].forEach(function (o) { o[tp] += x; });
       });
       var resto = Math.round((v - marcado) * 100) / 100;
-      if (resto > 0.009) p.nd += resto;
-      p.total += v;
+      [p[c], p.total, T[c], T.total].forEach(function (o) { if (resto > 0.009) o.nd += resto; o.total += v; });
     });
-    var temNd = false, nInf = 0;
-    Object.keys(por).forEach(function (k) { if (por[k].nd > 0.009) temNd = true; });
-    function cel(v, cls) { return '<td class="tabular' + (v ? " " + (cls || "") : "") + '">' + (v ? money(v) : "—") + "</td>"; }
+    function det(o) {
+      var ps = NEG_TIPOS.filter(function (tp) { return o[tp.k] > 0.009; }).map(function (tp) { return tp.l + " " + money(o[tp.k]); });
+      if (o.nd > 0.009) ps.push("não detalhado " + money(o.nd));
+      return ps.length ? '<div class="meta" style="white-space:normal">' + ps.join("<br>") + "</div>" : "";
+    }
+    function cel(o, cls) { return '<td class="tabular' + (o.total ? " " + (cls || "") : "") + '">' + (o.total ? money(o.total) + det(o) : "—") + "</td>"; }
     var rows = MESES.map(function (n, i) {
       var mes = ano + "-" + pad2(i + 1), p = por[pad2(i + 1)], inf = recInformado[mes];
       if (!p && inf != null) {
-        nInf++; tot.total += Number(inf);
-        return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + (temNd ? "<td></td>" : "") +
-          '<td class="tabular rec">' + money(inf) + '<div class="meta">informado</div></td></tr>';
+        nInf++; totInf += Number(inf);
+        return "<tr><td>" + cap(n) + '</td><td class="muted">—</td><td class="muted">—</td><td class="tabular rec">' + money(inf) + '<div class="meta">informado (relatório do sistema)</div></td></tr>';
       }
-      p = p || {};
-      NEG_TIPOS.forEach(function (tp) { tot[tp.k] += p[tp.k] || 0; }); tot.nd += p.nd || 0; tot.total += p.total || 0;
-      return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function (tp) { return cel(p[tp.k]); }).join("") + (temNd ? cel(p.nd) : "") + cel(p.total, "rec") + "</tr>";
+      p = p || { regular: z(), contraturno: z(), total: z() };
+      return "<tr><td>" + cap(n) + "</td>" + cel(p.regular) + cel(p.contraturno) + cel(p.total, "rec") + "</tr>";
     });
-    $("mensEvolTable").innerHTML = "<thead><tr><th>Mês do pagamento</th>" + NEG_TIPOS.map(function (tp) { return "<th>" + tp.l + "</th>"; }).join("") + (temNd ? "<th title=\"Valor recuperado sem o tipo marcado no atendimento\">Não detalhado</th>" : "") + "<th>Total</th></tr></thead><tbody>" + rows.join("") +
-      "</tbody><tfoot><tr><td>Total do ano" + (nInf ? '<div class="meta">' + nInf + (nInf === 1 ? " mês com valor informado" : " meses com valor informado") + "</div>" : "") + "</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + (temNd ? cel(tot.nd) : "") + cel(tot.total) + "</tr></tfoot>";
+    var totAno = T.total.total + totInf;
+    $("mensEvolTable").innerHTML = '<thead><tr><th>Mês do pagamento</th><th>Painel</th><th>Contraturno</th><th>Total recebido<div class="meta" style="text-transform:none;letter-spacing:0;font-weight:400">Painel + Contraturno</div></th></tr></thead><tbody>' + rows.join("") +
+      "</tbody><tfoot><tr><td>Total do ano" + (nInf ? '<div class="meta">inclui ' + nInf + (nInf === 1 ? " mês informado" : " meses informados") + " (" + money(totInf) + ")</div>" : "") + "</td>" +
+      cel(T.regular) + cel(T.contraturno) + '<td class="tabular">' + (totAno ? money(totAno) : "—") + "</td></tr></tfoot>";
   }
 
   function renderControleDiario() {
