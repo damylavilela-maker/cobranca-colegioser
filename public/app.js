@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "23/10 · v133";
+  var VERSAO = "29/10 · v134";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -451,10 +451,12 @@
     var selAberto = '<select class="kpi-mes" id="kpiMesAberto" aria-label="Mês de vencimento dos boletos"><option value="">Atual (todos os alunos ativos)</option>' + mesesV.map(function (k) {
       return '<option value="' + k + '"' + (k === mesAberto ? " selected" : "") + ">Vencidos em " + MESES[parseInt(k.slice(5, 7), 10) - 1] + " de " + k.slice(0, 4) + "</option>";
     }).join("") + "</select>";
+    var recInfKpi = carteira === "regular" && recInformado[mesRecup] != null ? Number(recInformado[mesRecup]) : null;
     var tiles = [
       { n: vis.filter(function (a) { return !a.indevido; }).length, l: "Alunos em acompanhamento" },
       { n: abertoMes == null ? "—" : money(abertoMes), l: "Valor em aberto " + selAberto, cls: "lead", sub: subAberto },
-      { n: money(recuperadoNoMes(mesRecup, carteira)), l: "Recuperado em " + selMes, c: "success" },
+      // mês com valor informado (relatório do sistema, botão "Informar valores" da Evolução): no Painel vale ele
+      { n: money(recInfKpi != null ? recInfKpi : recuperadoNoMes(mesRecup, carteira)), l: "Recuperado em " + selMes, c: "success", sub: recInfKpi != null ? "valor informado (relatório do sistema)" : "" },
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
       { n: c.em_negociacao || 0, l: "Em negociação", c: "info" },
       { n: c.boleto_prorrogado || 0, l: "Boleto prorrogado", c: "info" },
@@ -1614,38 +1616,25 @@
     renderMensalidadesEvol();
     renderControleDiario();
   }
-
-  // por aba (o "Recuperado em" do topo do Painel e do Contraturno mostra só a sua aba) e o total
-  // recuperado pela equipe. A regularização automática da
-  // importação (aluno que deixou de vir no relatório) fica numa coluna à parte, fora do total.
-  // Mês com valor informado (relatório do sistema, botão "Informar valores"): ele vale como o
-  // "Recuperado pela equipe" do mês, no lugar da soma dos atendimentos (que aparece embaixo, para conferir).
+  // Só a coluna "Recuperado pela equipe" (pedido em 29/10/2026): atendimentos da equipe com mais de
+  // 30 dias de atraso; a regularização automática da importação não entra. Mês com valor informado
+  // (relatório do sistema, botão "Informar valores") vale no lugar da soma dos atendimentos.
   function renderRecuperadoAnual() {
     var ano = prepararSelect($("anoEvolSel"), anosDisponiveis().map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
-    function z() { return { regular: 0, contraturno: 0, total: 0, auto: 0 }; }
-    var rec = {}, tot = z();
+    var rec = {}, tot = 0, nInf = 0;
     atends.forEach(function (a) {
-      if (!a.data || a.data.slice(0, 4) !== ano) return;
-      var m = a.data.slice(5, 7), v = Number(a.valorRecuperado) || 0, r = rec[m] || (rec[m] = z());
-      if (!atendManual(a)) { r.auto += v; tot.auto += v; return; }
-      v = valorAcima30(a); if (!v) return; // equipe: só o recuperado com mais de 30 dias de atraso
-      var c = carteiraDe(alunos[a.alunoId]);
-      r[c] += v; r.total += v; tot[c] += v;
+      if (!a.data || a.data.slice(0, 4) !== ano || !atendManual(a)) return;
+      var v = valorAcima30(a); if (!v) return;
+      var m = a.data.slice(5, 7); rec[m] = (rec[m] || 0) + v;
     });
-    function cel(v) { return '<td class="tabular">' + (v ? money(v) : "—") + "</td>"; }
-    function clic(v, mes, auto, cls, extra) {
-      return '<td class="tabular' + (v ? " " + cls + '" data-mes="' + mes + '"' + (auto ? ' data-auto="1"' : "") + ' title="Clique para ver os alunos" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") + (extra || "") + "</td>";
-    }
-    var nInf = 0;
     var rows = MESES.map(function (n, i) {
-      var mes = ano + "-" + pad2(i + 1), r = rec[pad2(i + 1)] || z(), inf = recInformado[mes], equipe = inf != null ? Number(inf) : r.total;
-      tot.total += equipe;
-      var nota = "";
-      if (inf != null) { nInf++; nota = '<div class="meta" style="text-decoration:none">informado' + (r.total ? " · atendimentos: " + money(r.total) : "") + "</div>"; }
-      return "<tr><td>" + cap(n) + "</td>" + cel(r.regular) + cel(r.contraturno) + clic(equipe, mes, false, "rec", nota) + clic(r.auto, mes, true, "muted") + "</tr>";
+      var mes = ano + "-" + pad2(i + 1), inf = recInformado[mes], v = inf != null ? Number(inf) : rec[pad2(i + 1)] || 0;
+      tot += v; if (inf != null) nInf++;
+      return "<tr><td>" + cap(n) + '</td><td class="tabular' + (v ? ' rec" data-mes="' + mes + '" title="Clique para ver os alunos" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px' : "") + '">' + (v ? money(v) : "—") +
+        (inf != null ? '<div class="meta" style="text-decoration:none">informado</div>' : "") + "</td></tr>";
     });
-    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th title=\"Só o recuperado com mais de 30 dias de atraso\">Painel</th><th title=\"Só o recuperado com mais de 30 dias de atraso\">Contraturno</th><th title=\"Só o recuperado com mais de 30 dias de atraso (os meses informados vêm do relatório)\">Recuperado pela equipe · acima de 30 dias</th><th title=\"Aluno que deixou de vir no relatório importado: fora do total\">Regularização automática</th></tr></thead><tbody>" + rows.join("") +
-      "</tbody><tfoot><tr><td>Total do ano" + (nInf ? '<div class="meta">' + nInf + (nInf === 1 ? " mês com valor informado" : " meses com valor informado") + "</div>" : "") + "</td>" + cel(tot.regular) + cel(tot.contraturno) + cel(tot.total) + cel(tot.auto) + "</tr></tfoot>";
+    $("anoEvolTable").innerHTML = "<thead><tr><th>Mês</th><th title=\"Atendimentos da equipe com mais de 30 dias de atraso; os meses informados vêm do relatório do sistema\">Recuperado pela equipe</th></tr></thead><tbody>" + rows.join("") +
+      "</tbody><tfoot><tr><td>Total do ano" + (nInf ? '<div class="meta">' + nInf + (nInf === 1 ? " mês com valor informado" : " meses com valor informado") + "</div>" : "") + '</td><td class="tabular">' + (tot ? money(tot) : "—") + "</td></tr></tfoot>";
   }
   // "Informar valores": o total recebido de cada mês do ano escolhido (vazio = volta a somar os atendimentos)
   var recInfAno = "";
@@ -1746,7 +1735,10 @@
         cells += "<td><strong>" + b.total + "</strong></td><td" + (b.rec ? ' class="rec"' : "") + ">" + (b.rec ? money(b.rec) : "—") + "</td>";
         td += b.total; tr += b.rec; tAt[at].total += b.total; tAt[at].rec += b.rec;
       });
-      cells += "<td><strong>" + td + "</strong></td><td" + (tr ? ' class="rec"' : "") + "><strong>" + (tr ? money(tr) : "—") + "</strong></td>";
+      // dia com valor recuperado: a data e o total do dia abrem a lista de quem pagou
+      var lnk = ' data-dia="' + iso2 + '" title="Clique para ver os alunos que pagaram neste dia" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px"';
+      if (tr) cells = cells.replace('<td class="date-cell">', '<td class="date-cell"' + lnk + ">");
+      cells += "<td><strong>" + td + "</strong></td><td" + (tr ? ' class="rec"' + lnk : "") + "><strong>" + (tr ? money(tr) : "—") + "</strong></td>";
       tg += td; tgr += tr; body.push("<tr>" + cells + "</tr>");
     }
     var foot = '<td class="date-cell">Total do mês</td>' + ats.map(function (at) { var t = tAt[at]; return CANAIS.map(function (c) { return "<td>" + t[c] + "</td>"; }).join("") + "<td>" + t.total + "</td><td>" + (t.rec ? money(t.rec) : "—") + "</td>"; }).join("") + "<td>" + tg + "</td><td>" + (tgr ? money(tgr) : "—") + "</td>";
@@ -1754,6 +1746,36 @@
     renderFaixa(doMesFaixa);
   }
 
+  // clique num dia do Controle diário: cada pagamento do dia (os mesmos atendimentos da tabela: da equipe
+  // e com atendente identificada), com o aluno, a atendente e a composição do valor
+  $("ctrlTable").addEventListener("click", function (e) {
+    var el = e.target.closest && e.target.closest("[data-dia]"); if (!el) return;
+    var dia = el.getAttribute("data-dia"), tot = 0;
+    var ls = atends.filter(function (a) {
+      var n = (a.responsavel || "").trim();
+      return a.data === dia && atendManual(a) && n && n !== "—" && (Number(a.valorRecuperado) || 0) > 0;
+    }).sort(function (x, y) { return (Number(y.valorRecuperado) || 0) - (Number(x.valorRecuperado) || 0); });
+    function comp(a) {
+      var p = (a.mensalidadesNegociadas || []).filter(function (m) { return Number(m.valor) > 0; }).map(function (m) {
+        return tipoNeg(m.tipo || "mensalidade").l + " " + (m.mes ? m.mes.slice(5, 7) + "/" + m.mes.slice(0, 4) : "") + ": " + money(m.valor);
+      });
+      var ab = Number(a.valorRecuperadoAberto) || 0;
+      if (ab > 0) p.push("Valor em aberto: " + money(ab));
+      return p.length ? p.join("<br>") : '<span class="muted">sem detalhamento</span>';
+    }
+    ls.forEach(function (a) { tot += Number(a.valorRecuperado) || 0; });
+    $("mFaixaT").textContent = "Pagamentos de " + br(dia);
+    $("mFaixaSub").textContent = ls.length + (ls.length === 1 ? " pagamento" : " pagamentos") + " · " + money(tot) + " recuperado no dia";
+    $("mFaixaRes").innerHTML = '<div class="table-wrap" style="max-height:60vh;overflow:auto"><table class="data compacta"><thead><tr><th>Aluno</th><th>Aba</th><th>Atendente · canal</th><th>Composição</th><th class="right">Valor pago</th></tr></thead><tbody>' +
+      ls.map(function (a) {
+        var al = alunos[a.alunoId];
+        return "<tr" + (al ? ' class="click" data-aluno="' + esc(al.id) + '"' : "") + '><td><div class="nome">' + esc((al && al.nome) || a.alunoNome || "—") + '</div><div class="meta">' + esc((al && al.responsavel) || "sem responsável") + (al && al.ra ? " · RA " + esc(al.ra) : "") + "</div></td>" +
+          "<td>" + (al ? (carteiraDe(al) === "contraturno" ? "Contraturno" : "Painel") : '<span class="muted">aluno excluído</span>') + "</td>" +
+          "<td>" + esc(a.responsavel || "—") + (a.canal ? '<div class="meta">' + esc(a.canal) + "</div>" : "") + "</td>" +
+          '<td class="meta">' + comp(a) + '</td><td class="tabular right"><b style="color:var(--success)">' + money(a.valorRecuperado) + "</b></td></tr>";
+      }).join("") + '</tbody><tfoot><tr class="tot"><td><b>Total do dia</b></td><td></td><td></td><td></td><td class="tabular right"><b>' + money(tot) + "</b></td></tr></tfoot></table></div>";
+    abrir("mFaixa");
+  });
   var FAIXAS = [{ k: "30", l: "Até 30 dias", c: "info" }, { k: "60", l: "31–60 dias", c: "warn" }, { k: "90", l: "61–90 dias", c: "gold" }, { k: "90+", l: "Mais de 90 dias", c: "danger" }];
   // parte do valor recuperado num atendimento com mais de 30 dias de atraso: cada mensalidade marcada
   // pela faixa dela (vence no dia 5); o restante (e o atendimento sem mensalidades) pela faixa do aluno
