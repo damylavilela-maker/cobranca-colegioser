@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/10 · v138";
+  var VERSAO = "29/10 · v139";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -1661,43 +1661,43 @@
       recInformado = d.recuperadoInformado || {}; fecharModais(); renderRecuperadoAnual(); toast("Valores de " + recInfAno + " salvos.");
     }).catch(function (x) { b.disabled = false; b.textContent = "Salvar valores"; mostrarErro($("riErr"), x.message); });
   });
-  // Recebimento mensal pelo MÊS DO PAGAMENTO (data do atendimento), como o Controle diário e o
-  // Recuperado: antes contava no mês da mensalidade quitada e um pagamento de outubro aparecia em
-  // agosto, setembro… (corrigido em 29/10/2026). As colunas dizem o que foi pago (mensalidade, acordo,
-  // cheques, taxas); o valor recuperado sem tipo marcado (ou a parte em aberto) vai em "Não detalhado".
-  // Mês com valor informado (relatório do sistema) e sem atendimentos: entra o valor informado no total.
+  // Cada valor conta no mês de REFERÊNCIA marcado no atendimento (mensalidade de agosto paga em
+  // outubro entra em agosto), não no mês em que o atendimento aconteceu (pedido em 29/10/2026).
   function renderMensalidadesEvol() {
-    var ano = prepararSelect($("mensEvolAnoSel"), anosDisponiveis().map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
-    var por = {}, tot = { total: 0, nd: 0 };
+    var ano = prepararSelect($("mensEvolAnoSel"), anosDisponiveis(true).map(function (y) { return { v: y, l: y }; }), String(new Date().getFullYear()));
+    var por = {}, tot = { total: 0 };
     NEG_TIPOS.forEach(function (tp) { tot[tp.k] = 0; });
     atends.forEach(function (a) {
-      if (!atendManual(a) || !a.data || a.data.slice(0, 4) !== ano) return;
-      var v = Number(a.valorRecuperado) || 0; if (!v) return;
-      var k = a.data.slice(5, 7), p = por[k] || (por[k] = { total: 0, nd: 0 }), marcado = 0;
       (a.mensalidadesNegociadas || []).forEach(function (m) {
-        var x = Number(m.valor) || 0; if (!x) return;
-        var tp = tipoNeg(m.tipo || "mensalidade").k; p[tp] = (p[tp] || 0) + x; marcado += x;
+        if (!m.mes || m.mes.slice(0, 4) !== ano) return;
+        var k = m.mes.slice(5, 7), tp = tipoNeg(m.tipo || "mensalidade").k, v = Number(m.valor) || 0;
+        por[k] = por[k] || { total: 0 }; por[k][tp] = (por[k][tp] || 0) + v; por[k].total += v; tot[tp] += v; tot.total += v;
       });
-      var resto = Math.round((v - marcado) * 100) / 100;
-      if (resto > 0.009) p.nd += resto;
-      p.total += v;
     });
-    var temNd = false, nInf = 0;
-    Object.keys(por).forEach(function (k) { if (por[k].nd > 0.009) temNd = true; });
+    // valor recuperado num atendimento da equipe sem o mês da mensalidade marcado (ou só parte dele
+    // marcado): entra numa linha à parte, pelo ano do atendimento, para o total bater com o recuperado
+    // mensalidades de outro ano pagas neste ano (ex.: dezembro/2025 paga em outubro/2026): linha à parte,
+    // para o total do ano bater com o recuperado pela equipe no ano (elas também aparecem no ano delas)
+    var sem = { v: 0, nomes: [] }, outros = { v: 0, nomes: [] };
+    atends.forEach(function (a) {
+      if (!atendManual(a) || !a.data || a.data.slice(0, 4) !== ano) return;
+      (a.mensalidadesNegociadas || []).forEach(function (m) {
+        var v = Number(m.valor) || 0;
+        if (v && m.mes && m.mes.slice(0, 4) !== ano) { outros.v += v; outros.nomes.push((a.alunoNome || "—") + " (" + m.mes.slice(5, 7) + "/" + m.mes.slice(0, 4) + ", pago em " + br(a.data) + ", " + money(v) + ")"); }
+      });
+      var marcado = (a.mensalidadesNegociadas || []).reduce(function (s, m) { return s + (Number(m.valor) || 0); }, 0);
+      var resto = Math.round(((Number(a.valorRecuperado) || 0) - marcado) * 100) / 100;
+      if (resto > 0.009) { sem.v += resto; sem.nomes.push((a.alunoNome || "—") + " (" + br(a.data) + ", " + money(resto) + ")"); }
+    });
     function cel(v, cls) { return '<td class="tabular' + (v ? " " + (cls || "") : "") + '">' + (v ? money(v) : "—") + "</td>"; }
     var rows = MESES.map(function (n, i) {
-      var mes = ano + "-" + pad2(i + 1), p = por[pad2(i + 1)], inf = recInformado[mes];
-      if (!p && inf != null) {
-        nInf++; tot.total += Number(inf);
-        return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + (temNd ? "<td></td>" : "") +
-          '<td class="tabular rec">' + money(inf) + '<div class="meta">informado</div></td></tr>';
-      }
-      p = p || {};
-      NEG_TIPOS.forEach(function (tp) { tot[tp.k] += p[tp.k] || 0; }); tot.nd += p.nd || 0; tot.total += p.total || 0;
-      return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function (tp) { return cel(p[tp.k]); }).join("") + (temNd ? cel(p.nd) : "") + cel(p.total, "rec") + "</tr>";
+      var p = por[pad2(i + 1)] || {};
+      return "<tr><td>" + cap(n) + "</td>" + NEG_TIPOS.map(function (tp) { return cel(p[tp.k]); }).join("") + cel(p.total, "rec") + "</tr>";
     });
-    $("mensEvolTable").innerHTML = "<thead><tr><th>Mês do pagamento</th>" + NEG_TIPOS.map(function (tp) { return "<th>" + tp.l + "</th>"; }).join("") + (temNd ? "<th title=\"Valor recuperado sem o tipo marcado no atendimento\">Não detalhado</th>" : "") + "<th>Total</th></tr></thead><tbody>" + rows.join("") +
-      "</tbody><tfoot><tr><td>Total do ano" + (nInf ? '<div class="meta">' + nInf + (nInf === 1 ? " mês com valor informado" : " meses com valor informado") + "</div>" : "") + "</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + (temNd ? cel(tot.nd) : "") + cel(tot.total) + "</tr></tfoot>";
+    if (outros.v) rows.push('<tr><td>Mensalidades de outros anos pagas em ' + ano + "</td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + cel(outros.v, "rec") + "</tr>");
+    if (sem.v) rows.push('<tr><td>Sem mês marcado<div class="meta" style="white-space:normal">' + esc(sem.nomes.join("; ")) + "</div></td>" + NEG_TIPOS.map(function () { return "<td></td>"; }).join("") + cel(sem.v, "rec") + "</tr>");
+    $("mensEvolTable").innerHTML = "<thead><tr><th>Mês de referência</th>" + NEG_TIPOS.map(function (tp) { return "<th>" + tp.l + "</th>"; }).join("") + "<th>Total</th></tr></thead><tbody>" + rows.join("") +
+      "</tbody><tfoot><tr><td>Total do ano</td>" + NEG_TIPOS.map(function (tp) { return cel(tot[tp.k]); }).join("") + cel(tot.total + sem.v + outros.v) + "</tr></tfoot>";
   }
 
   function renderControleDiario() {
