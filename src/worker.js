@@ -1176,10 +1176,13 @@ async function editarAtendimento(req, env, eu, id) {
   const status = tem("statusResultante") ? statusValido(b.statusResultante) : at.status_resultante;
   const proximo = tem("proximoRetorno") ? dataOuNull(b.proximoRetorno) : at.proximo_retorno;
   const rec = tem("valorRecuperado") ? Math.max(0, numero(b.valorRecuperado)) : numero(at.valor_recuperado);
-  const recAberto = Math.max(0, numero(rec - numero(at.valor_negociado_total)));
+  // valores negociados (mensalidade, acordo, cheques, taxas por mês) também podem ser corrigidos aqui
+  const mensNovas = tem("mensalidadesNegociadas") ? mensalidadesValidas(b.mensalidadesNegociadas) : null;
+  const totalNeg = mensNovas ? numero(mensNovas.reduce((s, m) => s + m.valor, 0)) : numero(at.valor_negociado_total);
+  const recAberto = Math.max(0, numero(rec - totalNeg));
   const stmts = [env.DB.prepare(
-    "UPDATE atendimentos SET data = ?, canal = ?, setor = ?, motivo = ?, observacao = ?, status_resultante = ?, proximo_retorno = ?, valor_recuperado = ?, valor_recuperado_aberto = ? WHERE id = ?"
-  ).bind(data, canal, setor, motivo, obs, status, proximo, rec, recAberto, id)];
+    "UPDATE atendimentos SET data = ?, canal = ?, setor = ?, motivo = ?, observacao = ?, status_resultante = ?, proximo_retorno = ?, valor_recuperado = ?, valor_recuperado_aberto = ?, mensalidades = ?, valor_negociado_total = ? WHERE id = ?"
+  ).bind(data, canal, setor, motivo, obs, status, proximo, rec, recAberto, mensNovas ? JSON.stringify(mensNovas) : at.mensalidades, totalNeg, id)];
   // o mais recente do aluno (depois da correção) define a situação atual dele
   const outros = (await env.DB.prepare("SELECT id, data, criado_em FROM atendimentos WHERE aluno_id = ? AND id <> ?").bind(at.aluno_id, id).all()).results;
   const maisRecente = outros.every((o) => (o.data || "") < data || ((o.data || "") === data && (o.criado_em || "") <= (at.criado_em || "")));

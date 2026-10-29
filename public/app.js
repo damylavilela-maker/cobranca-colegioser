@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/10 · v139";
+  var VERSAO = "29/10 · v140";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -742,13 +742,44 @@
       '<div class="field"><label>Valor recuperado (R$)</label><input type="number" step="0.01" min="0" class="e-rec" value="' + (Number(t.valorRecuperado) || 0) + '"></div>' +
       "</div>" +
       '<div class="field"><label>Observação</label><textarea class="e-obs" rows="3">' + esc(t.observacao || "") + "</textarea></div>" +
-      ((t.mensalidadesNegociadas || []).length ? '<div class="meta">As mensalidades negociadas deste atendimento não mudam aqui (para mudar, exclua e registre de novo).</div>' : "") +
+      // valores negociados do atendimento: cada linha com tipo, mês de referência e valor; dá para
+      // mudar, excluir (×) ou incluir outra. O valor recuperado acompanha a soma (mais a parte em aberto).
+      '<div class="field"><label>Valores negociados neste atendimento</label><div class="e-negs stack" style="gap:6px"></div>' +
+      '<div style="margin-top:6px"><button type="button" class="linkbtn e-neg-add">+ Incluir mês</button> <span class="meta e-neg-tot"></span></div></div>' +
       '<div class="row-end" style="gap:8px"><button type="button" class="btn ghost small e-cancel">Cancelar</button><button type="button" class="btn primary small e-save">Salvar alterações</button></div>';
     it.appendChild(f);
+    var recBase = Math.max(0, (Number(t.valorRecuperado) || 0) - (Number(t.valorNegociadoTotal) || 0));
+    function linhaNeg(m) {
+      var d = document.createElement("div"); d.className = "e-neg"; d.style.cssText = "display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) auto;gap:6px;align-items:center";
+      d.innerHTML = '<select class="e-neg-tipo" aria-label="Tipo">' + NEG_TIPOS.map(function (tp) { return '<option value="' + tp.k + '"' + (tp.k === (m.tipo || "mensalidade") ? " selected" : "") + ">" + tp.l + "</option>"; }).join("") + "</select>" +
+        '<input type="month" class="e-neg-mes" aria-label="Mês de referência" value="' + esc(m.mes || "") + '">' +
+        '<input type="number" step="0.01" min="0" class="e-neg-val" aria-label="Valor" placeholder="Valor" value="' + (m.valor === "" || m.valor == null ? "" : esc(m.valor)) + '">' +
+        '<button type="button" class="btn ghost small e-neg-del" title="Excluir este mês do atendimento" aria-label="Excluir">×</button>';
+      f.querySelector(".e-negs").appendChild(d);
+    }
+    function negsDoForm() {
+      return [].map.call(f.querySelectorAll(".e-neg"), function (d) {
+        return { tipo: d.querySelector(".e-neg-tipo").value, mes: d.querySelector(".e-neg-mes").value, valor: Number(d.querySelector(".e-neg-val").value) || 0 };
+      });
+    }
+    function recalcNegEdit() {
+      var soma = negsDoForm().reduce(function (s, m) { return s + m.valor; }, 0);
+      f.querySelector(".e-neg-tot").textContent = soma ? "Total negociado: " + money(soma) : "";
+      f.querySelector(".e-rec").value = Math.round((recBase + soma) * 100) / 100;
+    }
+    (t.mensalidadesNegociadas || []).forEach(linhaNeg);
+    recalcNegEdit();
+    f.querySelector(".e-neg-add").addEventListener("click", function () { linhaNeg({ tipo: "mensalidade", mes: mesAtual(), valor: "" }); });
+    f.querySelector(".e-negs").addEventListener("input", recalcNegEdit);
+    f.querySelector(".e-negs").addEventListener("change", recalcNegEdit);
+    f.querySelector(".e-negs").addEventListener("click", function (e) { var x = e.target.closest(".e-neg-del"); if (x) { x.closest(".e-neg").remove(); recalcNegEdit(); } });
     f.querySelector(".e-cancel").addEventListener("click", function () { f.remove(); });
     f.querySelector(".e-save").addEventListener("click", function () {
-      var btn = this; btn.disabled = true; btn.textContent = "Salvando…";
+      var btn = this, negs = negsDoForm();
+      if (negs.some(function (m) { return !/^\d{4}-\d{2}$/.test(m.mes); })) { toast("Informe o mês de referência de cada valor negociado."); return; }
+      btn.disabled = true; btn.textContent = "Salvando…";
       api("PATCH", "/api/atendimentos/" + encodeURIComponent(id), {
+        mensalidadesNegociadas: negs.filter(function (m) { return m.valor > 0; }),
         data: f.querySelector(".e-data").value, canal: f.querySelector(".e-canal").value, setor: f.querySelector(".e-setor").value,
         motivo: f.querySelector(".e-motivo").value, statusResultante: f.querySelector(".e-status").value,
         proximoRetorno: f.querySelector(".e-prox").value || null, valorRecuperado: f.querySelector(".e-rec").value || 0,
