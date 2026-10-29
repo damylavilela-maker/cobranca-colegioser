@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/10 · v135";
+  var VERSAO = "29/10 · v136";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -452,11 +452,15 @@
       return '<option value="' + k + '"' + (k === mesAberto ? " selected" : "") + ">Vencidos em " + MESES[parseInt(k.slice(5, 7), 10) - 1] + " de " + k.slice(0, 4) + "</option>";
     }).join("") + "</select>";
     var recInfKpi = carteira === "regular" && recInformado[mesRecup] != null ? Number(recInformado[mesRecup]) : null;
+    // no Painel: o total das duas abas (igual ao Recebimento mensal), com a parte de cada uma embaixo
+    var recP = recuperadoNoMes(mesRecup, "regular"), recC = recuperadoNoMes(mesRecup, "contraturno");
+    var recKpi = recInfKpi != null ? recInfKpi : carteira === "regular" ? recP + recC : recC;
+    var recSub = recInfKpi != null ? "valor informado (relatório do sistema)" : carteira === "regular" && recC ? "Painel " + money(recP) + " + Contraturno " + money(recC) : "";
     var tiles = [
       { n: vis.filter(function (a) { return !a.indevido; }).length, l: "Alunos em acompanhamento" },
       { n: abertoMes == null ? "—" : money(abertoMes), l: "Valor em aberto " + selAberto, cls: "lead", sub: subAberto },
       // mês com valor informado (relatório do sistema, botão "Informar valores" da Evolução): no Painel vale ele
-      { n: money(recInfKpi != null ? recInfKpi : recuperadoNoMes(mesRecup, carteira)), l: "Recuperado em " + selMes, c: "success", sub: recInfKpi != null ? "valor informado (relatório do sistema)" : "" },
+      { n: money(recKpi), l: "Recuperado em " + selMes, c: "success", sub: recSub },
       { n: c.sem_contato || 0, l: "Sem contato", c: "gray" },
       { n: c.em_negociacao || 0, l: "Em negociação", c: "info" },
       { n: c.boleto_prorrogado || 0, l: "Boleto prorrogado", c: "info" },
