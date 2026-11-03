@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "03/11 · v141";
+  var VERSAO = "03/11 · v142";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -416,7 +416,8 @@
   }
   function renderKpis(vis) {
     var tot = 0, c = {};
-    vis.forEach(function (a) { if (!a.indevido) tot += Number(a.valorAberto) || 0; var k = a.status || "sem_contato"; c[k] = (c[k] || 0) + 1; });
+    // só os devidos: cobrança indevida e regularizados não entram no valor em aberto (pedido em 03/11/2026)
+    vis.forEach(function (a) { if (!a.indevido && a.status !== "regularizado") tot += Number(a.valorAberto) || 0; var k = a.status || "sem_contato"; c[k] = (c[k] || 0) + 1; });
     // "Recuperado em": o mês é escolhido na própria caixa (janeiro a dezembro do ano atual;
     // começa no mês atual)
     var anoR = new Date().getFullYear(), meses = MESES.map(function (nm, i) { return { v: anoR + "-" + pad2(i + 1), l: nm }; });
@@ -429,7 +430,7 @@
     // com várias parcelas e sem o detalhe, não dá para dividir (aparece no aviso).
     var porMesV = {}, semDet = { v: 0, n: 0 };
     vis.forEach(function (a) {
-      if (a.indevido || !(Number(a.valorAberto) > 0)) return;
+      if (a.indevido || a.status === "regularizado" || !(Number(a.valorAberto) > 0)) return;
       var pv = Array.isArray(a.parcelasVenc) ? a.parcelasVenc.filter(function (p) { return p && /^\d{4}-\d{2}/.test(String(p[0])); }) : [];
       if (!pv.length && (a.parcelasAberto || 1) <= 1 && /^\d{4}-\d{2}/.test(a.vencimento || "")) pv = [[a.vencimento, Number(a.valorAberto) || 0]];
       if (!pv.length) { semDet.v += Number(a.valorAberto) || 0; semDet.n++; return; }
@@ -448,7 +449,7 @@
       subAberto = gm.parc + " boleto(s) vencido(s) neste mês, de " + gm.alunos + " aluno(s)";
     }
     if (semDet.n && mesAberto) subAberto += " · " + money(semDet.v) + " de " + semDet.n + " aluno(s) sem o vencimento de cada parcela não entram nos meses";
-    var selAberto = '<select class="kpi-mes" id="kpiMesAberto" aria-label="Mês de vencimento dos boletos"><option value="">Atual (todos os alunos ativos)</option>' + mesesV.map(function (k) {
+    var selAberto = '<select class="kpi-mes" id="kpiMesAberto" aria-label="Mês de vencimento dos boletos"><option value="">Atual (só os inadimplentes)</option>' + mesesV.map(function (k) {
       return '<option value="' + k + '"' + (k === mesAberto ? " selected" : "") + ">Vencidos em " + MESES[parseInt(k.slice(5, 7), 10) - 1] + " de " + k.slice(0, 4) + "</option>";
     }).join("") + "</select>";
     var recInfKpi = carteira === "regular" && recInformado[mesRecup] != null ? Number(recInformado[mesRecup]) : null;
