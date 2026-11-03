@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "29/10 · v140";
+  var VERSAO = "03/11 · v141";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -457,7 +457,8 @@
     var recKpi = recInfKpi != null ? recInfKpi : carteira === "regular" ? recP + recC : recC;
     var recSub = recInfKpi != null ? "valor informado (relatório do sistema)" : carteira === "regular" && recC ? "Painel " + money(recP) + " + Contraturno " + money(recC) : "";
     var tiles = [
-      { n: vis.filter(function (a) { return !a.indevido; }).length, l: "Alunos em acompanhamento" },
+      // inadimplentes: sem os de cobrança indevida e sem os regularizados (pedido em 03/11/2026)
+      { n: vis.filter(function (a) { return !a.indevido && a.status !== "regularizado"; }).length, l: "Alunos em acompanhamento", sub: "sem regularizados e cobrança indevida" },
       { n: abertoMes == null ? "—" : money(abertoMes), l: "Valor em aberto " + selAberto, cls: "lead", sub: subAberto },
       // mês com valor informado (relatório do sistema, botão "Informar valores" da Evolução): no Painel vale ele
       { n: money(recKpi), l: "Recuperado em " + selMes, c: "success", sub: recSub },
