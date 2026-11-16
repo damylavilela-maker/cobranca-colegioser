@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   // muda a cada publicação: aparece embaixo do menu para conferir se o navegador carregou a versão nova
-  var VERSAO = "03/11 · v143";
+  var VERSAO = "16/11 · v144";
 
   var CANAIS = ["WhatsApp", "Ligação", "E-mail", "ClassApp", "Presencial"];
   var SETORES = ["Secretaria", "Financeiro", "Pedagógico", "Direção", "Rematrícula", "Jurídico"];
@@ -257,7 +257,7 @@
     regular: { titulo: "Painel de cobrança", arquivo: "relatorio_cobranca_" },
     contraturno: { titulo: "Contraturno", arquivo: "relatorio_contraturno_" }
   };
-  var FILTROS = ["fBusca", "fStatus", "fFaixa", "fAno", "fSetor", "fOutra", "fAtend", "fOrdem"];
+  var FILTROS = ["fBusca", "fStatus", "fFaixa", "fAno", "fSerie", "fSetor", "fOutra", "fAtend", "fOrdem"];
   var filtrosPorCarteira = {};
   function trocarCarteira(nova) {
     if (nova === carteira) return;
@@ -474,6 +474,23 @@
     }).join("");
   }
 
+  // Série (ano/ciclo) do aluno a partir da descrição da turma: tira a letra da turma (A, B, C…) e o
+  // período (manhã, tarde, integral, noite). "1º ANO B EF TARDE" → "1º ANO EF"; "INFANTIL A I/II MANHÃ" → "INFANTIL I/II".
+  function serieDe(turma) {
+    // acento estragado na Base ("MANH�", "1� ANO"): o período some de qualquer jeito; no número vira "º"
+    var t = String(turma || "").toUpperCase().replace(/MANH�/g, "MANHÃ").replace(/PER�ODO/g, "PERÍODO").replace(/�/g, "º").replace(/\s+/g, " ").trim();
+    if (!t) return "";
+    t = t.replace(/(^|\s)(MANH[ÃA]|TARDE|SEMI ?INTEGRAL|INTEGRAL|NOITE|NOTURNO|PER[ÍI]ODO)(?=\s|$)/g, " ");
+    t = t.replace(/(^|\s)[A-H](?=\s|$)/g, " ").replace(/\s+/g, " ").trim();
+    return t;
+  }
+  // ordem: Infantil, depois os anos pela numeração, depois o resto
+  function ordemSerie(a, b) {
+    function chave(s) { var inf = /INFANTIL|MATERNAL|BER[ÇC]/.test(s) ? 0 : 1, n = parseInt((s.match(/\d+/) || ["99"])[0], 10), em = /\bEM\b|M[ÉE]DIO/.test(s) ? 1 : 0; return [inf, em, n, s]; }
+    var x = chave(a), y = chave(b);
+    for (var i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+    return x[3].localeCompare(y[3], "pt-BR");
+  }
   function renderPainel() {
     var todos = listaCarteira(carteira);
     renderKpis(todos.filter(function (a) { return !a.arquivado; }));
@@ -503,6 +520,9 @@
     function estaNaOutra(a) { var ra = (a.ra || "").trim().toLowerCase(); return ra ? !!naOutra["ra:" + ra] : !!naOutra["nm:" + (a.nome || "").trim().toLowerCase()]; }
     var nOutra = todos.filter(function (a) { return !!a.arquivado === showArch && estaNaOutra(a); }).length;
     var filhos = filhosPorResp(); // responsável com mais de um filho: etiqueta na lista
+    // série (ano/ciclo) tirada da turma: "1º ANO B EF TARDE" vira "1º ANO EF"
+    var serQtd = {}; todos.forEach(function (a) { if (!!a.arquivado !== showArch) return; var s = serieDe(a.turma); if (s) serQtd[s] = (serQtd[s] || 0) + 1; });
+    var fser = prepararSelect($("fSerie"), [{ v: "", l: "Todas as séries" }].concat(Object.keys(serQtd).sort(ordemSerie).map(function (s) { return { v: esc(s), l: esc(s) + " (" + serQtd[s] + ")" }; })), "");
     var fout = prepararSelect($("fOutra"), [{ v: "", l: outraNome + ": todos" }, { v: "sim", l: "Também no " + outraNome + " (" + nOutra + ")" }, { v: "nao", l: "Só neste " + (carteira === "contraturno" ? "Contraturno" : "Painel") }], "");
     var q = $("fBusca").value.trim().toLowerCase(), fs = $("fStatus").value, ffx = $("fFaixa").value, fset = $("fSetor").value, fa = $("fAtend").value;
     var ord = soHoje ? "retorno" : $("fOrdem").value, h = hoje();
@@ -512,6 +532,7 @@
       if (q && ((a.nome || "") + " " + (a.responsavel || "") + " " + (a.ra || "")).toLowerCase().indexOf(q) === -1) return false;
       if (fs && (a.status || "sem_contato") !== fs) return false;
       if (ffx && (!(Number(a.valorAberto) > 0) || faixaDoAluno(a, h) !== ffx)) return false;
+      if (fser && serieDe(a.turma) !== fser) return false;
       if (fset && a.setor !== fset) return false;
       if (fout && (fout === "sim") !== estaNaOutra(a)) return false;
       if (fa && a.atendenteResponsavel !== fa) return false;
@@ -576,7 +597,7 @@
     }).join("");
   }
   $("tbody").addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrirAluno(tr.getAttribute("data-id")); });
-  ["fBusca", "fStatus", "fFaixa", "fAno", "fSetor", "fOutra", "fAtend", "fOrdem"].forEach(function (id) { $(id).addEventListener("input", renderPainel); });
+  ["fBusca", "fStatus", "fFaixa", "fAno", "fSerie", "fSetor", "fOutra", "fAtend", "fOrdem"].forEach(function (id) { $(id).addEventListener("input", renderPainel); });
   $("btnHoje").addEventListener("click", function () { soHoje = !soHoje; if (soHoje) $("fOrdem").value = "retorno"; renderPainel(); });
   $("btnArquivados").addEventListener("click", function () { showArch = !showArch; renderPainel(); });
 
