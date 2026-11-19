@@ -149,14 +149,10 @@
         <div class="card"><h3>Atendimentos por canal</h3><div id="barCanal"></div></div>
         <div class="card"><h3>Carteira do Painel por status</h3><div id="barStatus"></div></div>
       </div>
-      <div class="cards even">
+      <div class="cards" style="grid-template-columns:1fr">
         <div class="card">
           <div class="card-head"><h3>Total recuperado por mês</h3><span class="row-end" style="gap:8px"><button type="button" class="btn ghost small" id="btnRecInf" title="Informar o total recebido de cada mês (relatório do sistema)">Informar valores</button><select id="anoEvolSel" aria-label="Ano"></select></span></div>
           <div class="scroll-x"><table class="mini" id="anoEvolTable"></table></div>
-        </div>
-        <div class="card">
-          <div class="card-head"><h3>Recebimento mensal</h3><select id="mensEvolAnoSel" aria-label="Ano"></select></div>
-          <div class="scroll-x"><table class="mini" id="mensEvolTable"></table></div>
         </div>
       </div>
       <div class="card" style="margin-bottom:16px">
